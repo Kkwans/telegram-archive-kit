@@ -1,0 +1,16 @@
+# Build artifacts
+*.exe
+*.test
+*.out
+dist/
+build/
+
+# Local data & logs
+TG Library/
+.logs/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini

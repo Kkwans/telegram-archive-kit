@@ -1,0 +1,44 @@
+/* Parent-level viewer: no modifications to the chat iframe, topbar or sidebar. */
+.tak-global-lightbox{position:fixed;inset:0;z-index:2147483640;color:#f6f7fa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;isolation:isolate;touch-action:pan-y}
+.tak-global-lightbox[hidden]{display:none!important}
+.tak-lb-shade{position:absolute;inset:0;background:rgba(17,19,25,.64);backdrop-filter:blur(12px)}
+.tak-lb-filters{position:absolute;top:22px;left:22px;z-index:3;display:flex;gap:3px;padding:4px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.12);border-radius:999px}
+.tak-lb-filters button{border:0;border-radius:999px;padding:8px 16px;min-height:34px;color:#c6cad4;font-size:13px;font-weight:650;background:transparent;cursor:pointer}
+.tak-lb-filters button:hover{background:rgba(255,255,255,.12)}.tak-lb-filters button.active{color:#fff;background:#697ec9}
+.tak-lb-close,.tak-lb-arrow{position:absolute;z-index:3;display:grid;place-items:center;border:1px solid rgba(255,255,255,.14);border-radius:50%;background:rgba(255,255,255,.10);color:#e8ecf7;cursor:pointer;transition:background .14s ease,transform .14s ease}
+.tak-lb-close{width:44px;height:44px;right:20px;top:19px}.tak-lb-arrow{width:48px;height:48px;top:50%;transform:translateY(-50%)}.tak-lb-prev{left:20px}.tak-lb-next{right:20px}
+.tak-lb-close:hover,.tak-lb-arrow:hover{background:rgba(255,255,255,.22)}.tak-lb-arrow:disabled{opacity:.2;cursor:default}
+.tak-global-lightbox button svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+.tak-lb-stage{position:absolute;inset:72px 78px 74px;display:grid;place-items:center;overflow:hidden}
+.tak-lb-content{position:relative;display:flex;align-items:center;justify-content:center;max-width:100%;max-height:100%;min-width:0;min-height:0;transform-origin:center center;touch-action:pan-y}
+.tak-lb-image,.tak-lb-video{display:block;max-width:100%;max-height:calc(100dvh - 146px);width:auto;height:auto;object-fit:contain;border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.45)}
+.tak-lb-image{cursor:zoom-in;user-select:none}.tak-lb-content.zoomed .tak-lb-image{cursor:grab;touch-action:none}.tak-lb-video{width:min(100%,1180px);height:auto;max-height:calc(100dvh - 146px);background:#080a0e}
+.tak-lb-wait{display:none;position:absolute;inset:0;pointer-events:none;place-items:center}.tak-lb-wait.show{display:grid}.tak-lb-spinner{height:35px;width:35px;border:3px solid rgba(255,255,255,.2);border-top-color:rgba(255,255,255,.88);border-radius:50%;animation:tak-lb-spin .8s linear infinite}@keyframes tak-lb-spin{to{transform:rotate(360deg)}}
+.tak-lb-error{position:absolute;z-index:3;padding:14px 20px;color:#f5d0d0;border:1px solid #81494e;border-radius:12px;background:#301c22}
+.tak-lb-error[hidden]{display:none}.tak-lb-counter{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:3;display:flex;gap:18px;align-items:center;white-space:nowrap;font-size:12px;color:#cbd0df}.tak-lb-counter a{color:#cbd0df;text-decoration:underline;text-underline-offset:3px}.tak-lb-counter a:hover{color:#fff}
+@media(max-width:760px){.tak-lb-filters{top:14px;left:12px}.tak-lb-filters button{font-size:12px;padding:7px 11px}.tak-lb-close{right:12px;top:13px;width:40px;height:40px}.tak-lb-stage{inset:68px 13px 66px}.tak-lb-image,.tak-lb-video{max-height:calc(100dvh - 134px)}.tak-lb-arrow{top:auto;bottom:18px;width:40px;height:40px;transform:none}.tak-lb-prev{left:12px}.tak-lb-next{right:12px}}
+@media(prefers-reduced-motion:reduce){.tak-lb-spinner{animation:none}.tak-lb-close,.tak-lb-arrow{transition:none}}
+
+/* 9.9.7: only the rendered media occupies pointer space. The stage is NOT an
+   invisible full-size image, and no fixed 1180px video canvas is introduced. */
+.tak-lb-content{width:100%;height:100%;max-width:none;max-height:none;pointer-events:none}
+.tak-lb-media-box{position:relative;flex:none;display:block;max-width:100%;max-height:100%;overflow:hidden;border-radius:16px;pointer-events:auto;background:transparent;box-shadow:0 18px 60px rgba(0,0,0,.38)}
+.tak-lb-media-box .tak-lb-image,.tak-lb-media-box .tak-lb-video{position:absolute;inset:0;display:block;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;border-radius:inherit;box-shadow:none;background:transparent}
+.tak-lb-media-box .tak-lb-video{width:100%;height:100%;max-width:none;max-height:none;background:transparent}
+.tak-lb-preview{opacity:1;transition:none}
+.tak-lb-wait{z-index:2;pointer-events:none}
+.tak-lb-wait.show{display:grid;background:transparent}
+@media(max-width:760px){.tak-lb-media-box{border-radius:12px}}
+
+/* 10.0-RC-3: make the image itself the rounded, clickable visual surface.
+   An outer frame must never clip a zoomed original or draw a grey letterbox. */
+.tak-lb-stage{overflow:visible!important;pointer-events:none}
+.tak-lb-content{overflow:visible!important;pointer-events:none}
+.tak-lb-media-box{overflow:visible!important;background:transparent!important;box-shadow:none!important;border-radius:16px;transform-origin:center center;pointer-events:none;transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+.tak-lb-media-box .tak-lb-image,.tak-lb-media-box .tak-lb-video{border-radius:inherit;object-fit:contain;background:transparent!important;box-shadow:0 16px 50px rgba(0,0,0,.30);pointer-events:auto}
+.tak-lb-media-box .tak-lb-preview{object-fit:cover}
+.tak-lb-media-box.zoomed .tak-lb-image{cursor:grab;touch-action:none}
+.tak-lb-media-box.zoomed .tak-lb-image:active{cursor:grabbing}
+.tak-lb-stage .tak-lb-error{pointer-events:auto}
+@media(max-width:760px){.tak-lb-media-box{border-radius:12px}}
+@media(prefers-reduced-motion:reduce){.tak-lb-media-box{transition:none}}

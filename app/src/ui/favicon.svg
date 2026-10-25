@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Prism Archive">
+<defs><linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#54b6f4"/><stop offset="1" stop-color="#7364e9"/></linearGradient></defs>
+<rect x="10" y="10" width="236" height="236" rx="62" fill="url(#brand)"/>
+<path d="M43 123 216 54c7-3 13 3 10 10l-63 151c-3 7-9 9-15 3l-46-43-54-32c-10-6-12-16-5-20Z" fill="#fff"/>
+<path d="m102 175 114-121-68 164Z" fill="#cfebff"/>
+<path d="m102 175-11 24 3-54L216 54Z" fill="#94c5f5"/>
+</svg>
