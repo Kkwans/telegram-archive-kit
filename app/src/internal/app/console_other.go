@@ -20,8 +20,13 @@ func readKey() Key {
 	if r == 27 {
 		return Key{Code: keyEsc}
 	}
+	if r == 127 || r == 8 {
+		return Key{Code: keyBackspace}
+	}
 	return Key{Rune: r}
 }
 func pollKey(timeout time.Duration) (Key, bool) { return Key{}, false }
 
-func enablePerMonitorDPI() {}
+func enablePerMonitorDPI()            {}
+func processRunning(name string) bool { return false }
+func readClipboardText() string       { return "" }

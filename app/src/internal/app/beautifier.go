@@ -78,6 +78,10 @@ func (a *App) buildBeautifierPages(slug string, arc *Archive) error {
 	if err := a.ensureBeautifierAssets(nil); err != nil {
 		return err
 	}
+	return a.renderWorkspacePages(slug, arc)
+}
+
+func (a *App) renderWorkspacePages(slug string, arc *Archive) error {
 	ws := a.workspaceDir(slug)
 	// Remove stale extra pages from previous builds.
 	entries, _ := os.ReadDir(ws)
@@ -125,6 +129,47 @@ func (a *App) buildBeautifierPages(slug string, arc *Archive) error {
 	}
 	return nil
 }
+
+const archiveDataScriptPrefix = "window.__TAK_CHAT_DATA__ = "
+
+// readBuiltArchive loads the data already serialized for the viewer. Refreshing
+// UI therefore never reads result.json, scans media or recomputes completeness.
+func (a *App) readBuiltArchive(slug string) (*Archive, error) {
+	b, err := os.ReadFile(filepath.Join(a.dataDir(slug), "archive-data.js"))
+	if err != nil {
+		return nil, fmt.Errorf("找不到已归档数据：%w", err)
+	}
+	return decodeBuiltArchive(b)
+}
+
+func decodeBuiltArchive(b []byte) (*Archive, error) {
+	s := strings.TrimSpace(string(b))
+	if !strings.HasPrefix(s, archiveDataScriptPrefix) {
+		return nil, fmt.Errorf("已归档数据格式无法识别")
+	}
+	s = strings.TrimSpace(strings.TrimPrefix(s, archiveDataScriptPrefix))
+	s = strings.TrimSuffix(s, ";")
+	var arc Archive
+	if err := json.Unmarshal([]byte(s), &arc); err != nil {
+		return nil, fmt.Errorf("已归档数据解析失败：%w", err)
+	}
+	return &arc, nil
+}
+
+func (a *App) refreshWorkspaceWeb(slug string) error {
+	arc, err := a.readBuiltArchive(slug)
+	if err != nil {
+		return err
+	}
+	if err := a.renderWorkspacePages(slug, arc); err != nil {
+		return err
+	}
+	if err := a.writeSearchIndex(slug, arc); err != nil {
+		return err
+	}
+	return a.writeDateIndex(slug, arc)
+}
+
 func (a *App) firstMessagePage(slug string) string {
 	return filepath.Join(a.workspaceDir(slug), "messages.html")
 }

@@ -18,6 +18,7 @@ import (
 	"telegramarchivekit/internal/archive"
 	"telegramarchivekit/internal/media"
 	"telegramarchivekit/internal/platform"
+	"telegramarchivekit/internal/transfer"
 )
 
 type menuItem struct {
@@ -255,6 +256,7 @@ func (a *App) runMainLoop() {
 		items := []menuItem{
 			{Key: "one", Icon: "🚀", Label: "一键完成", Desc: "导入/选择聊天 → 环境预检 → 补齐媒体 → 构建网页 → 校验 → 打开"},
 			{Key: "add", Icon: "➕", Label: "添加 / 更新聊天", Desc: "选择 result.json → 增量合并 → 自动补齐媒体 → 刷新网页"},
+			{Key: "refresh", Icon: "🔄", Label: "仅刷新网页 / UI", Desc: "用内置最新前端重建全部网页；不校验、不下载媒体，统计保持不变"},
 			{Key: "official", Icon: "📥", Label: "继承 Telegram 官方 ChatExport", Desc: "导入旧 messages.html + photos/video_files/files；复用历史媒体，不重复下载"},
 			{Key: "chats", Icon: "🗂️", Label: "聊天管理", Desc: "切换聊天、单独同步、继承官方导出、导入媒体、删除归档"},
 			{Key: "open", Icon: "🌐", Label: "打开归档库", Desc: "一个网页里切换所有聊天，查看时间线 / 图片 / 视频 / 日期导航"},
@@ -270,6 +272,8 @@ func (a *App) runMainLoop() {
 			a.actionOneClick(selected)
 		case "add":
 			a.actionAddChats(true)
+		case "refresh":
+			a.actionRefreshWeb()
 		case "official":
 			a.actionImportOfficialExport()
 		case "chats":
@@ -346,7 +350,7 @@ func menuEmoji(icon, label string) string {
 		return "🗑️"
 	case strings.Contains(label, "返回"), strings.Contains(label, "取消"):
 		return "↩️"
-	case strings.Contains(label, "重新"), strings.Contains(label, "同步"), strings.Contains(label, "再试"):
+	case strings.Contains(label, "重新"), strings.Contains(label, "刷新"), strings.Contains(label, "同步"), strings.Contains(label, "再试"):
 		return "🔄"
 	case strings.Contains(label, "生成"), strings.Contains(label, "构建"):
 		return "🛠️"
@@ -599,7 +603,7 @@ func (a *App) handleDroppedJSON(paths []string) {
 }
 
 func (a *App) actionAddChats(autoSync bool) []WorkspaceMeta {
-	var choice string
+	var paths []string
 	for {
 		items := []menuItem{
 			{Key: "browse", Icon: "▣", Label: "选择 result.json", Desc: "支持一次选择多个 JSON；导入后默认继续补齐媒体"},
@@ -609,35 +613,39 @@ func (a *App) actionAddChats(autoSync bool) []WorkspaceMeta {
 			{Key: "back", Icon: "←", Label: "返回", Desc: ""},
 		}
 		status := []string{"目标档案库   " + a.Settings.LibraryRoot, "规则         每个 Chat ID 独立保存；同一聊天再次导入会按 Message ID 增量合并"}
-		choice = runMenu("添加 / 更新聊天", "result.json 只是入口；媒体、网页和源数据统一由档案库管理", status, items, true)
-		if choice == "library" {
+		choice := runMenu("添加 / 更新聊天", "result.json 只是入口；媒体、网页和源数据统一由档案库管理", status, items, true)
+		switch choice {
+		case "library":
 			a.switchLibraryInteractive()
 			continue
-		}
-		if choice == "official" {
+		case "official":
 			a.actionImportOfficialExport()
+			return nil
+		case "paste":
+			p, ok := promptText("粘贴 / 输入文件路径", "支持带引号的 Windows 路径；可直接粘贴或输入", "result.json", "", false)
+			if !ok {
+				continue
+			}
+			p = strings.Trim(strings.TrimSpace(p), `"`)
+			if p == "" {
+				continue
+			}
+			if !fileExists(p) {
+				showMessage("找不到文件", p)
+				continue
+			}
+			paths = []string{p}
+		case "browse":
+			p, err := selectJSONFiles()
+			if err != nil {
+				showErrorAndWait(err)
+				return nil
+			}
+			paths = p
+		case "back":
 			return nil
 		}
 		break
-	}
-	var paths []string
-	if choice == "browse" {
-		p, err := selectJSONFiles()
-		if err != nil {
-			showErrorAndWait(err)
-			return nil
-		}
-		paths = p
-	}
-	if choice == "paste" {
-		clearScreen()
-		drawTop("输入路径", "支持带引号的 Windows 路径")
-		showCursor()
-		p := readLinePrompt("result.json")
-		hideCursor()
-		if p != "" {
-			paths = []string{strings.Trim(p, `"`)}
-		}
 	}
 	if len(paths) == 0 {
 		return nil
@@ -685,6 +693,79 @@ func (a *App) actionAddChats(autoSync bool) []WorkspaceMeta {
 		waitAnyKey("JSON 已登记（未下载媒体）。按任意键返回")
 	}
 	return imported
+}
+
+// actionRefreshWeb rebuilds every viewer page from the already-built archive
+// data. It deliberately skips media scanning, completeness checks, downloads
+// and thumbnail generation so a UI-only update is fast and non-destructive.
+func (a *App) actionRefreshWeb() {
+	list := a.listWorkspaces()
+	if len(list) == 0 {
+		showMessage("没有聊天", "请先添加 result.json")
+		return
+	}
+	built, skipped := 0, 0
+	var failures []string
+	err := runOperation("刷新网页", "仅使用内置最新前端重建；不校验媒体、不下载文件", "正在准备刷新", func(ctx context.Context, update func(OperationProgress)) error {
+		for i, m := range list {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			update(OperationProgress{Stage: fmt.Sprintf("正在重建网页 %d/%d", i+1, len(list)), Detail: m.Chat.Name, Current: int64(i), Total: int64(len(list)), Unit: "聊天"})
+			if !fileExists(filepath.Join(a.dataDir(m.Slug), "archive-data.js")) {
+				skipped++
+				continue
+			}
+			if err := a.refreshWorkspaceWeb(m.Slug); err != nil {
+				failures = append(failures, m.Chat.Name+"："+err.Error())
+				continue
+			}
+			built++
+		}
+		update(OperationProgress{Stage: "正在刷新归档库入口", Detail: "写入内置 UI 资源与导航数据"})
+		return a.buildLibrary()
+	})
+	if err != nil {
+		if errors.Is(err, transfer.ErrCancelled) {
+			return
+		}
+		showErrorAndWait(err)
+		return
+	}
+	if len(failures) == 0 {
+		showMessage("网页已刷新", fmt.Sprintf("已重建 %d 个聊天；跳过 %d 个（没有 TAK 归档数据）。媒体、统计和源数据均未改动。", built, skipped))
+		return
+	}
+	clearScreen()
+	drawTop("网页刷新完成", fmt.Sprintf("成功 %d · 跳过 %d · 失败 %d", built, skipped, len(failures)))
+	uiPrintln("  " + muted("媒体、统计和源数据均未改动。"))
+	uiPrintln("")
+	for _, f := range failures {
+		uiPrintln("  " + red("× ") + truncatePlain(f, uiInnerWidth()-6))
+	}
+	waitAnyKey("按任意键返回")
+}
+
+func (a *App) refreshWorkspaceWebInteractive(slug, name string) {
+	err := runOperation("重新生成网页", name, "正在读取已归档数据", func(ctx context.Context, update func(OperationProgress)) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		update(OperationProgress{Stage: "正在重建 HTML 页面", Detail: "使用内置最新前端；不校验媒体、不扫描文件"})
+		if err := a.refreshWorkspaceWeb(slug); err != nil {
+			return err
+		}
+		update(OperationProgress{Stage: "正在刷新归档库入口", Detail: "写入内置 UI 资源与导航数据"})
+		return a.buildLibrary()
+	})
+	if err != nil {
+		if errors.Is(err, transfer.ErrCancelled) {
+			return
+		}
+		showErrorAndWait(err)
+		return
+	}
+	showMessage("网页已重新生成", name+" · 媒体、统计和源数据均未改动")
 }
 
 func (a *App) actionOneClick(selected *WorkspaceMeta) {
@@ -1072,7 +1153,7 @@ func (a *App) workspaceActions(slug string) {
 			return
 		}
 		status := []string{fmt.Sprintf("%d 条消息 · %d 个媒体 · 缺失 %d", m.MessageCount, m.MediaCount, m.MissingCount), a.workspaceDir(slug)}
-		items := []menuItem{{Key: "select", Icon: "★", Label: "设为当前聊天", Desc: "主菜单状态和一键完成默认使用它"}, {Key: "one", Icon: "✦", Label: "一键同步并打开", Desc: "补齐媒体、构建、校验"}, {Key: "official", Icon: "📥", Label: "继承 Telegram 官方 ChatExport", Desc: "扫描旧 messages.html；复用 photos / video_files / files 等现有媒体"}, {Key: "build", Icon: "◇", Label: "只重新生成网页", Desc: "不下载媒体"}, {Key: "open", Icon: "◎", Label: "在归档库中打开", Desc: "直接跳转到这个聊天"}, {Key: "media", Icon: "⧉", Label: "导入已有 tdl 媒体目录", Desc: "把旧版 media / media-test2 增量合并进当前聊天"}, {Key: "export", Icon: "◫", Label: "复制 / 抽取到另一档案库", Desc: "把这个聊天完整复制到另一个磁盘或档案库；源数据保持不变"}, {Key: "folder", Icon: "▣", Label: "打开聊天数据目录", Desc: "查看 source / media / report"}, {Key: "delete", Icon: "!", Label: "删除这个本地归档", Desc: "只删除档案库副本，不影响 Telegram"}, {Key: "back", Icon: "←", Label: "返回", Desc: ""}}
+		items := []menuItem{{Key: "select", Icon: "★", Label: "设为当前聊天", Desc: "主菜单状态和一键完成默认使用它"}, {Key: "one", Icon: "✦", Label: "一键同步并打开", Desc: "补齐媒体、构建、校验"}, {Key: "official", Icon: "📥", Label: "继承 Telegram 官方 ChatExport", Desc: "扫描旧 messages.html；复用 photos / video_files / files 等现有媒体"}, {Key: "build", Icon: "◇", Label: "只重新生成网页", Desc: "从现有归档数据重建 HTML；不校验媒体、不扫描文件、不改统计"}, {Key: "open", Icon: "◎", Label: "在归档库中打开", Desc: "直接跳转到这个聊天"}, {Key: "media", Icon: "⧉", Label: "导入已有 tdl 媒体目录", Desc: "把旧版 media / media-test2 增量合并进当前聊天"}, {Key: "export", Icon: "◫", Label: "复制 / 抽取到另一档案库", Desc: "把这个聊天完整复制到另一个磁盘或档案库；源数据保持不变"}, {Key: "folder", Icon: "▣", Label: "打开聊天数据目录", Desc: "查看 source / media / report"}, {Key: "delete", Icon: "!", Label: "删除这个本地归档", Desc: "只删除档案库副本，不影响 Telegram"}, {Key: "back", Icon: "←", Label: "返回", Desc: ""}}
 		c := runMenu("聊天 · "+m.Chat.Name, "独立工作区", status, items, true)
 		switch c {
 		case "select":
@@ -1084,14 +1165,7 @@ func (a *App) workspaceActions(slug string) {
 		case "official":
 			a.actionImportOfficialExportInto(slug)
 		case "build":
-			clearScreen()
-			drawTop("重新生成", m.Chat.Name)
-			arc, er := a.buildWorkspaceInteractive(slug, m.Chat.Name)
-			if er != nil {
-				showErrorAndWait(er)
-			} else {
-				showMessage("生成完成", fmt.Sprintf("%d 条消息 · %d 媒体", arc.Stats.Messages, arc.Stats.MediaFiles))
-			}
+			a.refreshWorkspaceWebInteractive(slug, m.Chat.Name)
 		case "open":
 			a.actionOpenLibrary(slug)
 		case "media":
@@ -1446,12 +1520,10 @@ func (a *App) downloadSettingsMenu() {
 			a.Settings.UnknownRetryCount = chooseNumber("未知错误自动重试次数", 0, 10, a.Settings.UnknownRetryCount)
 			_ = a.saveSettings()
 		case "proxy":
-			clearScreen()
-			drawTop("tdl 代理", "留空表示系统/TUN/直连；示例 socks5://127.0.0.1:7890")
-			showCursor()
-			a.Settings.Proxy = strings.TrimSpace(readLinePrompt("Proxy"))
-			hideCursor()
-			_ = a.saveSettings()
+			if p, ok := promptText("tdl 代理", "留空表示系统/TUN/直连；示例 socks5://127.0.0.1:7890", "Proxy", a.Settings.Proxy, true); ok {
+				a.Settings.Proxy = strings.TrimSpace(p)
+				_ = a.saveSettings()
+			}
 		default:
 			return
 		}
@@ -1459,12 +1531,11 @@ func (a *App) downloadSettingsMenu() {
 }
 
 func chooseNumber(title string, min, max, current int) int {
-	clearScreen()
-	drawTop(title, fmt.Sprintf("范围 %d-%d · 当前 %d", min, max, current))
-	showCursor()
-	s := readLinePrompt("输入数字")
-	hideCursor()
-	n, err := strconv.Atoi(s)
+	s, ok := promptText(title, fmt.Sprintf("范围 %d-%d · 当前 %d", min, max, current), "输入数字", strconv.Itoa(current), false)
+	if !ok {
+		return current
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
 	if err == nil && n >= min && n <= max {
 		return n
 	}

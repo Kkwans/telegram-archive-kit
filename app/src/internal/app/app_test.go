@@ -315,6 +315,83 @@ func TestV95MigratesLegacyThumbnailDefault(t *testing.T) {
 	}
 }
 
+func TestRefreshWorkspaceWebUsesBuiltDataOnly(t *testing.T) {
+	lib := t.TempDir()
+	a := &App{Settings: defaultSettings()}
+	a.Settings.LibraryRoot = lib
+	slug := "chat_UIOnly__1"
+	if err := os.MkdirAll(a.dataDir(slug), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(a.workspaceDir(slug), 0755); err != nil {
+		t.Fatal(err)
+	}
+	arc := Archive{Chat: Chat{Name: "UI Only"}, Messages: []Message{{ID: "1", Type: "message", Date: "2026-01-01", TS: 1767225600, From: "A", Text: "hello ui only"}}}
+	payload, _ := json.Marshal(arc)
+	script := append([]byte(archiveDataScriptPrefix), payload...)
+	script = append(script, []byte(";\n")...)
+	if err := os.WriteFile(filepath.Join(a.dataDir(slug), "archive-data.js"), script, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(a.sourcePath(slug)) {
+		t.Fatal("fixture must not contain result.json")
+	}
+	if err := a.refreshWorkspaceWeb(slug); err != nil {
+		t.Fatal(err)
+	}
+	html, err := os.ReadFile(filepath.Join(a.workspaceDir(slug), "messages.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(html), "hello ui only") {
+		t.Fatal("refreshed page is missing archived message text")
+	}
+	if !fileExists(filepath.Join(a.dataDir(slug), "search-index.js")) || !fileExists(filepath.Join(a.dataDir(slug), "date-index.js")) {
+		t.Fatal("refresh should regenerate viewer indexes")
+	}
+	if _, err := os.Stat(a.mediaDir(slug)); !os.IsNotExist(err) {
+		t.Fatal("UI-only refresh must not scan or create the media directory")
+	}
+}
+
+func TestInlineEditorKeepsCaretInsidePrompt(t *testing.T) {
+	e := newInlineEditor("C:\\very\\long\\folder\\name\\result.json")
+	before, after := e.view(20)
+	if visibleWidth(before)+1+visibleWidth(after) > 20 {
+		t.Fatalf("prompt text overflows: %q|%q", before, after)
+	}
+	if !strings.HasPrefix(before, "…") {
+		t.Fatalf("long path should scroll with a leading ellipsis: %q", before)
+	}
+	e.home()
+	e.insert("X")
+	if e.value() != "XC:\\very\\long\\folder\\name\\result.json" {
+		t.Fatalf("insert at home failed: %q", e.value())
+	}
+	e.backspace()
+	e.end()
+	e.deleteForward()
+	if e.value() != "C:\\very\\long\\folder\\name\\result.json" {
+		t.Fatalf("editing failed: %q", e.value())
+	}
+	e.left()
+	e.backspace()
+	if e.value() != "C:\\very\\long\\folder\\name\\result.jsn" {
+		t.Fatalf("caret-relative backspace failed: %q", e.value())
+	}
+}
+
+func TestInlineEditorFiltersControlCharacters(t *testing.T) {
+	e := newInlineEditor("a\r\nb\tc")
+	if e.value() != "a  b c" {
+		t.Fatalf("control characters should become spaces: %q", e.value())
+	}
+	e.insert("x\x00y")
+	if e.value() != "a  b cxy" {
+		t.Fatalf("inserted controls should be filtered: %q", e.value())
+	}
+}
+
 func TestV95ViewerHasMergeSwitch(t *testing.T) {
 	app, err := static.UI.ReadFile("ui/app.js")
 	if err != nil {

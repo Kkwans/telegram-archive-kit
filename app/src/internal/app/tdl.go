@@ -979,16 +979,7 @@ func fileExists(p string) bool {
 	return err == nil && !st.IsDir()
 }
 
-func isTdlRunning() bool {
-	if runtime.GOOS != "windows" {
-		return false
-	}
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq tdl.exe", "/NH").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(string(out)), "tdl.exe")
-}
+func isTdlRunning() bool { return processRunning("tdl.exe") }
 
 func killAllTdl() error {
 	if runtime.GOOS != "windows" {

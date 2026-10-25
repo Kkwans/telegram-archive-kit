@@ -16,6 +16,8 @@ const (
 	keyRight
 	keyEnter
 	keyEsc
+	keyBackspace
+	keyDelete
 	keyHome
 	keyEnd
 	keyPageUp

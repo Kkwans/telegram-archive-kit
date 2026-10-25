@@ -3,6 +3,7 @@
 package app
 
 import (
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -20,6 +21,18 @@ var (
 	procReadConsoleInputW       = kernel32.NewProc("ReadConsoleInputW")
 	procFlushConsoleInputBuffer = kernel32.NewProc("FlushConsoleInputBuffer")
 	procWaitForSingleObject     = kernel32.NewProc("WaitForSingleObject")
+	procCloseHandle             = kernel32.NewProc("CloseHandle")
+	procGlobalLock              = kernel32.NewProc("GlobalLock")
+	procGlobalUnlock            = kernel32.NewProc("GlobalUnlock")
+	procLstrlenW                = kernel32.NewProc("lstrlenW")
+	procRtlMoveMemory           = kernel32.NewProc("RtlMoveMemory")
+	procCreateToolhelpSnapshot  = kernel32.NewProc("CreateToolhelp32Snapshot")
+	procProcess32FirstW         = kernel32.NewProc("Process32FirstW")
+	procProcess32NextW          = kernel32.NewProc("Process32NextW")
+	procOpenClipboard           = user32.NewProc("OpenClipboard")
+	procCloseClipboard          = user32.NewProc("CloseClipboard")
+	procGetClipboardData        = user32.NewProc("GetClipboardData")
+	procIsClipboardFormatAvail  = user32.NewProc("IsClipboardFormatAvailable")
 )
 
 const (
@@ -35,6 +48,9 @@ const (
 	rightCtrlPressed                = 0x0004
 	shiftPressed                    = 0x0010
 	enableVirtualTerminalProcessing = 0x0004
+	th32csSnapProcess               = 0x00000002
+	invalidHandleValue              = ^uintptr(0)
+	cfUnicodeText                   = 13
 )
 
 type keyEventRecord struct {
@@ -50,6 +66,19 @@ type inputRecord struct {
 	EventType uint16
 	Padding   uint16
 	Event     [16]byte
+}
+
+type processEntry32W struct {
+	Size            uint32
+	Usage           uint32
+	ProcessID       uint32
+	DefaultHeapID   uintptr
+	ModuleID        uint32
+	Threads         uint32
+	ParentProcessID uint32
+	PriClassBase    int32
+	Flags           uint32
+	ExeFile         [260]uint16
 }
 
 func stdHandle(which uintptr) syscall.Handle {
@@ -134,6 +163,10 @@ func readConsoleKey(timeoutMS uint32) (Key, bool) {
 			k.Code = keyEnter
 		case 0x1B:
 			k.Code = keyEsc
+		case 0x08:
+			k.Code = keyBackspace
+		case 0x2E:
+			k.Code = keyDelete
 		case 0x24:
 			k.Code = keyHome
 		case 0x23:
@@ -175,4 +208,54 @@ func terminalWidth() int {
 func flushInput() {
 	h := stdHandle(stdInputHandle)
 	_, _, _ = procFlushConsoleInputBuffer.Call(uintptr(h))
+}
+
+// processRunning walks the native process snapshot instead of spawning
+// tasklist.exe. The old subprocess probe took over a second on Windows and
+// made every return to the main menu feel frozen.
+func processRunning(name string) bool {
+	snap, _, _ := procCreateToolhelpSnapshot.Call(th32csSnapProcess, 0)
+	if snap == 0 || snap == invalidHandleValue {
+		return false
+	}
+	defer procCloseHandle.Call(snap)
+	var entry processEntry32W
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	r, _, _ := procProcess32FirstW.Call(snap, uintptr(unsafe.Pointer(&entry)))
+	for r != 0 {
+		if strings.EqualFold(syscall.UTF16ToString(entry.ExeFile[:]), name) {
+			return true
+		}
+		entry.Size = uint32(unsafe.Sizeof(entry))
+		r, _, _ = procProcess32NextW.Call(snap, uintptr(unsafe.Pointer(&entry)))
+	}
+	return false
+}
+
+func readClipboardText() string {
+	if r, _, _ := procIsClipboardFormatAvail.Call(cfUnicodeText); r == 0 {
+		return ""
+	}
+	if r, _, _ := procOpenClipboard.Call(0); r == 0 {
+		return ""
+	}
+	defer procCloseClipboard.Call()
+	h, _, _ := procGetClipboardData.Call(cfUnicodeText)
+	if h == 0 {
+		return ""
+	}
+	p, _, _ := procGlobalLock.Call(h)
+	if p == 0 {
+		return ""
+	}
+	defer procGlobalUnlock.Call(h)
+	n, _, _ := procLstrlenW.Call(p)
+	if n == 0 {
+		return ""
+	}
+	buf := make([]uint16, int(n))
+	// Copy through RtlMoveMemory so the clipboard pointer never needs a
+	// uintptr-to-unsafe.Pointer conversion.
+	procRtlMoveMemory.Call(uintptr(unsafe.Pointer(&buf[0])), p, n*2)
+	return syscall.UTF16ToString(buf)
 }
