@@ -732,8 +732,13 @@ func (a *App) actionRefreshWeb() {
 		showErrorAndWait(err)
 		return
 	}
+	// The point of a UI refresh is to look at the result, so hand the browser
+	// over as soon as the pages and library assets have been rewritten.
+	if e := openInBrowser(localFileURL(a.libraryIndex(), selectedSlug(a.selectedWorkspace(list)))); e != nil {
+		failures = append(failures, "自动打开归档库失败："+e.Error())
+	}
 	if len(failures) == 0 {
-		showMessage("网页已刷新", fmt.Sprintf("已重建 %d 个聊天；跳过 %d 个（没有 TAK 归档数据）。媒体、统计和源数据均未改动。", built, skipped))
+		showMessage("网页已刷新", fmt.Sprintf("已重建 %d 个聊天；跳过 %d 个（没有 TAK 归档数据）。媒体、统计和源数据均未改动，已自动打开归档库。", built, skipped))
 		return
 	}
 	clearScreen()
