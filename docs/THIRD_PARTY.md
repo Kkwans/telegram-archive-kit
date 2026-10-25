@@ -13,8 +13,8 @@
 ### telegram-export-beautifier（网页美化主题，已归档）
 
 - 仓库：<https://github.com/Kkwans/telegram-export-beautifier>（**已归档，停止维护**；最终版本 v3.2）
-- 使用方式：TAK **内置**了基于该主题优化改写的轻量版本（`app/src/ui/beautifier-theme.css` / `.js`），构建档案库时由程序直接写入 `assets/beautifier/`，完全离线，不拉取任何线上资源。
-- 版权说明：上游仓库未声明开源许可证，内容版权归 Kkwans 所有；TAK 的内置主题由同一作者基于其优化改写，随 TAK 以 MIT 许可证分发。
+- 使用方式：TAK **内置**了该主题的完整版本（上游 commit `608ac73`，即 `app/src/assets/ui/beautifier-theme.css` / `.js`），构建档案库时由程序直接写入 `assets/beautifier/`，完全离线，不拉取任何线上资源。相较上游原文，仅新增了“无标签时仍显示标签导航入口并展示空状态”的补丁，其余样式与交互保持原样。
+- 版权说明：上游仓库未声明开源许可证，内容版权归 Kkwans 所有；TAK 由同一作者开发并内置该主题，随 TAK 以 MIT 许可证分发。
 
 ### FFmpeg（媒体解码，可选）
 

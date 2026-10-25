@@ -15,7 +15,7 @@ Telegram Archive Library/            ← 数据目录，可整体备份/迁移
 │   ├── tak-lightbox.css/.js         ← 灯箱
 │   ├── tak-prelude.js               ← 六种消息合并模式
 │   ├── favicon.ico                  ← 图标
-│   └── beautifier/                  ← 内置优化版美化主题（style.css / script.js 与来源记录）
+│   └── beautifier/                  ← 内置完整版美化主题（telegram-export-beautifier，style.css / script.js 与来源记录）
 ├── .logs/                           ← 运行日志
 │   ├── tak-YYYYMMDD.log             ← TAK 日志
 │   ├── tdl-*.log                    ← tdl 原始日志

@@ -128,7 +128,7 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 
 - **TAK 本体**：Go 1.23+ 编写的单文件程序，**零第三方依赖**，Windows 控制台 TUI。
 - **tdl**：运行时以子进程方式调用，不捆绑、不修改其代码；会话数据保存在 `%USERPROFILE%\.tdl`。
-- **美化主题**：TAK 内置了基于 [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) 优化改写的轻量主题，随程序分发、完全离线，不从网络拉取任何资源。
+- **美化主题**：TAK 内置了 [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) 的完整主题（上游 commit `608ac73`），随程序分发、完全离线，不从网络拉取任何资源。
 - **配置文件**：`%APPDATA%\TelegramArchiveKit\config.json`。
 
 ## 📁 档案库结构
@@ -232,7 +232,7 @@ TUI 依赖 Windows 控制台 API，目前面向 Windows 10/11 x64 设计。部�
 第三方组件说明：
 
 - [tdl](https://github.com/iyear/tdl)（AGPL-3.0）：作为**独立外部程序**在运行时自动安装调用，本项目不捆绑、不复制其代码，与其许可证义务不冲突；
-- [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier)（已归档，停止维护）：TAK 的内置美化主题基于其优化改写，随程序内置分发，不依赖该仓库。
+- [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier)（已归档，停止维护）：TAK 内置其完整主题（上游 commit `608ac73`），随程序分发，不依赖该仓库。
 
 详见 [第三方组件与来源](docs/THIRD_PARTY.md)。
 

@@ -128,7 +128,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 
 - **TAK itself**: a single Go 1.23+ binary with **zero third-party dependencies** and a Windows console TUI.
 - **tdl**: invoked as an external subprocess at runtime — never bundled or modified; session data lives in `%USERPROFILE%\.tdl`.
-- **Beautifier theme**: TAK bundles an optimized, self-contained edition of the [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) theme — shipped with the binary, fully offline, nothing is fetched at runtime.
+- **Beautifier theme**: TAK bundles the complete [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) theme (upstream commit `608ac73`) — shipped with the binary, fully offline, nothing is fetched at runtime.
 - **Config file**: `%APPDATA%\TelegramArchiveKit\config.json`.
 
 ## 📁 Archive Library Layout
@@ -234,7 +234,7 @@ This project is licensed under the [MIT License](LICENSE).
 Third-party notes:
 
 - [tdl](https://github.com/iyear/tdl) (AGPL-3.0): installed and invoked at runtime as a **separate external program**; this project neither bundles nor copies its code, so there is no license conflict;
-- [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) (archived, no longer maintained): TAK's built-in theme is an optimized edition of it, bundled with the binary — the upstream repo is not a runtime dependency.
+- [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) (archived, no longer maintained): TAK bundles the complete theme (upstream commit `608ac73`) with the binary — the upstream repo is not a runtime dependency.
 
 See [Third-party Components](docs/THIRD_PARTY.md) for details.
 

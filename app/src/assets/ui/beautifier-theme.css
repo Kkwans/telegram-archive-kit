@@ -1,0 +1,4175 @@
+/* style.css - Telegram聊天记录通用美化样式 */
+/* 支持所有Telegram导出的HTML文件 */
+
+/* ==================== 全局样式重置 ==================== */
+/* 清除所有元素默认边距和内边距，统一盒模型 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* 全局CSS变量定义：颜色、渐变、阴影、圆角、过渡等设计令牌 */
+:root {
+    --primary-color: #667eea;
+    --primary-dark: #764ba2;
+    --primary-light: #a6b1e1;
+    --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --accent-gradient: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+    --cool-gradient: linear-gradient(135deg, #30cfd0 0%, #330867 100%);
+    --warm-gradient: linear-gradient(135deg, #ff9a56 0%, #ff6a88 100%);
+    --bg-color: #f0f2f5;
+    --bg-gradient: linear-gradient(180deg, #f0f2f5 0%, #e8eaf0 100%);
+    --card-bg: #ffffff;
+    --card-bg-hover: #f8f9ff;
+    --text-primary: #1c1e21;
+    --text-secondary: #65676b;
+    --text-muted: #8a8d91;
+    --border-color: #e4e6eb;
+    --border-color-hover: #d8dade;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.12);
+    --shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.15);
+    --shadow-soft: 0 8px 32px rgba(102, 126, 234, 0.1);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-xl: 24px;
+    --radius-full: 50%;
+    --transition-fast: 0.2s ease;
+    --transition-normal: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* html背景色：防止body设position:fixed时露出默认白色底色 */
+html {
+    background: var(--bg-gradient);
+}
+
+/* 页面加载遮罩：隐藏初始化过程中的样式变化 */
+body:not(.page-ready) .page_wrap {
+    opacity: 0;
+}
+body.page-ready .page_wrap {
+    opacity: 1;
+}
+
+/* 加载遮罩覆盖层 */
+.page-loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 99999;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-loading-overlay.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Telegram风格纸飞机图标 */
+.loading-logo {
+    width: 56px;
+    height: 56px;
+    animation: loadingFloat 2s ease-in-out infinite;
+}
+
+.loading-logo svg {
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(0 4px 12px rgba(102, 126, 234, 0.3));
+}
+
+@keyframes loadingFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+/* 加载进度条 */
+.loading-progress-track {
+    width: 140px;
+    height: 3px;
+    background: rgba(102, 126, 234, 0.12);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.loading-progress-bar {
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    border-radius: 3px;
+    animation: loadingProgress 1.2s ease-in-out infinite;
+}
+
+@keyframes loadingProgress {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+
+/* 加载提示文字 */
+.loading-text {
+    font-size: 0.82rem;
+    color: #8a8d91;
+    letter-spacing: 1px;
+    font-weight: 500;
+}
+
+/* 页面基础样式：字体、背景渐变、文字颜色、行高 */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    background: var(--bg-gradient);
+    color: var(--text-primary);
+    line-height: 1.6;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==================== 页面容器 ==================== */
+/* 页面最外层容器：限制最大宽度、居中 */
+.page_wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: transparent;
+    min-height: 100vh;
+}
+
+/* ==================== 头部样式 ==================== */
+/* 页面头部容器：渐变背景、圆角、阴影、边框 */
+.page_header {
+    background: 
+        linear-gradient(135deg, #f8f9fb 0%, #ffffff 30%, #f0f3f6 100%),
+        radial-gradient(circle at 30% 50%, rgba(102, 126, 234, 0.03) 0%, transparent 50%);
+    border-radius: 20px;
+    padding: 36px 48px;
+    margin: 0 auto 28px;
+    max-width: 1400px;
+    box-shadow: 
+        0 4px 24px rgba(102, 126, 234, 0.06),
+        0 1px 4px rgba(0, 0, 0, 0.03),
+        inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(102, 126, 234, 0.12);
+    position: relative;
+    overflow: hidden;
+}
+
+/* 顶部渐变流动条 - 更丰富 */
+.page_header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, 
+        #667eea 0%, 
+        #764ba2 20%, 
+        #a8c0ff 40%, 
+        #f093fb 60%, 
+        #764ba2 80%, 
+        #667eea 100%
+    );
+    background-size: 200% 100%;
+    animation: headerGradientFlow 4s linear infinite;
+    border-radius: 20px 20px 0 0;
+}
+
+/* 头部渐变条流动动画：背景位置循环移动 */
+@keyframes headerGradientFlow {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+}
+
+/* 背景光效 - 更大更明显 */
+.page_header::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -30%;
+    width: 100%;
+    height: 200%;
+    background: radial-gradient(ellipse at center, 
+        rgba(102, 126, 234, 0.08) 0%, 
+        rgba(118, 75, 162, 0.05) 30%, 
+        transparent 60%
+    );
+    pointer-events: none;
+    animation: headerGlowPulse 6s ease-in-out infinite;
+    z-index: 0;
+}
+
+/* 头部背景光效呼吸动画：透明度和缩放轮换 */
+@keyframes headerGlowPulse {
+    0%, 100% { 
+        opacity: 0.6;
+        transform: scale(1) rotate(-3deg);
+    }
+    50% { 
+        opacity: 1;
+        transform: scale(1.05) rotate(-3deg);
+    }
+}
+
+/* 背景装饰 - 斜线交叉图案 */
+.page_header .bg-dots {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: 
+        linear-gradient(45deg, transparent 48%, rgba(102, 126, 234, 0.03) 49%, rgba(102, 126, 234, 0.03) 51%, transparent 52%),
+        linear-gradient(-45deg, transparent 48%, rgba(118, 75, 162, 0.03) 49%, rgba(118, 75, 162, 0.03) 51%, transparent 52%);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* 悬停时背景向下流动动画 - 无缝循环（双层同步移动） */
+@keyframes bgDotsFlowDown {
+    0% { 
+        background-position: 0 0;
+    }
+    100% { 
+        background-position: 0 60px;
+    }
+}
+
+/* 头部内容区：flex居中布局，置于装饰层之上 */
+.page_header .content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+}
+
+/* 标题容器 - flex布局确保居中 */
+.page_header .text-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 8px 0;
+    width: 100%;
+    min-width: max-content;
+}
+
+/* 头部标题文字：中文字体优先、大字号、加粗、字距 */
+.page_header .text {
+    font-family: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #2d3748;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    line-height: 1;
+    position: relative;
+    display: inline-block;
+    text-align: center;
+}
+
+
+
+/* 左右菱形装饰 - 参考归档1的上下运动 */
+.page_header .decoration-left,
+.page_header .decoration-right {
+    display: none;
+}
+
+/* 在text上使用伪元素实现菱形 - 精确垂直居中 */
+.page_header .text::before,
+.page_header .text::after {
+    content: '✦';
+    font-size: 1.2rem;
+    color: #667eea;
+    position: absolute;
+    top: 50%;
+    margin-top: -0.4em;
+    transform: rotate(45deg);
+    opacity: 0.6;
+    text-shadow: 0 0 15px rgba(102, 126, 234, 0.4);
+}
+
+/* 左菱形装饰定位 + 浮动动画 */
+.page_header .text::before {
+    left: -40px;
+    animation: diamondFloatLeft 3.5s ease-in-out infinite;
+}
+
+/* 右菱形装饰定位 + 浮动动画 */
+.page_header .text::after {
+    right: -40px;
+    animation: diamondFloatRight 3.5s ease-in-out infinite;
+}
+
+/* 正常状态：中心对称运动 - 左下 ↔ 右上 */
+@keyframes diamondFloatLeft {
+    0%, 100% { 
+        transform: rotate(45deg) translate(0, 0);
+        opacity: 0.6;
+    }
+    50% { 
+        transform: rotate(45deg) translate(-8px, 8px);
+        opacity: 1;
+    }
+}
+
+/* 右菱形浮动动画：向右上移动 */
+@keyframes diamondFloatRight {
+    0%, 100% { 
+        transform: rotate(45deg) translate(0, 0);
+        opacity: 0.6;
+    }
+    50% { 
+        transform: rotate(45deg) translate(8px, -8px);
+        opacity: 1;
+    }
+}
+
+/* 悬停效果 - 菱形中心对称运动 */
+.page_header:hover {
+    box-shadow: 
+        0 8px 40px rgba(102, 126, 234, 0.1),
+        0 4px 16px rgba(0, 0, 0, 0.06);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 悬停时背景装饰线条加深 + 向下流动动画 */
+.page_header:hover .bg-dots {
+    background-image: 
+        linear-gradient(45deg, transparent 48%, rgba(102, 126, 234, 0.06) 49%, rgba(102, 126, 234, 0.06) 51%, transparent 52%),
+        linear-gradient(-45deg, transparent 48%, rgba(118, 75, 162, 0.06) 49%, rgba(118, 75, 162, 0.06) 51%, transparent 52%);
+    animation: bgDotsFlowDown 3s linear infinite;
+}
+
+/* 悬停时背景光效动画减速 */
+.page_header:hover::after {
+    animation-duration: 6s;
+}
+
+/* 悬停时左菱形切换动画、变色、增强光晕 */
+.page_header:hover .text::before {
+    animation: diamondFloatLeftHover 2s ease-in-out infinite;
+    color: #764ba2;
+    text-shadow: 0 0 25px rgba(102, 126, 234, 0.6);
+}
+
+/* 悬停时右菱形切换动画、变色、增强光晕 */
+.page_header:hover .text::after {
+    animation: diamondFloatRightHover 2s ease-in-out infinite;
+    color: #764ba2;
+    text-shadow: 0 0 25px rgba(102, 126, 234, 0.6);
+}
+
+/* 悬停状态：中心对称运动 - 左上 ↔ 右下 */
+@keyframes diamondFloatLeftHover {
+    0%, 100% { 
+        transform: rotate(45deg) translate(0, 0);
+        opacity: 0.8;
+    }
+    50% { 
+        transform: rotate(45deg) translate(-8px, -8px);
+        opacity: 1;
+    }
+}
+
+/* 悬停右菱形动画：向右下移动 */
+@keyframes diamondFloatRightHover {
+    0%, 100% { 
+        transform: rotate(45deg) translate(0, 0);
+        opacity: 0.8;
+    }
+    50% { 
+        transform: rotate(45deg) translate(8px, 8px);
+        opacity: 1;
+    }
+}
+
+/* 页面滚动后头部背景变为纯白渐变 */
+.page_header.scrolled {
+    background: linear-gradient(180deg, #ffffff 0%, #f8f9fb 50%, #ffffff 100%);
+}
+
+/* ==================== 聊天内容区域 ==================== */
+/* 页面主体内容区：内边距 */
+.page_body {
+    padding: 0 24px 24px;
+    background: transparent;
+}
+
+/* 聊天记录容器：限制最大宽度、居中 */
+.history {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* ==================== 消息样式 ==================== */
+/* 消息通用底边距 */
+.message {
+    margin-bottom: 16px;
+}
+
+/* 日期分隔符 */
+.message.service {
+    text-align: center;
+    margin: 50px 0;
+    position: relative;
+}
+
+/* 日期分隔符左右水平装饰线：渐变透明线条 */
+.message.service::before,
+.message.service::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 42%;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--border-color), transparent);
+    transition: width 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+        background 0.5s ease,
+        opacity 0.5s ease;
+}
+
+/* 左侧装饰线定位 */
+.message.service::before {
+    left: 0;
+}
+
+/* 右侧装饰线定位 */
+.message.service::after {
+    right: 0;
+}
+
+/* 悬停时装饰线变为蓝紫渐变色并略微加宽 */
+.message.service:hover::before,
+.message.service:hover::after {
+    background: linear-gradient(to right, transparent, rgba(102, 126, 234, 0.35), rgba(118, 75, 162, 0.15), transparent);
+    width: 45%;
+}
+
+/* 日期分隔符主体框：圆角胶囊、毛玻璃、边框、阴影 */
+.message.service .body {
+    display: inline-block;
+    background: var(--card-bg);
+    padding: 12px 28px;
+    border-radius: 28px;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 600;
+    box-shadow: var(--shadow-md);
+    position: relative;
+    z-index: 1;
+    transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+        box-shadow 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+        border-color 0.4s ease,
+        background 0.4s ease,
+        color 0.4s ease;
+    border: 1px solid var(--border-color);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+/* 悬停时日期框：渐变背景、多层阴影、上浮、蓝色边框和文字 */
+.message.service:hover .body {
+    background: linear-gradient(135deg, #f8f9ff 0%, #f3f4fe 50%, #f5f6ff 100%);
+    box-shadow:
+        0 8px 24px rgba(102, 126, 234, 0.08),
+        0 4px 12px rgba(0, 0, 0, 0.05),
+        0 1px 3px rgba(118, 75, 162, 0.04);
+    transform: translateY(-2px);
+    border-color: rgba(102, 126, 234, 0.25);
+    color: #667eea;
+}
+
+/* 普通消息 */
+.message.default {
+    display: flex;
+    gap: 16px;
+    padding: 24px;
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow 0.35s ease,
+        border-color 0.3s ease;
+    border: 1px solid var(--border-color);
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    contain: layout style;
+    will-change: transform;
+}
+
+/* 普通消息悬停背景覆盖层：淡蓝紫渐变，默认透明 */
+.message.default::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, 
+        rgba(240, 243, 255, 0.6) 0%, 
+        rgba(245, 240, 255, 0.4) 50%,
+        rgba(240, 248, 255, 0.3) 100%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+    border-radius: var(--radius-lg);
+    z-index: -1;
+}
+
+/* 普通消息悬停顶部装饰线：蓝紫渐变细线，默认透明 */
+.message.default::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1.5px;
+    background: linear-gradient(90deg, 
+        transparent 0%, 
+        rgba(102, 126, 234, 0.35) 25%, 
+        rgba(118, 75, 162, 0.4) 50%, 
+        rgba(102, 126, 234, 0.35) 75%, 
+        transparent 100%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* 普通消息悬停：上浮、多层阴影、蓝色边框 */
+.message.default:hover {
+    transform: translateY(-3px);
+    box-shadow: 
+        0 8px 24px rgba(102, 126, 234, 0.06),
+        0 16px 48px rgba(0, 0, 0, 0.06),
+        0 2px 6px rgba(118, 75, 162, 0.04);
+    border-color: rgba(102, 126, 234, 0.18);
+    z-index: 2;
+    position: relative;
+}
+
+/* 悬停时媒体包装器提升层级，避免被相邻消息遮挡 */
+.message.default:hover .photo_wrap,
+.message.default:hover .video_file_wrap {
+    z-index: 10;
+}
+
+/* 悬停时显示背景覆盖层 */
+.message.default:hover::before {
+    opacity: 1;
+}
+
+/* 悬停时显示顶部装饰线 */
+.message.default:hover::after {
+    opacity: 1;
+}
+
+/* 隐藏joined类的消息，我们会用JS重新组织 */
+.message.default.joined {
+    display: none;
+}
+
+/* ==================== 用户头像 ==================== */
+/* 头像包装器：禁止缩小 */
+.userpic_wrap {
+    flex-shrink: 0;
+}
+
+/* 头像圆形容器：圆角、居中、阴影 */
+.userpic {
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: white !important;
+    box-shadow: var(--shadow-md);
+    position: relative;
+    font-size: 1rem;
+}
+
+/* 头像首字母文字：白色、投影 */
+.userpic .initials {
+    color: white !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    z-index: 1;
+}
+
+/* 为不同的userpic类设置不同的渐变色 */
+.userpic.userpic1 {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.userpic.userpic2 {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.userpic.userpic3 {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.userpic.userpic4 {
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.userpic.userpic5 {
+    background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+.userpic.userpic6 {
+    background: linear-gradient(135deg, #30cfd0 0%, #330867 100%);
+}
+
+.userpic.userpic7 {
+    background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+}
+
+.userpic.userpic8 {
+    background: linear-gradient(135deg, #ff9a56 0%, #ff6a88 100%);
+}
+
+/* 如果没有特定类，使用默认渐变 */
+.userpic:not([class*="userpic"]) {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* ==================== 消息主体 ==================== */
+/* 消息主体区域：弹性填充剩余空间 */
+.body {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 发送者名称：加粗、渐变色文字 */
+.from_name {
+    font-weight: 700;
+    background: var(--primary-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 10px;
+    font-size: 1rem;
+    display: inline-block;
+}
+
+/* 消息时间戳：右浮动、圆角背景标签 */
+.date {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    float: right;
+    margin-left: 10px;
+    background: var(--bg-color);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+/* 转发消息样式优化：细灰色引用线，低存在感 */
+.forwarded {
+    border-left: 2px solid rgba(102, 126, 234, 0.18);
+    padding-left: 12px;
+    margin-top: 8px;
+    border-image: linear-gradient(to bottom, rgba(102, 126, 234, 0.25), rgba(118, 75, 162, 0.08)) 1;
+}
+
+/* 转发消息发送者名：flex布局、换行 */
+.forwarded .from_name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+/* 转发消息中的时间戳：重置渐变色效果、取消浮动 */
+.forwarded .from_name .date {
+    font-size: 0.75rem;
+    color: var(--text-secondary) !important;
+    font-weight: normal;
+    background: var(--bg-color);
+    padding: 4px 10px;
+    border-radius: 12px;
+    float: none;
+    margin-left: 0;
+    /* 重置渐变色效果 */
+    -webkit-background-clip: unset !important;
+    -webkit-text-fill-color: var(--text-secondary) !important;
+    background-clip: unset !important;
+}
+
+/* 消息文本区域：行高、自动换行 */
+.text {
+    margin-top: 12px;
+    word-wrap: break-word;
+    line-height: 1.7;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+/* 消息内链接：主色、无下划线、加粗 */
+.text a {
+    color: var(--primary-color);
+    text-decoration: none;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+/* 链接悬停：变色、显示下划线 */
+.text a:hover {
+    color: #005580;
+    text-decoration: underline;
+}
+
+/* ==================== 媒体容器 ==================== */
+/* 媒体网格布局：自动填充、最小180px列宽 */
+.media_wrap {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    max-width: 100%;
+}
+
+/* 针对大屏幕优化 */
+@media (min-width: 1024px) {
+    .media_wrap {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 12px;
+    }
+}
+
+/* 图片和视频包装器 */
+.photo_wrap,
+.video_file_wrap {
+    position: relative;
+    display: block;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-sm);
+    background: var(--bg-color);
+    aspect-ratio: 1;
+    /* 统一使用1:1比例，避免排版混乱 */
+}
+
+/* 图片/视频悬停：微放大上浮、加深阴影 */
+.photo_wrap:hover,
+.video_file_wrap:hover {
+    transform: scale(1.03) translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    z-index: 10;
+}
+
+/* 图片/视频底部暗角遮罩：悬停时显示 */
+.photo_wrap::after,
+.video_file_wrap::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.3), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    top: auto;
+}
+
+/* 悬停时显示底部暗角 */
+.photo_wrap:hover::after,
+.video_file_wrap:hover::after {
+    opacity: 1;
+}
+
+/* 图片/视频元素：填充容器、裁剪适配 */
+.photo,
+.video_file {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+    object-fit: cover;
+}
+
+/* 视频播放按钮 */
+.video_play_bg {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 64px;
+    height: 64px;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 3;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* 悬停时播放按钮放大、加深阴影 */
+.video_file_wrap:hover .video_play_bg {
+    background: rgba(255, 255, 255, 1);
+    transform: translate(-50%, -50%) scale(1.15);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* 播放按钮三角形图标：CSSborder实现 */
+.video_play {
+    width: 0;
+    height: 0;
+    border-left: 22px solid #0088cc;
+    border-top: 14px solid transparent;
+    border-bottom: 14px solid transparent;
+    margin-left: 6px;
+}
+
+/* 视频时长标签：右下角半透明背景 */
+.video_duration {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    z-index: 3;
+    backdrop-filter: blur(4px);
+}
+
+/* ==================== 灯箱样式 ==================== */
+/* 灯箱全屏覆盖层：毛玻璃背景 */
+.lightbox {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0);
+    backdrop-filter: blur(0px);
+    z-index: 9999;
+    transition: background 0.4s ease, backdrop-filter 0.4s ease;
+}
+
+/* 灯箱激活状态：flex居中显示 */
+.lightbox.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 灯箱背景完全展开后的样式 */
+.lightbox.bg-visible {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+}
+
+/* 灯箱关闭动画状态 */
+.lightbox.closing {
+    background: rgba(0, 0, 0, 0) !important;
+    backdrop-filter: blur(0px) !important;
+    transition: background 0.3s ease, backdrop-filter 0.3s ease;
+}
+
+/* 灯箱关闭时所有控件立即淡出，与媒体同步消失 */
+.lightbox.closing .lightbox-close,
+.lightbox.closing .lightbox-prev,
+.lightbox.closing .lightbox-next,
+.lightbox.closing .lightbox-filter,
+.lightbox.closing .lightbox-counter {
+    opacity: 0 !important;
+    transition: opacity 0.15s ease !important;
+    pointer-events: none !important;
+}
+
+/* 灯箱内容区：全屏居中、允许溢出（用于缩放拖拽） */
+.lightbox-content {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    pointer-events: none;
+    /* 移动端禁用浏览器默认手势，由JS接管触摸操作 */
+    touch-action: none;
+}
+
+/* 灯箱媒体元素：启用事件、GPU加速、展开动画过渡 */
+.lightbox-content img,
+.lightbox-content video {
+    pointer-events: auto;
+    will-change: transform;
+    backface-visibility: hidden;
+    transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1),
+        opacity 0.3s ease,
+        border-radius 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 灯箱图片/视频通用样式：限制尺寸、圆角、阴影、缩放过渡 */
+.lightbox img,
+.lightbox video {
+    max-width: 95vw;
+    max-height: 95vh;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.1);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+    object-fit: contain;
+    cursor: zoom-in;
+    outline: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* 视频预览wrapper过渡（全屏切换平滑） */
+.video-preview-wrapper {
+    transition: border-radius 0.3s ease, box-shadow 0.3s ease;
+    background: transparent !important;
+}
+
+/* wrapper内的视频元素：覆盖全局限制，填满wrapper */
+.video-preview-wrapper video {
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+/* 灯箱加载动画容器：居中显示 */
+.lightbox-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    pointer-events: none;
+}
+
+/* 灯箱加载动画：旋转圆圈 */
+.lightbox-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top-color: rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    animation: lightboxSpin 0.7s linear infinite;
+}
+
+@keyframes lightboxSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* 缩放状态：拖拽光标 */
+.lightbox img.zoomed,
+.lightbox video.zoomed {
+    cursor: grab;
+}
+
+/* 缩放拖拽中：抓取光标 */
+.lightbox img.zoomed:active,
+.lightbox video.zoomed:active {
+    cursor: grabbing;
+}
+
+/* 自定义视频控制条样式 - 现代化设计 */
+.lightbox video {
+    border-radius: var(--radius-lg);
+}
+
+/* 视频控制条面板：底部渐变黑色背景 */
+.lightbox video::-webkit-media-controls-panel {
+    background: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.9) 100%);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* 视频播放按钮：蓝紫色圆形 */
+.lightbox video::-webkit-media-controls-play-button {
+    background-color: rgba(102, 126, 234, 0.9);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+}
+
+/* 播放按钮悬停：加深颜色、微放大 */
+.lightbox video::-webkit-media-controls-play-button:hover {
+    background-color: rgba(102, 126, 234, 1);
+    transform: scale(1.1);
+}
+
+/* 视频进度条：半透明白色背景、圆角 */
+.lightbox video::-webkit-media-controls-timeline {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    height: 6px;
+}
+
+/* 视频时间显示：白色加粗、文字投影 */
+.lightbox video::-webkit-media-controls-current-time-display,
+.lightbox video::-webkit-media-controls-time-remaining-display {
+    color: white;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* 视频音量滑块：半透明背景 */
+.lightbox video::-webkit-media-controls-volume-slider {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+}
+
+/* 视频静音按钮：蓝紫色圆形 */
+.lightbox video::-webkit-media-controls-mute-button {
+    background-color: rgba(102, 126, 234, 0.7);
+    border-radius: 50%;
+}
+
+/* 视频全屏按钮：蓝紫色圆形 */
+.lightbox video::-webkit-media-controls-fullscreen-button {
+    background-color: rgba(102, 126, 234, 0.7);
+    border-radius: 50%;
+}
+
+/* 视频提示文字 */
+.video-hint {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    backdrop-filter: blur(10px);
+    z-index: 10002;
+}
+
+/* 悬停视频时显示操作提示 */
+.lightbox video:hover ~ .video-hint {
+    opacity: 1;
+}
+
+/* 灯箱控制按钮 - 毛玻璃灵动设计 */
+.lightbox-close,
+.lightbox-prev,
+.lightbox-next {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+    padding: 0;
+    border-radius: 50%;
+    transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    z-index: 10001;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    pointer-events: auto;
+}
+
+.lightbox-close svg,
+.lightbox-prev svg,
+.lightbox-next svg {
+    width: 50%;
+    height: 50%;
+}
+
+/* 关闭按钮悬停：加亮、放大、蓝色光晕 */
+.lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    opacity: 1;
+    transform: scale(1.08);
+    box-shadow: 0 4px 16px rgba(102, 126, 234, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+/* 控制按钮按下：缩小反馈 */
+.lightbox-close:active,
+.lightbox-prev:active,
+.lightbox-next:active {
+    transform: scale(0.92);
+    transition-duration: 0.1s;
+}
+
+/* 左右切换按钮：鼠标靠近时显示 */
+.lightbox-prev,
+.lightbox-next {
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+        opacity 0.25s ease;
+}
+
+/* 灯箱悬停时显示左右切换按钮 */
+.lightbox:hover .lightbox-prev,
+.lightbox:hover .lightbox-next {
+    opacity: 0.7;
+    pointer-events: auto;
+}
+
+/* 切换按钮悬停：加亮、放大、蓝色光晕 */
+.lightbox-prev:hover,
+.lightbox-next:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-50%) scale(1.08);
+    box-shadow: 0 4px 16px rgba(102, 126, 234, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+/* 切换按钮按下：缩小反馈 */
+.lightbox-prev:active,
+.lightbox-next:active {
+    transform: translateY(-50%) scale(0.92);
+}
+
+/* 关闭按钮定位：右上角 */
+.lightbox-close {
+    top: 20px;
+    right: 20px;
+}
+
+/* 关闭按钮悬停特效：红色背景 + 旋转90度 */
+.lightbox-close:hover {
+    background: rgba(244, 67, 54, 0.7);
+    border-color: rgba(244, 67, 54, 0.4);
+    box-shadow: 0 4px 16px rgba(244, 67, 54, 0.3);
+    transform: scale(1.08) rotate(90deg);
+}
+
+/* 上一张按钮定位：左侧居中 */
+.lightbox-prev {
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* 下一张按钮定位：右侧居中 */
+.lightbox-next {
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* 灯箱媒体计数器：底部居中、毛玻璃背景 */
+.lightbox-counter {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.9);
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    transition: opacity 0.3s ease;
+    opacity: 1;
+    pointer-events: none;
+    letter-spacing: 0.5px;
+}
+
+/* 鼠标移动到底部时显示计数器 */
+.lightbox:hover .lightbox-counter {
+    opacity: 1;
+}
+
+/* 灯箱媒体筛选工具栏 */
+.lightbox-filter {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    display: flex;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+    padding: 3px;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    z-index: 10001;
+    pointer-events: auto;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+/* 灯箱悬停时显示筛选工具栏 */
+.lightbox:hover .lightbox-filter {
+    opacity: 1;
+}
+
+/* 筛选按钮基础样式：透明背景、圆角、弹性过渡 */
+.lightbox-filter-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6);
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    pointer-events: auto;
+}
+
+/* 筛选按钮悬停：加亮文字和背景 */
+.lightbox-filter-btn:hover {
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* 筛选按钮激活状态：蓝紫色背景、光晕阴影 */
+.lightbox-filter-btn.active {
+    color: white;
+    background: rgba(102, 126, 234, 0.6);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* 筛选按钮按下：缩小反馈 */
+.lightbox-filter-btn:active {
+    transform: scale(0.92);
+    transition-duration: 0.1s;
+}
+
+/* ==================== 响应式设计 ==================== */
+@media (max-width: 768px) {
+    /* 移动端全局：去掉点击蓝色高亮方块 */
+    * {
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /* 移动端页面头部：适度缩小 */
+    .page_header {
+        padding: 24px 20px;
+        margin: 0 auto 16px;
+        border-radius: 16px;
+    }
+
+    .page_header::before {
+        border-radius: 16px 16px 0 0;
+    }
+
+    .page_header .text {
+        font-size: 1.2rem;
+        letter-spacing: 3px;
+    }
+
+    .page_header .text::before {
+        left: -24px;
+        font-size: 0.9rem;
+    }
+
+    .page_header .text::after {
+        right: -24px;
+        font-size: 0.9rem;
+    }
+
+    /* 移动端页面主体：适度减少内边距 */
+    .page_body {
+        padding: 0 10px 16px;
+    }
+
+    /* 移动端消息卡片：紧凑布局，改为纵向排列 */
+    .message.default {
+        padding: 12px;
+        gap: 8px;
+        flex-direction: column;
+    }
+
+    /* 移动端隐藏头像列，让内容占满宽度 */
+    .message.default .pull_left.userpic_wrap {
+        display: none;
+    }
+
+    /* 移动端消息body占满宽度 */
+    .message.default .body {
+        width: 100%;
+    }
+
+    /* 移动端发送者名称行：添加小头像 + 名字横向排列 */
+    .message.default .from_name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    /* 移动端日期分隔符：缩小间距，减少空间占用 */
+    .message.service {
+        margin: 16px 0;
+    }
+
+    /* 移动端日期框：缩小内边距、字体、圆角 */
+    .message.service .body {
+        padding: 8px 18px;
+        font-size: 0.82rem;
+        border-radius: 20px;
+    }
+
+    /* 移动端媒体网格：一行3个图片/视频，占满宽度后图更大 */
+    .media_wrap {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 3px;
+    }
+
+    /* 移动端图片/视频包装器：适配小尺寸 */
+    .photo_wrap,
+    .video_file_wrap {
+        border-radius: 8px;
+    }
+
+    /* 移动端禁用悬停放大效果 */
+    .photo_wrap:hover,
+    .video_file_wrap:hover {
+        transform: none;
+        box-shadow: var(--shadow-sm);
+    }
+
+    /* 移动端消息卡片禁用悬停上浮 */
+    .message.default:hover {
+        transform: none;
+    }
+
+    .from_name {
+        font-size: 0.88rem;
+    }
+
+    /* 移动端视频时长标签缩小 */
+    .video_duration {
+        padding: 2px 5px;
+        font-size: 0.65rem;
+        bottom: 4px;
+        right: 4px;
+    }
+
+    /* 移动端视频播放按钮缩小 */
+    .video_play_bg {
+        width: 36px;
+        height: 36px;
+    }
+
+    .video_play {
+        border-left: 14px solid #0088cc;
+        border-top: 8px solid transparent;
+        border-bottom: 8px solid transparent;
+        margin-left: 4px;
+    }
+
+    /* 移动端灯箱切换按钮：隐藏（改用左右滑动切换） */
+    .lightbox-prev,
+    .lightbox-next {
+        display: none !important;
+    }
+
+    /* 移动端灯箱关闭按钮：缩小尺寸，与筛选项协调 */
+    .lightbox-close {
+        top: 10px;
+        right: 10px;
+        width: 34px;
+        height: 34px;
+        font-size: 0.9rem;
+        opacity: 0.85 !important;
+        pointer-events: auto !important;
+        z-index: 10002;
+        transition: opacity 0.25s ease;
+    }
+
+    /* 移动端灯箱：禁用backdrop-filter(GPU图层重组导致图片纹理闪白)，用纯色背景替代 */
+    .lightbox.bg-visible {
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .lightbox.closing {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+
+    /* 移动端灯箱筛选栏：默认显示，不依赖hover */
+    .lightbox-filter {
+        top: 10px;
+        left: 10px;
+        padding: 2px;
+        opacity: 0.85 !important;
+        pointer-events: auto !important;
+        z-index: 10002;
+        transition: opacity 0.25s ease;
+    }
+
+    .lightbox-filter-btn {
+        padding: 4px 10px;
+        font-size: 0.72rem;
+    }
+
+    /* 移动端灯箱图片/视频：保留圆角和阴影，与PC端一致 */
+    .lightbox img,
+    .lightbox video {
+        max-width: 96vw;
+        max-height: 88vh;
+    }
+
+    /* 移动端链接预览卡片 */
+    .link-preview-card {
+        max-width: 100%;
+    }
+
+    /* 移动端链接预览改为纵向布局：图片在上、信息在下 */
+    .link-preview-content {
+        flex-direction: column;
+    }
+
+    /* 移动端链接预览图：占满宽度、固定高度 */
+    .link-preview-image {
+        width: 100% !important;
+        min-width: 100% !important;
+        height: 160px !important;
+    }
+
+    /* 移动端链接预览信息区：减小内边距 */
+    .link-preview-info {
+        padding: 14px !important;
+        padding-right: 36px !important;
+    }
+
+    /* 移动端转发消息引用线更细 */
+    .forwarded {
+        border-left-width: 1.5px;
+        padding-left: 10px;
+    }
+
+    /* 移动端消息滑入动画简化，提升性能 */
+    .message.default {
+        animation: none;
+    }
+}
+
+/* ==================== 滚动条美化 ==================== */
+/* 滚动条宽度和高度 */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+/* 滚动条轨道背景 */
+::-webkit-scrollbar-track {
+    background: var(--bg-color);
+}
+
+/* 滚动条滑块：蓝紫渐变、圆角 */
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 5px;
+}
+
+/* 滚动条滑块悬停：渐变方向反转 */
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+}
+
+/* 通用淡入动画 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* ==================== 加载动画 ==================== */
+/* 骨架屏微光动画：背景位置左右循环 */
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+/* 快进快退动画 */
+@keyframes seekPulse {
+    0% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 0;
+    }
+
+    50% {
+        transform: translate(-50%, -50%) scale(1.1);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+}
+
+/* 媒体计数标签 */
+.media-count {
+    display: inline-block;
+    background: var(--primary-gradient);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-left: 8px;
+    box-shadow: var(--shadow-sm);
+}
+
+/* 优化blockquote样式 */
+blockquote {
+    border-left: 4px solid var(--primary-color);
+    padding-left: 16px;
+    margin: 12px 0;
+    color: var(--text-secondary);
+    font-style: italic;
+    background: var(--bg-color);
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+}
+
+/* 优化code样式 */
+code {
+    background: var(--bg-color);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    color: var(--primary-color);
+    border: 1px solid var(--border-color);
+}
+
+/* 普通消息入场动画：从左侧滑入 */
+.message.default {
+    animation: slideIn 0.4s ease-out;
+}
+
+/* 消息滑入动画：从左侧淡入 */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* 全局链接样式：相对定位（用于下划线动画） */
+a {
+    position: relative;
+    transition: all 0.3s;
+}
+
+/* 链接下划线动画：悬停时从左向右展开 */
+a::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background: var(--primary-gradient);
+    transition: width 0.3s;
+}
+
+/* 链接悬停时下划线展开到100% */
+a:hover::after {
+    width: 100%;
+}
+
+/* ==================== 日期导航样式 - 轻盈毛玻璃按钮 ==================== */
+/* 日期导航容器：固定在右下角 */
+#date-navigation {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 9998;
+    max-width: 320px;
+}
+
+/* 日期导航开关按钮：毛玻璃圆形按钮、蓝紫光晕 */
+.date-nav-toggle {
+    background: rgba(102, 126, 234, 0.1);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    color: white;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    font-weight: 600;
+    text-align: center;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    position: relative;
+    overflow: hidden;
+}
+
+/* 开关按钮光泽覆盖层：悬停时显示 */
+.date-nav-toggle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0) 100%);
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+/* 开关按钮波纹效果层：按下时播放扩散动画 */
+.date-nav-toggle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.5) 0%, transparent 70%);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+/* 开关按钮悬停：上浮放大、加深光晕 */
+.date-nav-toggle:hover {
+    transform: translateY(-4px) scale(1.06);
+    box-shadow: 0 12px 40px rgba(102, 126, 234, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    background: rgba(102, 126, 234, 0.18);
+}
+
+/* 悬停时显示光泽覆盖层 */
+.date-nav-toggle:hover::before {
+    opacity: 1;
+}
+
+/* 开关按钮按下：下沉缩小、内阴影 */
+.date-nav-toggle:active {
+    transform: translateY(1px) scale(0.94);
+    box-shadow: 0 4px 16px rgba(102, 126, 234, 0.45),
+        inset 0 2px 6px rgba(0, 0, 0, 0.12);
+    background: rgba(102, 126, 234, 0.28);
+    transition: all 0.08s ease;
+}
+
+/* 按下时光泽层减淡 */
+.date-nav-toggle:active::before {
+    opacity: 0.3;
+    transition: opacity 0.08s ease;
+}
+
+/* 按下时播放波纹扩散动画 */
+.date-nav-toggle:active::after {
+    animation: rippleEffect 0.55s ease-out forwards;
+}
+
+/* 波纹扩散动画：从中心向外扩展并淡出 */
+@keyframes rippleEffect {
+    0% {
+        width: 0;
+        height: 0;
+        opacity: 0.6;
+    }
+    60% {
+        opacity: 0.3;
+    }
+    100% {
+        width: 320%;
+        height: 320%;
+        opacity: 0;
+    }
+}
+
+/* 日期导航图标：弹性缩放过渡、投影 */
+.date-nav-icon {
+    font-size: 1.5rem;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    line-height: 1;
+    position: relative;
+    z-index: 1;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* 悬停时图标放大 */
+.date-nav-toggle:hover .date-nav-icon {
+    transform: scale(1.1);
+}
+
+/* 按下时图标缩小 */
+.date-nav-toggle:active .date-nav-icon {
+    transform: scale(0.88);
+    transition: transform 0.08s ease;
+}
+
+/* 导航激活时开关按钮：上浮放大 + 外圈光晕 */
+#date-navigation.active .date-nav-toggle {
+    transform: translateY(-4px) scale(1.06);
+    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.25),
+        0 12px 40px rgba(102, 126, 234, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    background: rgba(102, 126, 234, 0.18);
+}
+
+/* 激活时显示光泽覆盖层 */
+#date-navigation.active .date-nav-toggle::before {
+    opacity: 1;
+}
+
+/* 激活时图标放大 */
+#date-navigation.active .date-nav-icon {
+    transform: scale(1.1);
+}
+
+/* 关闭时开关按钮播放弹跳动画 */
+#date-navigation.closing .date-nav-toggle {
+    animation: closeBounce 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* 关闭弹跳动画：缩小→回弹→复位 */
+@keyframes closeBounce {
+    0% {
+        transform: translateY(-4px) scale(1.06);
+    }
+    40% {
+        transform: translateY(0) scale(0.92);
+    }
+    70% {
+        transform: translateY(-2px) scale(1.03);
+    }
+    100% {
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* 关闭时光泽层淡出 */
+#date-navigation.closing .date-nav-toggle::before {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+/* 关闭时图标复位 */
+#date-navigation.closing .date-nav-icon {
+    transform: scale(1);
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 日期导航文字标签（隐藏，仅用图标） */
+.date-nav-text {
+    display: none;
+}
+
+/* 日期导航内容面板：毛玻璃卡片、圆角、上滑动画 */
+.date-nav-content {
+    display: none;
+    position: absolute;
+    bottom: 72px;
+    right: 0;
+    width: 320px;
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-radius: 20px;
+    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    max-height: 80vh;
+    overflow: hidden;
+    animation: slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* 面板打开动画：从下方滑入并淡入 */
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 关闭时面板播放下滑淡出动画 */
+#date-navigation.closing .date-nav-content {
+    display: block;
+    animation: slideDown 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 面板关闭动画：向下滑出并淡出 */
+@keyframes slideDown {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+}
+
+/* 激活时显示内容面板 */
+#date-navigation.active .date-nav-content {
+    display: block;
+}
+
+/* 日期导航面板头部：蓝紫渐变背景、白色文字 */
+.date-nav-header {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.9) 0%, rgba(118, 75, 162, 0.9) 100%);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: white;
+    padding: 18px 20px;
+    font-weight: 700;
+    border-radius: 18px 18px 0 0;
+    text-align: center;
+    font-size: 1.05rem;
+    letter-spacing: 0.5px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* 日期列表容器：可滚动、限制最大高度 */
+.date-list {
+    max-height: 500px;
+    overflow-y: auto;
+    padding: 8px 0;
+    position: relative;
+}
+
+/* 日期列表滚动条宽度 */
+.date-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+/* 日期列表滚动条轨道 */
+.date-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 3px;
+}
+
+/* 日期列表滚动条滑块：蓝紫渐变 */
+.date-list::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 3px;
+}
+
+/* 年份标题：蓝紫渐变背景、毛玻璃、可点击折叠/展开 */
+.year-header {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: white;
+    margin: 12px 8px 8px 8px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg,
+        rgba(102, 126, 234, 0.85),
+        rgba(118, 75, 162, 0.85),
+        rgba(102, 126, 234, 0.85));
+    background-size: 200% 100%;
+    backdrop-filter: blur(15px) saturate(150%);
+    -webkit-backdrop-filter: blur(15px) saturate(150%);
+    border-radius: 14px;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 3px 16px rgba(102, 126, 234, 0.2),
+        0 1px 6px rgba(0, 0, 0, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1), border-radius 0.3s ease;
+    user-select: none;
+    position: relative;
+    overflow: hidden;
+    z-index: 10;
+}
+
+/* 年份标题置顶样式 */
+.year-header.sticky {
+    position: sticky;
+    top: 0;
+    margin: 0 8px 8px 8px;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3),
+        0 2px 8px rgba(0, 0, 0, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.4),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+    animation: none;
+    z-index: 1000;
+}
+
+/* 年份标题置顶时的滑入动画 */
+@keyframes stickySlideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 年份标题光泽扫过效果：悬停时从左到右滑动 */
+.year-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg,
+        transparent,
+        rgba(255, 255, 255, 0.2),
+        transparent);
+    transition: left 0.6s ease;
+}
+
+/* 悬停时光泽滑到右侧 */
+.year-header:hover::before {
+    left: 100%;
+}
+
+/* 第一个年份标题取消顶部边距 */
+.year-header:first-child {
+    margin-top: 0;
+}
+
+/* 年份标题悬停：上浮放大、加深阴影 */
+.year-header:hover {
+    background-position: 100% 0;
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 8px 28px rgba(102, 126, 234, 0.4),
+        0 4px 12px rgba(0, 0, 0, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+}
+
+/* 年份标题按下：下沉缩小 */
+.year-header:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: 0 2px 12px rgba(102, 126, 234, 0.3),
+        0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 年份标题文字：居中、加粗 */
+.year-title {
+    flex: 1;
+    text-align: center;
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+
+/* 年份折叠/展开箭头图标：旋转过渡 */
+.year-toggle {
+    font-size: 0.85rem;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0.85;
+}
+
+/* 折叠时箭头旋转-90度 */
+.year-header.collapsed .year-toggle {
+    transform: rotate(-90deg);
+}
+
+/* 年份内容容器：展开状态，高度由JS动态控制 */
+.year-content {
+    overflow: hidden;
+    opacity: 1;
+    margin-bottom: 8px;
+}
+
+/* 年份内容折叠状态：高度为0、透明 */
+.year-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-bottom: 0;
+}
+
+/* 日期卡片的淡入淡出动画 */
+.year-content:not(.collapsed) .date-item {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* 折叠时日期卡片淡出上移 */
+.year-content.collapsed .date-item {
+    opacity: 0;
+    transform: translateY(-15px);
+    transition: opacity 0.3s ease-in, transform 0.3s ease-in;
+}
+
+/* 日期卡片：PC端不透明白色背景、蓝紫边框、弹性过渡 */
+.date-item {
+    padding: 14px 18px;
+    cursor: pointer;
+    border-radius: 14px;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+        background 0.3s ease,
+        border-color 0.3s ease,
+        box-shadow 0.3s ease,
+        color 0.3s ease,
+        opacity 0.3s ease;
+    margin: 8px 12px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #333;
+    background: rgba(255, 255, 255, 1);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    box-shadow: 0 2px 12px rgba(102, 126, 234, 0.15);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: visible;
+}
+
+/* 日期卡片悬停：渐变背景、上浮放大、加深阴影 */
+.date-item:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.25), rgba(118, 75, 162, 0.25));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transform: translateY(-4px) scale(1.02);
+    border-color: rgba(102, 126, 234, 0.4);
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.35),
+        0 4px 12px rgba(0, 0, 0, 0.15);
+    color: #667eea;
+    z-index: 10;
+}
+
+/* 日期卡片头部：左右分布布局 */
+.date-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* 日期卡片标题文字：加粗 */
+.date-item-title {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+/* 日期卡片消息计数标签：蓝紫背景、圆角 */
+.date-item-count {
+    background: rgba(102, 126, 234, 0.2);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    color: #667eea;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+/* 悬停时计数标签变为白底紫字 */
+.date-item:hover .date-item-count {
+    background: rgba(255, 255, 255, 0.9);
+    color: #764ba2;
+    border-color: rgba(118, 75, 162, 0.5);
+}
+
+/* 日期卡片消息预览：最多显示2行、省略号 */
+.date-item-preview {
+    font-size: 0.85rem;
+    color: #666;
+    line-height: 1.4;
+    max-height: 2.8em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+/* 悬停时预览文字加深 */
+.date-item:hover .date-item-preview {
+    color: #555;
+}
+
+/* 图片预览提示框 */
+.image-preview-tooltip {
+    position: fixed;
+    width: 200px;
+    height: 200px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    z-index: 10000;
+    pointer-events: auto;
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    display: none;
+    border: none;
+    outline: none;
+}
+
+/* 图片预览提示框禁用伪元素 */
+.image-preview-tooltip::before,
+.image-preview-tooltip::after {
+    display: none;
+}
+
+/* 图片预览显示状态：淡入放大 */
+.image-preview-tooltip.visible {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* 图片预览图片：填充容器、裁剪适配 */
+.image-preview-tooltip img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border: none;
+    outline: none;
+}
+
+/* 日期行高亮动画：渐变背景 + 光晕扩散 + 圆角变化 */
+@keyframes highlight {
+    0% {
+        background: transparent;
+        box-shadow: none;
+        border-radius: 0;
+    }
+
+    10% {
+        background: linear-gradient(135deg,
+            rgba(102, 126, 234, 0.15),
+            rgba(118, 75, 162, 0.15));
+        box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.4);
+        border-radius: 20px;
+    }
+
+    25% {
+        background: linear-gradient(135deg,
+            rgba(102, 126, 234, 0.25),
+            rgba(118, 75, 162, 0.25));
+        box-shadow: 0 0 0 8px rgba(102, 126, 234, 0.2),
+            0 8px 32px rgba(102, 126, 234, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.3);
+        border-radius: 24px;
+    }
+
+    50% {
+        background: linear-gradient(135deg,
+            rgba(102, 126, 234, 0.2),
+            rgba(118, 75, 162, 0.2));
+        box-shadow: 0 0 0 12px rgba(102, 126, 234, 0.1),
+            0 12px 40px rgba(102, 126, 234, 0.25),
+            inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        border-radius: 24px;
+    }
+
+    100% {
+        background: transparent;
+        box-shadow: none;
+        border-radius: 0;
+    }
+}
+
+/* 日期卡片脉冲动画：两次弹性缩放 */
+@keyframes datePulse {
+    0% {
+        transform: scale(1);
+    }
+
+    30% {
+        transform: scale(1.03);
+    }
+
+    60% {
+        transform: scale(1.06);
+    }
+
+    80% {
+        transform: scale(1.04);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+/* 日期卡片高亮动画 */
+.date-item.date-highlight {
+    animation: dateCardHighlight 0.8s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    z-index: 100 !important;
+    position: relative !important;
+}
+
+/* 日期卡片高亮动画：背景加深 + 上浮放大 + 光晕扩散 */
+@keyframes dateCardHighlight {
+    0% {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.25), rgba(118, 75, 162, 0.25));
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        border-color: rgba(102, 126, 234, 0.4);
+    }
+
+    50% {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.4), rgba(118, 75, 162, 0.4));
+        transform: translateY(-6px) scale(1.05);
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.5),
+            inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        border-color: rgba(102, 126, 234, 0.6);
+    }
+
+    100% {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.25), rgba(118, 75, 162, 0.25));
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3),
+            inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        border-color: rgba(102, 126, 234, 0.4);
+    }
+}
+
+/* 日期导航面板中日期卡片的定位动画（无forwards，动画结束自然回到默认样式） */
+.date-item.locating {
+    animation: dateLocatingPulse 1.4s ease-in-out;
+    transition: none !important;
+}
+
+/* 日期卡片定位时隐藏竖线装饰（仅日期行需要） */
+.date-item.locating .date-line-left,
+.date-item.locating .date-line-right {
+    display: none;
+}
+
+/* 日期卡片定位脉冲动画：两次缩放 + 光晕闪烁，不透明背景色（参考V3/10） */
+@keyframes dateLocatingPulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 2px 12px rgba(102, 126, 234, 0.15);
+        border-color: rgba(102, 126, 234, 0.3);
+        background: #eef0fd;
+    }
+
+    25% {
+        transform: scale(1.04);
+        box-shadow: 
+            0 0 20px rgba(102, 126, 234, 0.4),
+            0 8px 25px rgba(102, 126, 234, 0.35);
+        border-color: rgba(102, 126, 234, 0.8);
+        background: #e4e8fb;
+    }
+
+    50% {
+        transform: scale(1);
+        box-shadow: 0 2px 12px rgba(102, 126, 234, 0.15);
+        border-color: rgba(102, 126, 234, 0.3);
+        background: #eef0fd;
+    }
+
+    75% {
+        transform: scale(1.04);
+        box-shadow: 
+            0 0 20px rgba(102, 126, 234, 0.4),
+            0 8px 25px rgba(102, 126, 234, 0.35);
+        border-color: rgba(102, 126, 234, 0.8);
+        background: #e4e8fb;
+    }
+
+    100% {
+        transform: scale(1);
+        box-shadow: 0 2px 12px rgba(102, 126, 234, 0.15);
+        border-color: rgba(102, 126, 234, 0.3);
+        background: rgba(255, 255, 255, 1);
+    }
+}
+
+/* 日期行定位效果 - 边框闪烁跳动 + 横线脉冲 + 竖线装饰 */
+.message.service.locating {
+    z-index: 10;
+}
+
+/* 定位时日期框：边框光晕闪烁 + 悬停配色，无scale放大 */
+.message.service.locating .body {
+    animation: messageServiceLocatingGlow 1.5s ease-in-out forwards;
+    position: relative;
+    transition: none;
+}
+
+/* 定位时左右水平装饰线：略粗于常态，带脉冲动画 */
+.message.service.locating::before,
+.message.service.locating::after {
+    animation: messageServiceLocatingLines 1.5s ease-in-out forwards;
+    height: 1.5px;
+    border-radius: 100px;
+}
+
+/* 定位时左右装饰：精致菱形钻石光点，带发光脉冲和旋转 */
+.message.service.locating .date-line-left,
+.message.service.locating .date-line-right {
+    position: absolute;
+    top: 50%;
+    width: 8px;
+    height: 8px;
+    background: linear-gradient(135deg, #667eea 0%, #a78bfa 40%, #c084fc 70%, #667eea 100%);
+    opacity: 0;
+    animation: messageServiceLocatingDiamond 1.5s ease-in-out forwards;
+    pointer-events: none;
+    /* 菱形旋转45度 */
+    transform: translateY(-50%) rotate(45deg) scale(0);
+    /* 多层发光：内发光 + 外发光扩散 */
+    box-shadow:
+        0 0 6px 1px rgba(102, 126, 234, 0.6),
+        0 0 14px 3px rgba(102, 126, 234, 0.25),
+        0 0 24px 6px rgba(118, 75, 162, 0.1);
+    border-radius: 1.5px;
+}
+
+/* 左竖线定位 */
+.message.service.locating .date-line-left {
+    left: 0;
+}
+
+/* 右竖线定位 */
+.message.service.locating .date-line-right {
+    right: 0;
+}
+
+/* 日期框定位动画：两次边框光晕闪烁跳动，使用悬停配色，不放大 */
+@keyframes messageServiceLocatingGlow {
+    0%, 100% {
+        box-shadow: var(--shadow-md);
+        border-color: var(--border-color);
+        color: var(--text-secondary);
+        background: var(--card-bg);
+    }
+
+    25%, 75% {
+        box-shadow:
+            0 0 0 2px rgba(102, 126, 234, 0.35),
+            0 0 14px rgba(102, 126, 234, 0.18),
+            0 6px 20px rgba(102, 126, 234, 0.1);
+        border-color: rgba(102, 126, 234, 0.45);
+        color: #667eea;
+        background: linear-gradient(135deg, #f8f9ff 0%, #f3f4fe 50%, #f5f6ff 100%);
+    }
+
+    50% {
+        box-shadow: var(--shadow-md);
+        border-color: var(--border-color);
+        color: var(--text-secondary);
+        background: var(--card-bg);
+    }
+}
+
+/* 水平装饰线脉冲动画：两次伸缩，与日期框闪烁节奏同步 */
+@keyframes messageServiceLocatingLines {
+    0%, 100% {
+        width: 0;
+        opacity: 0;
+        background: linear-gradient(to right, transparent, rgba(102, 126, 234, 0.35), transparent);
+    }
+
+    25%, 75% {
+        width: 44%;
+        opacity: 0.8;
+        background: linear-gradient(to right, transparent, rgba(102, 126, 234, 0.35), rgba(118, 75, 162, 0.18), transparent);
+    }
+
+    50% {
+        width: 5%;
+        opacity: 0.12;
+    }
+}
+
+/* 菱形钻石光点脉冲动画：两次旋转缩放 + 发光闪烁，与日期框节奏同步 */
+@keyframes messageServiceLocatingDiamond {
+    0% {
+        opacity: 0;
+        transform: translateY(-50%) rotate(45deg) scale(0);
+        box-shadow:
+            0 0 4px 0 rgba(102, 126, 234, 0.3),
+            0 0 8px 0 rgba(102, 126, 234, 0.1);
+    }
+
+    15% {
+        opacity: 1;
+        transform: translateY(-50%) rotate(45deg) scale(1.2);
+    }
+
+    25% {
+        opacity: 1;
+        transform: translateY(-50%) rotate(225deg) scale(1);
+        box-shadow:
+            0 0 8px 2px rgba(102, 126, 234, 0.7),
+            0 0 18px 5px rgba(102, 126, 234, 0.3),
+            0 0 30px 8px rgba(118, 75, 162, 0.15);
+    }
+
+    40% {
+        opacity: 0.3;
+        transform: translateY(-50%) rotate(315deg) scale(0.6);
+        box-shadow:
+            0 0 4px 0 rgba(102, 126, 234, 0.2),
+            0 0 8px 0 rgba(102, 126, 234, 0.05);
+    }
+
+    50% {
+        opacity: 0.15;
+        transform: translateY(-50%) rotate(405deg) scale(0.4);
+    }
+
+    60% {
+        opacity: 0.3;
+        transform: translateY(-50%) rotate(450deg) scale(0.6);
+    }
+
+    75% {
+        opacity: 1;
+        transform: translateY(-50%) rotate(585deg) scale(1);
+        box-shadow:
+            0 0 8px 2px rgba(102, 126, 234, 0.7),
+            0 0 18px 5px rgba(102, 126, 234, 0.3),
+            0 0 30px 8px rgba(118, 75, 162, 0.15);
+    }
+
+    90% {
+        opacity: 0.5;
+        transform: translateY(-50%) rotate(675deg) scale(0.7);
+    }
+
+    100% {
+        opacity: 0;
+        transform: translateY(-50%) rotate(765deg) scale(0);
+        box-shadow:
+            0 0 4px 0 rgba(102, 126, 234, 0.1),
+            0 0 8px 0 rgba(102, 126, 234, 0);
+    }
+}
+
+/* ==================== Open Graph链接预览卡片 ==================== */
+/* 链接预览卡片容器：限制最大宽度 */
+.link-preview-card {
+    display: block;
+    margin: 12px 0;
+    max-width: 500px;
+    position: relative;
+}
+
+/* 链接预览加载中状态：居中内边距 */
+.link-preview-card.loading {
+    padding: 24px;
+    text-align: center;
+}
+
+/* 链接预览加载完成状态 */
+.link-preview-card.loaded {
+    display: block;
+}
+
+/* 加载完成后的内容区：毛玻璃背景、圆角、阴影、边框 */
+.link-preview-card.loaded .link-preview-content {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(250, 250, 255, 0.95));
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08),
+        0 2px 8px rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(102, 126, 234, 0.15);
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+    box-sizing: border-box;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+        box-shadow 0.3s ease,
+        border-color 0.3s ease;
+}
+
+/* 禁用加载完成后内容区的伪元素 */
+.link-preview-card.loaded .link-preview-content::after {
+    display: none !important;
+    content: none !important;
+}
+
+/* 加载完成后悬停：上浮、加深阴影、蓝色边框 */
+.link-preview-card.loaded:hover .link-preview-content {
+    transform: translateY(-3px);
+    border-radius: 16px;
+    border-color: rgba(102, 126, 234, 0.25);
+    box-shadow: 
+        0 8px 28px rgba(102, 126, 234, 0.12),
+        0 4px 12px rgba(0, 0, 0, 0.06),
+        0 1px 3px rgba(0, 0, 0, 0.04);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 249, 255, 0.98));
+}
+
+/* 悬停时也禁用伪元素 */
+.link-preview-card.loaded:hover .link-preview-content::after {
+    display: none !important;
+    content: none !important;
+}
+
+/* 链接预览加载指示器容器：居中布局 */
+.link-preview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: rgba(102, 126, 234, 0.8);
+}
+
+/* 加载旋转器：蓝紫色边框旋转动画 */
+.loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(102, 126, 234, 0.2);
+    border-top-color: rgba(102, 126, 234, 0.8);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* 旋转动画：360度循环 */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 加载提示文字 */
+.loading-text {
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/* 链接预览内容区：flex布局、无下划线 */
+.link-preview-content {
+    display: flex;
+    text-decoration: none;
+    color: inherit;
+    overflow: hidden;
+    position: relative;
+    height: 100%;
+    min-height: 80px;
+}
+
+/* 链接预览悬停时保持原始样式 */
+.text .link-preview-content:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* 链接预览禁用全局链接下划线动画 */
+a.link-preview-content::after,
+a.link-preview-content:hover::after {
+    display: none !important;
+    content: none !important;
+}
+
+/* 链接预览右上角链接图标 */
+.link-preview-content::before {
+    content: '🔗';
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    font-size: 0.9rem;
+    opacity: 0.6;
+    z-index: 2;
+}
+
+/* 链接预览图片区：固定尺寸、裁剪适配 */
+.link-preview-image {
+    width: 140px;
+    min-width: 140px;
+    height: 140px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    flex-shrink: 0;
+}
+
+/* 链接预览信息区：弹性填充、垂直居中布局 */
+.link-preview-info {
+    flex: 1;
+    padding: 20px;
+    padding-right: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    justify-content: center;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+}
+
+/* 链接预览标题：最多2行、省略号 */
+.link-preview-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #2c3e50;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 链接预览描述：最多2行、省略号 */
+.link-preview-description {
+    font-size: 0.85rem;
+    color: #7f8c8d;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 链接预览URL：蓝紫色、单行省略 */
+.link-preview-url {
+    font-size: 0.75rem;
+    color: rgba(102, 126, 234, 0.8);
+    font-weight: 500;
+    margin-top: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .link-preview-card {
+        max-width: 100%;
+    }
+
+    .link-preview-content {
+        flex-direction: column;
+    }
+
+    .link-preview-image {
+        width: 100%;
+        height: 200px;
+    }
+}
+
+/* 链接预览弹窗容器：固定居中、圆角、阴影 */
+.link-preview-container {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 900px;
+    height: 80vh;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    z-index: 10000;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    animation: fadeIn 0.3s ease;
+}
+
+/* 链接预览弹窗激活状态 */
+.link-preview-container.active {
+    display: flex;
+}
+
+/* 链接预览弹窗头部：蓝紫渐变背景 */
+.link-preview-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+}
+
+/* 链接预览弹窗标题：单行省略 */
+.link-preview-title {
+    font-size: 1.1rem;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 20px;
+}
+
+/* 链接预览弹窗关闭按钮：半透明圆形 */
+.link-preview-close {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.3rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+/* 关闭按钮悬停：加亮 + 旋转90度 */
+.link-preview-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: rotate(90deg);
+}
+
+/* 链接预览弹窗加载状态：居中显示 */
+.link-preview-loading {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    color: #667eea;
+}
+
+/* 链接预览iframe：填充弹窗剩余空间 */
+.link-preview-iframe {
+    flex: 1;
+    border: none;
+    width: 100%;
+    height: 100%;
+    background: white;
+}
+
+/* 链接预览弹窗背景遮罩层：半透明黑色 */
+.link-preview-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    display: none;
+    animation: fadeIn 0.3s ease;
+}
+
+/* 遮罩层激活状态 */
+.link-preview-overlay.active {
+    display: block;
+}
+
+/* 消息内外部链接样式增强：蓝紫色、下划线 */
+.text a[href^="http"]:not(.link-preview-content) {
+    position: relative;
+    text-decoration: none;
+    color: #667eea;
+    font-weight: 500;
+    border-bottom: 2px solid rgba(102, 126, 234, 0.3);
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+/* 外部链接悬停：变紫色、添加背景色 */
+.text a[href^="http"]:not(.link-preview-content):hover {
+    color: #764ba2;
+    border-bottom-color: #764ba2;
+    background: rgba(102, 126, 234, 0.1);
+    padding: 2px 6px;
+    margin: -2px -6px;
+    border-radius: 4px;
+}
+
+/* 外部链接前缀链接图标 */
+.text a[href^="http"]:not(.link-preview-content)::before {
+    content: "🔗 ";
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+
+/* 移动端优化 - 日期导航与链接预览 */
+@media (max-width: 768px) {
+    /* 移动端日期导航容器：z-index低于标签导航面板，避免覆盖 */
+    #date-navigation {
+        right: 6px;
+        bottom: 6px;
+        max-width: 300px;
+        z-index: 9990;
+    }
+
+    /* 移动端日期导航开关按钮 */
+    .date-nav-toggle {
+        width: 44px;
+        height: 44px;
+    }
+
+    .date-nav-icon {
+        font-size: 1.2rem;
+    }
+
+    /* 移动端日期导航面板头部：缩小 */
+    .date-nav-header {
+        padding: 12px 16px;
+        font-size: 0.9rem;
+        border-radius: 14px 14px 0 0;
+    }
+
+    /* 移动端日期导航面板：更透明的背景，让卡片毛玻璃效果可见 + 滚动隔离 */
+    .date-nav-content {
+        max-height: 75vh;
+        border-radius: 14px;
+        overscroll-behavior: contain;
+        background: rgba(255, 255, 255, 0.35);
+    }
+
+    .date-list {
+        max-height: 66vh;
+        overscroll-behavior: contain;
+        background: transparent;
+    }
+
+    /* 移动端年份标题：大幅缩小，更紧凑 */
+    .year-header {
+        font-size: 0.82rem;
+        padding: 9px 14px;
+        margin: 8px 6px 6px 6px;
+        border-radius: 12px;
+    }
+
+    .year-title {
+        font-size: 0.82rem;
+    }
+
+    .year-toggle {
+        font-size: 0.72rem;
+    }
+
+    /* 移动端年份标题置顶 */
+    .year-header.sticky {
+        margin: 0 6px 6px 6px;
+        border-radius: 12px;
+    }
+
+    /* 移动端日期卡片：横向布局、毛玻璃透明背景 */
+    .date-item {
+        padding: 8px 10px;
+        font-size: 0.82rem;
+        margin: 4px 6px;
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.25);
+        backdrop-filter: blur(20px) saturate(180%);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+    }
+
+    /* 移动端日期卡片信息区：填充剩余空间 */
+    .date-item .date-item-info {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    /* 移动端日期卡片内嵌缩略图 */
+    .date-item-thumbnail {
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        overflow: hidden;
+        flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .date-item-thumbnail img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    /* 移动端日期卡片标题 */
+    .date-item-title {
+        font-size: 0.82rem;
+    }
+
+    .date-item-count {
+        font-size: 0.68rem;
+        padding: 1px 6px;
+    }
+
+    .date-item-preview {
+        font-size: 0.72rem;
+        -webkit-line-clamp: 1;
+    }
+
+    /* 移动端禁用日期卡片hover上浮 */
+    .date-item:hover {
+        transform: none;
+    }
+
+    /* 移动端链接预览弹窗 */
+    .link-preview-container {
+        width: 96%;
+        height: 90vh;
+        border-radius: 12px;
+    }
+
+    .link-preview-header {
+        padding: 10px 14px;
+        border-radius: 12px 12px 0 0;
+    }
+
+    .link-preview-title {
+        font-size: 0.95rem;
+    }
+
+    .link-preview-close {
+        width: 32px;
+        height: 32px;
+        font-size: 1.1rem;
+    }
+}
+
+/* ==================== 分类导航样式 - 轻盈毛玻璃按钮 ==================== */
+/* 分类导航容器：固定在右下角，位于日期导航上方 */
+#category-navigation {
+    position: fixed;
+    right: 20px;
+    bottom: 100px;
+    z-index: 9997;
+}
+
+/* 分类导航开关按钮：毛玻璃圆形按钮、紫色光晕 */
+.category-nav-toggle {
+    background: rgba(147, 122, 173, 0.1);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    color: white;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 8px 32px rgba(147, 122, 173, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    font-weight: 600;
+    text-align: center;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    position: relative;
+    overflow: hidden;
+}
+
+/* 开关按钮光泽覆盖层：悬停时显示 */
+.category-nav-toggle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0) 100%);
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+/* 开关按钮波纹效果层：按下时扩散 */
+.category-nav-toggle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.5) 0%, transparent 70%);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+/* 开关按钮悬停：上浮放大、加深光晕 */
+.category-nav-toggle:hover {
+    transform: translateY(-4px) scale(1.06);
+    box-shadow: 0 12px 40px rgba(147, 122, 173, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    background: rgba(147, 122, 173, 0.18);
+}
+
+/* 悬停时显示光泽层 */
+.category-nav-toggle:hover::before {
+    opacity: 1;
+}
+
+/* 开关按钮按下：下沉缩小、内阴影 */
+.category-nav-toggle:active {
+    transform: translateY(1px) scale(0.94);
+    box-shadow: 0 4px 16px rgba(147, 122, 173, 0.45),
+        inset 0 2px 6px rgba(0, 0, 0, 0.12);
+    background: rgba(147, 122, 173, 0.28);
+    transition: all 0.08s ease;
+}
+
+/* 按下时光泽层减淡 */
+.category-nav-toggle:active::before {
+    opacity: 0.3;
+    transition: opacity 0.08s ease;
+}
+
+/* 按下时播放波纹扩散动画 */
+.category-nav-toggle:active::after {
+    animation: categoryRippleEffect 0.55s ease-out forwards;
+}
+
+/* 分类按钮波纹扩散动画 */
+@keyframes categoryRippleEffect {
+    0% {
+        width: 0;
+        height: 0;
+        opacity: 0.6;
+    }
+    60% {
+        opacity: 0.3;
+    }
+    100% {
+        width: 320%;
+        height: 320%;
+        opacity: 0;
+    }
+}
+
+/* 分类导航图标：弹性缩放过渡、投影 */
+.category-nav-icon {
+    font-size: 1.3rem;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    line-height: 1;
+    position: relative;
+    z-index: 1;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* 悬停时图标放大 */
+.category-nav-toggle:hover .category-nav-icon {
+    transform: scale(1.1);
+}
+
+/* 按下时图标缩小 */
+.category-nav-toggle:active .category-nav-icon {
+    transform: scale(0.88);
+    transition: transform 0.08s ease;
+}
+
+/* 分类导航激活时开关按钮：上浮放大 + 外圈光晕 */
+#category-navigation.active .category-nav-toggle {
+    transform: translateY(-4px) scale(1.06);
+    box-shadow: 0 0 0 4px rgba(147, 122, 173, 0.25),
+        0 12px 40px rgba(147, 122, 173, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    background: rgba(147, 122, 173, 0.18);
+}
+
+/* 激活时显示光泽层 */
+#category-navigation.active .category-nav-toggle::before {
+    opacity: 1;
+}
+
+/* 激活时图标放大 */
+#category-navigation.active .category-nav-icon {
+    transform: scale(1.1);
+}
+
+/* 关闭时开关按钮播放弹跳动画 */
+#category-navigation.closing .category-nav-toggle {
+    animation: categoryCloseBounce 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* 分类关闭弹跳动画：缩小→回弹→复位 */
+@keyframes categoryCloseBounce {
+    0% {
+        transform: translateY(-4px) scale(1.06);
+    }
+    40% {
+        transform: translateY(0) scale(0.92);
+    }
+    70% {
+        transform: translateY(-2px) scale(1.03);
+    }
+    100% {
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* 关闭时光泽层淡出 */
+#category-navigation.closing .category-nav-toggle::before {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+/* 关闭时图标复位 */
+#category-navigation.closing .category-nav-icon {
+    transform: scale(1);
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 分类导航透明遮罩层：用于点击外部关闭 */
+.category-nav-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: transparent;
+    z-index: 1;
+}
+
+/* 激活时显示遮罩层 */
+#category-navigation.active .category-nav-overlay {
+    display: block;
+}
+
+/* 激活时开关按钮提升层级（置于遮罩层之上） */
+#category-navigation.active .category-nav-toggle {
+    z-index: 2;
+    position: relative;
+}
+
+/* 分类导航弹窗：固定居中、毛玻璃、圆角、缩放淡入动画 */
+.category-nav-modal {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 1000px;
+    max-height: 85vh;
+    height: auto;
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-radius: 24px;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.35);
+    overflow: visible;
+    z-index: 10001;
+    animation: modalFadeIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 弹窗打开动画：缩放淡入 */
+@keyframes modalFadeIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* 关闭时弹窗播放缩放淡出动画 */
+#category-navigation.closing .category-nav-modal {
+    animation: modalFadeOut 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 弹窗关闭动画：缩放淡出 */
+@keyframes modalFadeOut {
+    from {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.95);
+    }
+}
+
+/* 关闭时隐藏遮罩层 */
+#category-navigation.closing .category-nav-overlay {
+    display: none;
+}
+
+/* 激活时显示弹窗 */
+#category-navigation.active .category-nav-modal {
+    display: block;
+}
+
+/* 分类弹窗头部：蓝紫渐变背景、白色文字 */
+.category-modal-header {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%);
+    color: white;
+    padding: 16px 24px;
+    border-radius: 20px 20px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
+}
+
+/* 分类弹窗标题：大字号加粗 */
+.category-modal-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+/* 分类弹窗关闭按钮：半透明圆形 */
+.category-modal-close {
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.3rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.25s ease;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    flex-shrink: 0;
+}
+
+/* 关闭按钮悬停：加亮 + 旋转90度 */
+.category-modal-close:hover {
+    background: rgba(255, 255, 255, 0.35);
+    transform: rotate(90deg);
+}
+
+/* 分类弹窗主体：可滚动、限制高度 */
+.category-modal-body {
+    height: calc(85vh - 85px);
+    max-height: 600px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(102, 126, 234, 0.5) transparent;
+}
+
+/* 分类列表容器：禁止缩小 */
+.category-list-container {
+    flex-shrink: 0;
+}
+
+/* 分类标签列表：flex换行布局、间距 */
+.category-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 24px;
+}
+
+/* 分类标签项：圆角、渐变背景、蓝紫边框 */
+.category-item {
+    padding: 12px 20px;
+    cursor: pointer;
+    border-radius: 18px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    font-size: 0.95rem;
+    font-weight: 550;
+    color: #667eea;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
+    border: 1px solid rgba(102, 126, 234, 0.15);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+}
+
+/* 分类标签悬停：加深背景、上浮、蓝色边框 */
+.category-item:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.12), rgba(118, 75, 162, 0.12));
+    transform: translateY(-2px);
+    border-color: rgba(102, 126, 234, 0.3);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+    color: #764ba2;
+}
+
+/* 分类标签按下：略微下沉 */
+.category-item:active {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+}
+
+/* 分类名称文字：蓝紫色、不换行 */
+.category-name {
+    font-weight: 550;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    color: #667eea;
+}
+
+/* 悬停时分类名变紫 */
+.category-item:hover .category-name {
+    color: #764ba2;
+}
+
+/* 分类计数标签：渐变背景、圆角 */
+.category-count {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
+    color: #667eea;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 1px solid rgba(102, 126, 234, 0.2);
+    white-space: nowrap;
+}
+
+/* 悬停时计数标签变为实心渐变背景 */
+.category-item:hover .category-count {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border-color: transparent;
+}
+
+/* 分类消息列表容器：绝对定位覆盖弹窗 */
+.category-messages-container {
+    display: none;
+    flex-direction: column;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    overflow: hidden;
+    border-radius: 24px;
+    pointer-events: auto;
+}
+
+/* 分类消息列表主体：白色背景、淡入动画 */
+.category-messages-body {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.98);
+    animation: panelFadeIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+
+/* 面板淡入动画：缩放 + 透明度 */
+@keyframes panelFadeIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* 面板淡出动画：缩放 + 透明度 */
+@keyframes panelFadeOut {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+}
+
+/* 分类消息列表头部：白色文字、圆角、阴影 */
+.category-messages-header {
+    color: white;
+    padding: 16px 24px;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+/* 分类消息头部背景层：蓝紫渐变，完全不透明防止一级面板标题透出 */
+.category-messages-header-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgb(102, 126, 234) 0%, rgb(118, 75, 162) 100%);
+    border-radius: 20px 20px 0 0;
+    z-index: -1;
+}
+
+/* 分类消息头部内容：左右分布、淡入动画 */
+.category-messages-header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    animation: contentFadeIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 内容淡入动画 */
+@keyframes contentFadeIn {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* 内容淡出动画 */
+@keyframes contentFadeOut {
+    0% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+/* 分类消息列表返回按钮：半透明圆角 */
+.category-back-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.25s ease;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.category-back-btn svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+/* 返回按钮悬停：加亮 */
+.category-back-btn:hover {
+    background: rgba(255, 255, 255, 0.35);
+}
+
+/* 分类消息列表关闭按钮：半透明圆形 */
+.category-messages-close {
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.25s ease;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    flex-shrink: 0;
+}
+
+.category-messages-close svg,
+.category-modal-close svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* 关闭按钮悬停：加亮 + 旋转90度 */
+.category-messages-close:hover {
+    background: rgba(255, 255, 255, 0.35);
+    transform: rotate(90deg);
+}
+
+/* 分类标题：居中、单行省略 */
+.category-title {
+    font-weight: 700;
+    font-size: 1.1rem;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 45%;
+}
+
+/* 分类消息列表：可滚动、内边距 */
+.category-messages-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 20px;
+    min-height: 0;
+    max-height: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* 消息列表滚动条宽度 */
+.category-messages-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+/* 消息列表滚动条轨道 */
+.category-messages-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 3px;
+}
+
+/* 消息列表滚动条滑块：蓝紫渐变 */
+.category-messages-list::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 3px;
+}
+
+/* 分类消息项：圆角、渐变背景、淡入动画 */
+.category-message-item {
+    display: flex;
+    gap: 16px;
+    padding: 14px 14px 14px 14px;
+    cursor: pointer;
+    border-radius: 16px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #444;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.06), rgba(118, 75, 162, 0.06));
+    border: 1px solid rgba(102, 126, 234, 0.12);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    opacity: 0;
+    transform: translateY(10px);
+    min-height: auto;
+    position: relative;
+}
+
+/* 消息项悬停：加深背景、上浮、加深阴影 */
+.category-message-item:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.12), rgba(118, 75, 162, 0.12));
+    transform: translateY(-4px) scale(1.01);
+    border-color: rgba(102, 126, 234, 0.35);
+    box-shadow: 
+        0 12px 32px rgba(102, 126, 234, 0.2),
+        0 4px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* 消息项按下：略微下沉 */
+.category-message-item:active {
+    transform: translateY(-2px) scale(1.005);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.15);
+}
+
+/* 消息项图片容器：固定尺寸、圆角、阴影 */
+.category-message-image {
+    flex-shrink: 0;
+    width: 84px;
+    height: 84px;
+    border-radius: 14px;
+    overflow: visible;
+    background: rgba(0, 0, 0, 0.05);
+    transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* 消息项图片：填充容器、裁剪适配、弹性缩放过渡 */
+.category-message-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    border-radius: 14px;
+}
+
+/* 悬停时图片容器放大、加深阴影 */
+.category-message-item:hover .category-message-image {
+    transform: scale(1.08);
+    box-shadow:
+        0 12px 32px rgba(102, 126, 234, 0.25),
+        0 4px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* 悬停时图片微放大 */
+.category-message-item:hover .category-message-image img {
+    transform: scale(1.04);
+}
+
+/* 消息项内容区：弹性填充、垂直居中 */
+.category-message-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+/* 消息项预览文本：最多3行、省略号 */
+.category-message-preview {
+    line-height: 1.6;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #555;
+    word-break: break-word;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transform-origin: left center;
+}
+
+/* 悬停时预览文本微放大 */
+.category-message-item:hover .category-message-preview {
+    transform: scale(1.05);
+}
+
+/* 二级面板消息列表中的引用样式 - 紧凑优雅 */
+.category-message-preview blockquote {
+    margin: 4px 0;
+    padding: 6px 10px;
+    border-left: 3px solid rgba(102, 126, 234, 0.4);
+    background: rgba(102, 126, 234, 0.05);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.85rem;
+    color: #666;
+    line-height: 1.4;
+}
+
+/* 引用内段落取消边距 */
+.category-message-preview blockquote p {
+    margin: 0;
+}
+
+/* 高亮标签样式 */
+.highlight-tag {
+    color: #667eea;
+    font-weight: 700;
+    background: rgba(102, 126, 234, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* #标签链接样式：蓝紫色、加粗、可点击 */
+.hashtag-link {
+    color: #667eea;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+/* 标签链接悬停：变紫、显示下划线 */
+.hashtag-link:hover {
+    color: #764ba2;
+    text-decoration: underline;
+}
+
+/* 消息定位动画 */
+.message.default.message-locating {
+    animation: messageLocatingPulse 1.2s ease-in-out !important;
+    transition: none !important;
+}
+
+/* 消息定位动画结束后的冷却期：禁用动画和过渡，避免闪烁 */
+.message.default.message-locating-cooldown {
+    animation: none !important;
+    transition: none !important;
+}
+
+/* 定位动画结束后的短暂冷却期，避免立即回到hover缩放造成闪烁 */
+@keyframes messageLocatingPulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: var(--shadow-md);
+        border-color: var(--border-color);
+    }
+
+    25%, 75% {
+        transform: scale(1.02);
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.5),
+            0 0 18px rgba(102, 126, 234, 0.35),
+            0 8px 24px rgba(102, 126, 234, 0.3);
+        border-color: rgba(102, 126, 234, 0.7);
+    }
+
+    50% {
+        transform: scale(1);
+        box-shadow: var(--shadow-md);
+        border-color: var(--border-color);
+    }
+}
+
+/* 分类导航面板移动端适配 */
+@media (max-width: 768px) {
+    #category-navigation {
+        right: 8px;
+        bottom: 70px;
+    }
+
+    /* 移动端开关按钮缩小 */
+    .category-nav-toggle {
+        width: 44px;
+        height: 44px;
+    }
+
+    .category-nav-icon {
+        font-size: 1.2rem;
+    }
+
+    /* 移动端弹窗：毛玻璃背景、稍小于全屏避免与底部按钮重叠，overflow:hidden裁切滚动条圆角 */
+    .category-nav-modal {
+        width: 96%;
+        max-width: none;
+        max-height: calc(100vh - 130px);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        overflow: hidden;
+    }
+
+    /* 移动端弹窗头部：更紧凑，减小标题占用空间 */
+    .category-modal-header {
+        padding: 10px 14px;
+        border-radius: 16px 16px 0 0;
+    }
+
+    .category-modal-title {
+        font-size: 0.95rem;
+    }
+
+    .category-modal-close {
+        width: 30px;
+        height: 30px;
+        font-size: 0.95rem;
+    }
+
+    /* 移动端弹窗主体：滚动隔离 + 高度适配 + 透明滚动条 + 圆角裁切 */
+    .category-modal-body {
+        height: calc(100vh - 190px);
+        max-height: none;
+        overscroll-behavior: contain;
+        scrollbar-color: rgba(102, 126, 234, 0.4) transparent;
+        border-radius: 0 0 16px 16px;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    /* 移动端一级面板滚动条透明背景 */
+    .category-modal-body::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .category-modal-body::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .category-modal-body::-webkit-scrollbar-thumb {
+        background: rgba(102, 126, 234, 0.35);
+        border-radius: 2px;
+    }
+
+    /* 移动端分类列表：缩小间距和内边距 */
+    .category-list-container {
+        overflow-x: hidden;
+    }
+
+    .category-list {
+        gap: 7px;
+        padding: 10px;
+        overflow-x: hidden;
+    }
+
+    /* 移动端分类标签：缩小尺寸，提高空间利用率 */
+    .category-item {
+        padding: 7px 12px;
+        font-size: 0.78rem;
+        border-radius: 12px;
+        gap: 5px;
+    }
+
+    .category-name {
+        font-size: 0.78rem;
+    }
+
+    .category-count {
+        padding: 2px 6px;
+        font-size: 0.68rem;
+        border-radius: 8px;
+    }
+
+    /* 移动端消息列表紧凑 */
+    .category-message-item {
+        padding: 8px;
+        gap: 8px;
+        border-radius: 10px;
+        margin-bottom: 6px;
+    }
+
+    .category-message-image {
+        width: 48px;
+        height: 48px;
+        border-radius: 8px;
+    }
+
+    .category-message-image img {
+        border-radius: 8px;
+    }
+
+    .category-message-preview {
+        font-size: 0.78rem;
+        -webkit-line-clamp: 2;
+    }
+
+    /* 移动端消息列表头部紧凑 */
+    .category-messages-header {
+        padding: 10px 14px;
+        border-radius: 16px 16px 0 0;
+    }
+
+    .category-messages-header-bg {
+        border-radius: 16px 16px 0 0;
+    }
+
+    .category-title {
+        font-size: 0.85rem;
+    }
+
+    .category-back-btn {
+        padding: 6px 12px;
+        font-size: 0.75rem;
+        border-radius: 14px;
+    }
+
+    .category-messages-close {
+        width: 30px;
+        height: 30px;
+        font-size: 0.95rem;
+    }
+
+    .category-messages-list {
+        padding: 10px;
+        overscroll-behavior: contain;
+    }
+
+    /* 移动端二级面板透明毛玻璃背景（与一级面板一致） + 透明滚动条 */
+    .category-messages-body {
+        background: transparent;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+
+    .category-messages-list::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .category-messages-list::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .category-messages-list::-webkit-scrollbar-thumb {
+        background: rgba(102, 126, 234, 0.35);
+        border-radius: 2px;
+    }
+
+    /* 移动端分类消息容器圆角适配 */
+    .category-messages-container {
+        border-radius: 16px;
+    }
+}
+
+/* ==================== 分页链接美化 ==================== */
+
+/* 彻底去除所有状态的下划线（覆盖浏览器默认和可能的全局a标签样式） */
+a.pagination-beautified,
+a.pagination-beautified:link,
+a.pagination-beautified:visited,
+a.pagination-beautified:hover,
+a.pagination-beautified:active,
+a.pagination-beautified:focus {
+    text-decoration: none !important;
+    border-bottom: none !important;
+    outline: none !important;
+}
+
+/* PC端分页链接：柔和白色卡片 */
+.pagination-beautified {
+    display: block;
+    margin: 24px 16px;
+    padding: 16px 24px;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 16px;
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+        box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+        background 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    cursor: pointer;
+}
+
+/* PC端hover：轻柔上浮 */
+.pagination-beautified:hover {
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.1), 0 2px 6px rgba(0, 0, 0, 0.04);
+    transform: translateY(-2px);
+}
+
+.pagination-beautified:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transition-duration: 0.1s;
+}
+
+/* 分页链接内部布局 */
+.pagination-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* 分页链接箭头：无背景，纯色图标 */
+.pagination-arrow {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pagination-arrow svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: #667eea;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    display: block;
+}
+
+.pagination-beautified:hover .arrow-right {
+    transform: translateX(5px);
+}
+
+.pagination-beautified:hover .arrow-left {
+    transform: translateX(-5px);
+}
+
+/* 分页链接文字 */
+.pagination-label {
+    font-size: 0.92rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    letter-spacing: 0.3px;
+    line-height: 1.4;
+}
+
+/* 移动端分页链接：保持简洁+灵动弹性点击动效 */
+@media (max-width: 768px) {
+    .pagination-beautified {
+        margin: 16px 12px;
+        padding: 14px 20px;
+        background: rgba(255, 255, 255, 0.75);
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+        transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
+            background 0.15s ease,
+            box-shadow 0.3s ease;
+    }
+    .pagination-beautified:active {
+        transform: scale(0.96);
+        background: rgba(102, 126, 234, 0.06);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+    }
+    .pagination-arrow svg {
+        width: 18px;
+        height: 18px;
+        stroke: #667eea;
+    }
+    .pagination-label {
+        font-size: 0.88rem;
+    }
+}
+
+/* ==================== 滚动按钮 ==================== */
+
+/* PC端：右侧边栏竖排pill按钮，贴近浏览器边缘不覆盖内容 */
+.scroll-buttons {
+    position: fixed;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 9000;
+}
+
+.scroll-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(102, 126, 234, 0.12);
+    border-radius: 20px;
+    cursor: pointer;
+    color: #667eea;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+    transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    opacity: 0;
+    transform: translateX(20px);
+    pointer-events: none;
+}
+
+.scroll-btn.visible {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.scroll-btn:hover {
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.18);
+    border-color: rgba(102, 126, 234, 0.3);
+    transform: translateX(-2px);
+}
+
+.scroll-btn:active {
+    transform: scale(0.95);
+    transition-duration: 0.1s;
+}
+
+.scroll-btn svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.scroll-btn-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+/* 移动端：右侧居中竖排圆形按钮，毛玻璃背景 */
+@media (max-width: 768px) {
+    .scroll-buttons {
+        right: 8px;
+        top: 50%;
+        bottom: auto;
+        transform: translateY(-50%);
+        gap: 12px;
+    }
+
+    .scroll-btn {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.35);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        color: rgba(102, 126, 234, 0.85);
+    }
+
+    .scroll-btn.visible {
+        transform: translateX(0);
+    }
+
+    .scroll-btn:hover {
+        transform: translateX(0);
+    }
+
+    .scroll-btn:active {
+        transform: scale(0.9);
+        background: rgba(255, 255, 255, 0.5);
+    }
+
+    .scroll-btn svg {
+        width: 16px;
+        height: 16px;
+    }
+}
