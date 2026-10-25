@@ -53,7 +53,7 @@ try{state.merge=localStorage.getItem('tak-merge-mode')||(localStorage.getItem('t
 if(state.merge==='none')state.merge='original';if(!['classic','original','reconstructed','minute','sender','media'].includes(state.merge))state.merge='classic';
 function avatarStyle(seed){let h=0;for(const c of String(seed||''))h=(h*31+c.charCodeAt(0))>>>0;const p=[['#5aaef5','#667eea'],['#667eea','#946ae8'],['#38ad98','#558de7'],['#df8b5b','#d5698e']][h%4];return`--a:${p[0]};--b:${p[1]}`}
 function letters(name){const a=[...String(name||'TG').trim()];return esc((a[0]||'T')+(a[1]||''))}
-function generatorLabel(){return String(LIB.generator||'1.0-rc').replace(/^TelegramArchiveKit\//,'')}
+function generatorLabel(){return String(LIB.generator||'1.0').replace(/^TelegramArchiveKit\//,'')}
 function parseHash(){try{return new URLSearchParams(location.hash.replace(/^#/,'')).get('chat')||''}catch{return''}}
 function current(){return LIB.chats.find(c=>c.slug===state.chat)||null}
 function filteredChats(){const q=state.q.trim().toLowerCase();return LIB.chats.filter(c=>!q||`${c.name} ${c.id||''} ${c.type||''}`.toLowerCase().includes(q))}
