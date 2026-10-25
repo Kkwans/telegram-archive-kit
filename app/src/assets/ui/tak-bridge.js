@@ -3,7 +3,6 @@ const qs=(s,r=document)=>r.querySelector(s),qsa=(s,r=document)=>[...r.querySelec
 const params=new URLSearchParams(location.search);
 if(params.get('embed')==='1')document.addEventListener('DOMContentLoaded',()=>document.body.classList.add('tak-embedded'));
 let rows=window.__TAK_SEARCH__||[],sel=0,filtered=[],keyboardSelection=false;
-const takLocateTimers=new WeakMap();
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function currentPage(){const path=location.protocol==='about:'?new URL(document.baseURI).pathname:location.pathname;const m=path.match(/(?:strict-)?messages(\d*)\.html$/i);return m?(m[1]?Number(m[1]):1):1}
 function targetHref(r){
@@ -26,7 +25,7 @@ function addSearch(){
  if(qs('.tak-search-trigger'))return;
  const btn=document.createElement('button');btn.type='button';btn.className='tak-search-trigger';
  btn.title='搜索全部消息（/）';btn.setAttribute('aria-label','搜索全部消息');
- btn.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+ btn.innerHTML='<span class="tak-search-emoji" aria-hidden="true">🔍</span>';
  document.body.appendChild(btn);
  const modal=document.createElement('div');modal.className='tak-search-modal';
  modal.innerHTML='<div class="tak-search-panel" role="dialog" aria-modal="true" aria-label="搜索全部消息"><div class="tak-search-head"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#667eea" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input placeholder="搜索消息、发送者、文件名或 Message ID…" aria-label="搜索关键字"><button title="关闭搜索" aria-label="关闭搜索">×</button></div><div class="tak-search-results"></div></div>';
@@ -59,7 +58,7 @@ function addSearch(){
   e.stopPropagation();
  };
  qs('.tak-search-panel',modal).addEventListener('wheel',scrollWheel,{passive:false});
- function open(){priorFocus=document.activeElement;modal.classList.add('open');input.focus({preventScroll:true});render()}
+ function open(){priorFocus=document.activeElement;modal.classList.add('open');if(innerWidth>760)input.focus({preventScroll:true});render()}
  function hide(){modal.classList.remove('open');priorFocus?.focus?.({preventScroll:true})}
  function render(){const q=input.value.trim().toLowerCase();
   filtered=(q?rows.filter(r=>(`${r.ID} ${r.From||''} ${r.Text||''} ${(r.Media||[]).join(' ')}`).toLowerCase().includes(q)):rows.slice(-80).reverse()).slice(0,160);
@@ -132,30 +131,8 @@ function locate(){
   if(anchor.startsWith('message')){
     if(!card&&attempts++<30){setTimeout(tryLocate,110);return}
     if(!card)return; // Never silently redirect a failed message search to a date separator.
+    if(typeof window.scrollToMessage==='function'){window.scrollToMessage(card);return}
     card.scrollIntoView({block:'center',behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
-    // Allow smooth scrolling to begin before pulsing the destination card.
-    // A repeated search can target the same card before its previous pulse ends.
-    // Cancel BOTH stale timers: an old removal must never interrupt a new pulse.
-    const previous=takLocateTimers.get(card);
-    if(previous){clearTimeout(previous.start);clearTimeout(previous.stop)}
-    const task={start:0,stop:0};takLocateTimers.set(card,task);
-    task.start=setTimeout(()=>{
-      if(!card.isConnected||takLocateTimers.get(card)!==task)return;
-      // The card itself never changes positioning/compositing mode. A persistent
-      // child halo pulses and fades to zero. Retaining that transparent child
-      // prevents an end-of-animation repaint of the whole message card.
-      let halo=qs(':scope > .tak-search-highlight',card);
-      if(!halo){halo=document.createElement('span');halo.className='tak-search-highlight';halo.setAttribute('aria-hidden','true');card.appendChild(halo)}
-      halo.classList.remove('is-active');void halo.offsetWidth;
-      // Never toggle `tak-locating` on the message itself: the legacy CSS
-      // changes animation-name, and removing it replays upstream slideIn
-      // from zero opacity, producing the user-visible blink.
-      halo.classList.add('is-active');
-      task.stop=setTimeout(()=>{
-        if(takLocateTimers.get(card)!==task)return;
-        halo.classList.remove('is-active');takLocateTimers.delete(card);
-      },2050);
-    },240);
     return;
   }
   // Date navigation remains a separate behavior; only explicit date targets use it.

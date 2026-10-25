@@ -19,6 +19,7 @@ body.tak-embedded{min-height:100vh}
 .tak-search-trigger:hover{transform:translateY(-4px) scale(1.06);box-shadow:0 12px 40px rgba(102,126,234,.55),inset 0 1px 0 rgba(255,255,255,.40);background:rgba(102,126,234,.18)}
 .tak-search-trigger:hover::before{opacity:1}.tak-search-trigger:active{transform:translateY(1px) scale(.94);box-shadow:0 4px 16px rgba(102,126,234,.45),inset 0 2px 6px rgba(0,0,0,.12);background:rgba(102,126,234,.28);transition-duration:.08s}
 .tak-search-trigger svg{position:relative;z-index:1;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 2px 4px rgba(102,126,234,.18))}
+.tak-search-emoji{position:relative;z-index:1;font-size:1.3rem;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.2))}
 /* The page itself is only dimmed. Blur belongs to the live glass panel, not to a
    full-screen fog layer, matching the user's date/category navigation aesthetic. */
 .tak-search-modal{position:fixed;inset:0;z-index:10020;display:none;align-items:flex-start;justify-content:center;padding:8.5vh 18px;background:rgba(31,36,51,.16)}
@@ -138,6 +139,11 @@ body.tak-embedded .date-navigation .date-nav-toggle,body.tak-embedded .category-
 .tak-page-options.tak-page-portal a::before,.tak-page-options.tak-page-portal a::after{content:none!important;display:none!important}
 .tak-page-options.tak-page-portal a:hover,.tak-page-options.tak-page-portal a:focus-visible{background:rgba(102,126,234,.075)!important;color:#5367bd!important;text-decoration:none!important;outline:none!important}
 .tak-page-options.tak-page-portal a[aria-selected="true"]{background:rgba(102,126,234,.17)!important;color:#3f54a9!important;font-weight:700!important;border:0!important}
+/* PC: page options read left-aligned inside the dropdown; the pager bar
+   itself keeps its centered position. */
+@media(min-width:761px){
+ .tak-page-options.tak-page-portal a{text-align:left!important;justify-content:flex-start!important}
+}
 /* Final 10.0: page number aligns with the geometric center of the FULL picker,
    not the remaining space beside its chevron. */
 .tak-page-picker{display:flex!important;position:relative!important;align-items:center!important;justify-content:center!important;text-align:center!important;gap:0!important}
@@ -239,33 +245,8 @@ body .category-navigation,body.tak-embedded .category-navigation{bottom:calc(12p
 .tak-search-cover[data-missing="true"]:after{content:"暂无预览";font-size:10px;color:#7180a0;position:absolute}
 .tak-search-copy{flex:1;min-width:0;overflow:hidden}
 .tak-search-result .meta{display:flex;flex-wrap:wrap}
-/* 9.9.8: persistent, pointer-transparent halo. The card's positioning,
-   shadow and stacking must never change when animation starts or finishes. */
+/* Keep zero-height album anchors positioned inside their owning card. */
 .history .message.default{position:relative}
-/* CRITICAL: upstream Beautifier has .message.default {animation:slideIn .4s}.
-   Suppressing animation while locating, then removing the class, RESTARTS
-   slideIn at 0% opacity: the entire card visibly blinks. Never override the
-   message's own animation/compositing; only animate the independent halo. */
-.history .message.default.tak-locating{scroll-margin-block:80px 24px}
-.history .message.default>.tak-search-highlight{
- position:absolute;inset:-1px;border-radius:inherit;z-index:20;pointer-events:none;
- background:linear-gradient(135deg,rgba(111,125,235,.115),rgba(142,103,203,.065));box-shadow:inset 0 0 0 2px rgba(102,126,234,.70),0 0 0 3px rgba(102,126,234,.23),0 8px 30px rgba(102,126,234,.12);
- opacity:0;transition:none!important;animation:none!important;
-}
-.history .message.default>.tak-search-highlight.is-active{
- animation:takMessageHaloRC 1.95s ease-in-out both!important;
-}
-/* Independent two-beat aura: the upstream date-item's two gentle pulses,
-   without scaling or changing the message card (which restarts slideIn). */
-@keyframes takMessageHaloRC{
- 0%{opacity:0;transform:scale(.997)}
- 18%{opacity:.90;transform:scale(1.003)}
- 40%{opacity:.21;transform:scale(1)}
- 63%{opacity:.72;transform:scale(1.002)}
- 84%{opacity:.19;transform:scale(1)}
- 100%{opacity:0;transform:scale(1)}
-}
-@media(prefers-reduced-motion:reduce){.history .message.default>.tak-search-highlight.is-active{animation:none!important;opacity:.4}}
 
 /* 9.9.8: a portalled pagination dropdown must not inherit absolute positioning
    from its original pagination container (scrolled documents broke it). */
@@ -359,11 +340,6 @@ body:has(#date-navigation.active) .tak-search-trigger{z-index:9990!important}
    right of alternating results. Hide this panel's chrome, not its scroll. */
 .tak-search-results{scrollbar-width:none!important;scrollbar-color:auto!important}
 .tak-search-results::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}
-@media(prefers-reduced-motion:reduce){
- .history .message.default>.tak-search-highlight.is-active{animation:none!important;opacity:.32}
-}
-
-
 /* RC-2: search list has no edge seams, even with composited hover glass. */
 .tak-search-help{display:none!important}
 .tak-search-results{padding:12px 14px!important;overflow-x:hidden!important;scrollbar-gutter:auto!important}
@@ -372,17 +348,6 @@ body:has(#date-navigation.active) .tak-search-trigger{z-index:9990!important}
 .tak-search-result:hover{background:rgba(230,237,255,.42)!important;box-shadow:inset 0 0 0 1px rgba(102,126,234,.12)!important;border:0!important}
 .tak-search-result.tak-keyboard-selected:not(:hover){background:transparent!important;box-shadow:inset 0 0 0 1px rgba(102,126,234,.33)!important;outline:0!important}
 .tak-search-result .preview{display:-webkit-box!important;-webkit-box-orient:vertical!important;-webkit-line-clamp:2!important;line-clamp:2!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-word!important;min-width:0!important}
-/* Two graceful pulses echo Beautifier's date-card locating glow. The message
-   itself is never animated (upstream slideIn would restart on class removal). */
-.history .message.default>.tak-search-highlight{background:linear-gradient(125deg,rgba(111,125,235,.125),rgba(145,108,210,.082));box-shadow:inset 0 0 0 2px rgba(102,126,234,.67),0 0 0 2px rgba(102,126,234,.13),0 7px 24px rgba(102,126,234,.10)}
-.history .message.default>.tak-search-highlight.is-active{animation:takMessageHaloRC2 1.75s cubic-bezier(.4,0,.2,1) both!important}
-@keyframes takMessageHaloRC2{
-  0%,100%{opacity:0;box-shadow:inset 0 0 0 2px rgba(102,126,234,.17),0 0 0 1px rgba(102,126,234,.04)}
-  16%{opacity:.84;box-shadow:inset 0 0 0 2px rgba(102,126,234,.72),0 0 0 3px rgba(102,126,234,.20),0 8px 27px rgba(102,126,234,.19)}
-  36%{opacity:.23;box-shadow:inset 0 0 0 2px rgba(102,126,234,.35),0 0 0 2px rgba(102,126,234,.08),0 4px 15px rgba(102,126,234,.07)}
-  56%{opacity:.78;box-shadow:inset 0 0 0 2px rgba(120,109,220,.71),0 0 0 3px rgba(120,109,220,.19),0 9px 30px rgba(120,109,220,.17)}
-  78%{opacity:.24;box-shadow:inset 0 0 0 2px rgba(102,126,234,.30),0 0 0 1px rgba(102,126,234,.08)}
-}
 @media(max-width:760px){
  .tak-search-modal{padding:4.5dvh 12px!important;align-items:flex-start!important}
  .tak-search-panel{width:100%!important;max-width:100%!important;max-height:calc(100dvh - 9dvh)!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
@@ -402,7 +367,6 @@ body:has(#date-navigation.active) .tak-search-trigger{z-index:9990!important}
 /* PC keeps its existing play affordance size; only the material is shared. */
 .tak-play-overlay span{background:rgba(30,39,64,.38);backdrop-filter:blur(18px) saturate(170%);-webkit-backdrop-filter:blur(18px) saturate(170%);border-color:rgba(255,255,255,.72)}
 .video_file_wrap:hover .tak-play-overlay span{background:rgba(79,101,184,.53)}
-@media(prefers-reduced-motion:reduce){.history .message.default>.tak-search-highlight.is-active{animation:none!important;opacity:.3}}
 
 /* RC-3: preserve the mobile search affordance without clipping its hint. */
 @media(max-width:760px){
@@ -486,13 +450,7 @@ body .tak-focus-trigger{display:none!important}
 /* TAK layout overrides for the bundled full telegram-export-beautifier theme.
    Only the four requested fixes; upstream panel internals stay untouched. */
 
-/* 1) PC pagination is left-aligned. The page text inside the picker remains
-      centered by the upstream rules; only the bar's page position changes. */
-@media(min-width:761px){
- .tak-pagination{margin-left:0!important;margin-right:auto!important}
-}
-
-/* 2) Floating controls share one right-hand column.
+/* 1) Floating controls share one right-hand column.
       PC: category keeps its upstream 100px slot, search moves above it,
       date keeps the bottom slot. Mobile: immersive at the top, jump buttons
       in the middle, then search, category, date at the bottom. */
@@ -509,17 +467,32 @@ body .tak-focus-trigger{display:none!important}
  body.tak-embedded.tak-has-mobile-focus #category-navigation{bottom:calc(12px + var(--tak-fab) + 18px)!important}
 }
 
-/* 3) PC category panel uses the same live-glass background as the search
+/* 2) PC category panel uses the same live-glass background as the search
       panel. Layout, type, pills and animations keep the upstream values. */
 @media(min-width:761px){
  #category-navigation .category-nav-modal{
-  background:linear-gradient(145deg,rgba(255,255,255,.74),rgba(245,247,253,.64))!important;
-  -webkit-backdrop-filter:blur(34px) saturate(185%)!important;
-  backdrop-filter:blur(34px) saturate(185%)!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.80),rgba(245,247,253,.70))!important;
+  -webkit-backdrop-filter:blur(38px) saturate(185%)!important;
+  backdrop-filter:blur(38px) saturate(185%)!important;
+ }
+ /* Level 2 shows the same glass as level 1 instead of an opaque white sheet. */
+ #category-navigation .category-messages-body{
+  background:transparent!important;
+  -webkit-backdrop-filter:none!important;
+  backdrop-filter:none!important;
  }
 }
 
-/* 4) Every panel sits above every floating button. */
+/* PC search shares the tag panel's exact footprint, glass and centered
+   position: 72px header + the same capped 600px body (85vh at short heights). */
+@media(min-width:761px){
+ .tak-search-modal{align-items:center!important;justify-content:center!important;padding:0!important}
+ .tak-search-panel{width:90%!important;max-width:1000px!important;height:calc(72px + min(600px,calc(85vh - 85px)))!important;max-height:85vh!important;display:flex!important;flex-direction:column!important;border-radius:24px!important;overflow:hidden!important;background:linear-gradient(145deg,rgba(255,255,255,.80),rgba(245,247,253,.70))!important;-webkit-backdrop-filter:blur(38px) saturate(185%)!important;backdrop-filter:blur(38px) saturate(185%)!important}
+ .tak-search-head{flex:0 0 72px!important;height:72px!important;padding:0 18px!important;box-sizing:border-box!important}
+ .tak-search-results{flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow-y:auto!important}
+}
+
+/* 3) Every panel sits above every floating button. */
 #date-navigation.active,#date-navigation.closing{z-index:10010!important}
 #category-navigation.active,#category-navigation.closing{z-index:10030!important}
 
