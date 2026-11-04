@@ -4,6 +4,7 @@
 *.out
 dist/
 build/
+node_modules/
 
 # Local data & logs
 TG Library/
@@ -14,3 +15,7 @@ TG Library/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Editor backups
+*~
+*.tsbuildinfo

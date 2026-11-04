@@ -1,0 +1,268 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"telegramarchivekit/internal/media"
+)
+
+// ErrOperationRunning is returned when the desktop asks for a second write
+// operation while one is already in flight.
+var ErrOperationRunning = errors.New("已有任务正在进行，请等待完成或先取消")
+
+type desktopOp struct {
+	id     string
+	slug   string
+	cancel context.CancelFunc
+}
+
+// Facade is the desktop client's only door into the engine. It owns the App
+// state, serializes write operations and emits JSON-ready progress events.
+type Facade struct {
+	a    *App
+	emit func(event string, data any)
+
+	mu      sync.Mutex
+	op      *desktopOp
+	seq     int64
+	latest  DownloadSnapshot
+	hasDl   bool
+	opState OperationDTO
+	hasOp   bool
+	done    DoneDTO
+	hasDone bool
+	running bool
+}
+
+// DesktopState is polled by the window; it intentionally excludes Bootstrap
+// (which probes tdl/PATH) so a 500ms poll stays cheap.
+type DesktopState struct {
+	Chats     []ChatDTO         `json:"chats"`
+	Download  *DownloadSnapshot `json:"download,omitempty"`
+	Operation *OperationDTO     `json:"operation,omitempty"`
+	Done      *DoneDTO          `json:"done,omitempty"`
+	Running   bool              `json:"running"`
+}
+
+// OpenFacade loads settings exactly like the console client does.
+func OpenFacade() (*Facade, error) {
+	a, err := newApp()
+	if err != nil {
+		return nil, err
+	}
+	return &Facade{a: a}, nil
+}
+
+func (f *Facade) SetEmitter(fn func(event string, data any)) {
+	f.mu.Lock()
+	f.emit = fn
+	f.mu.Unlock()
+}
+
+func (f *Facade) send(event string, data any) {
+	f.mu.Lock()
+	switch event {
+	case "tak:download":
+		if s, ok := data.(DownloadSnapshot); ok {
+			f.latest = s
+			f.hasDl = true
+		}
+	case "tak:operation":
+		if o, ok := data.(OperationDTO); ok {
+			f.opState = o
+			f.hasOp = true
+		}
+	case "tak:done":
+		if d, ok := data.(DoneDTO); ok {
+			f.done = d
+			f.hasDone = true
+			f.running = false
+		}
+	}
+	fn := f.emit
+	f.mu.Unlock()
+	if fn != nil {
+		fn(event, data)
+	}
+}
+
+// State is the polling endpoint for the desktop window.
+func (f *Facade) State() DesktopState {
+	f.mu.Lock()
+	st := DesktopState{Running: f.running}
+	if f.hasDl {
+		dl := f.latest
+		st.Download = &dl
+	}
+	if f.hasOp {
+		op := f.opState
+		st.Operation = &op
+	}
+	if f.hasDone {
+		done := f.done
+		st.Done = &done
+	}
+	f.mu.Unlock()
+	st.Chats = f.ListChats()
+	return st
+}
+
+func (f *Facade) Ping() string { return "pong" }
+
+func (f *Facade) Bootstrap() BootstrapDTO {
+	list := f.a.listWorkspaces()
+	current := selectedSlug(f.a.selectedWorkspace(list))
+	return BootstrapDTO{
+		Version:     version,
+		LibraryRoot: f.a.Settings.LibraryRoot,
+		Tdl:         f.a.resolveTdl(),
+		TdlRunning:  isTdlRunning(),
+		HasSession:  hasTdlSessionData(),
+		FFmpeg:      media.FindFFmpeg(),
+		Chats:       len(list),
+		Current:     current,
+		ConfigPath:  f.a.ConfigPath,
+	}
+}
+
+func (f *Facade) ListChats() []ChatDTO {
+	list := f.a.listWorkspaces()
+	current := f.a.Settings.LastWorkspaceSlug
+	out := make([]ChatDTO, 0, len(list))
+	for _, m := range list {
+		dto := ChatDTO{
+			Slug: m.Slug, Name: m.Chat.Name, Type: m.Chat.Type, ID: m.Chat.ID,
+			Messages: m.MessageCount, Media: m.MediaCount, Missing: m.MissingCount,
+			FirstTS: m.FirstTS, LastTS: m.LastTS, UpdatedAt: formatMetaTime(m.UpdatedAt),
+			HasSource: fileExists(f.a.sourcePath(m.Slug)),
+			Official:  len(m.OfficialExports),
+			Dir:       f.a.workspaceDir(m.Slug),
+			Current:   m.Slug == current,
+		}
+		if entries, err := os.ReadDir(f.a.workspaceDir(m.Slug)); err == nil {
+			for _, e := range entries {
+				n := strings.ToLower(e.Name())
+				if !e.IsDir() && (n == "messages.html" || (strings.HasPrefix(n, "messages") && strings.HasSuffix(n, ".html") && len(n) > len("messages.html"))) {
+					dto.Pages++
+				}
+			}
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
+// StartOneClick runs sync + build for one chat and streams progress events.
+// It returns the operation id immediately; completion arrives as tak:done.
+func (f *Facade) StartOneClick(slug string) (string, error) {
+	if strings.TrimSpace(slug) == "" {
+		return "", errors.New("缺少聊天标识")
+	}
+	meta, err := f.a.readWorkspaceMeta(slug)
+	if err != nil {
+		return "", fmt.Errorf("读取聊天失败: %w", err)
+	}
+	if !fileExists(f.a.sourcePath(slug)) {
+		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+	}
+
+	f.mu.Lock()
+	if f.op != nil {
+		f.mu.Unlock()
+		return "", ErrOperationRunning
+	}
+	f.seq++
+	opID := fmt.Sprintf("op-%d-%d", time.Now().UnixNano(), f.seq)
+	ctx, cancel := context.WithCancel(context.Background())
+	op := &desktopOp{id: opID, slug: slug, cancel: cancel}
+	f.op = op
+	f.running = true
+	f.hasDl = false
+	f.hasOp = false
+	f.hasDone = false
+	f.mu.Unlock()
+
+	go f.runOneClick(ctx, op, meta)
+	return opID, nil
+}
+
+func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceMeta) {
+	defer func() {
+		op.cancel()
+		f.mu.Lock()
+		if f.op == op {
+			f.op = nil
+		}
+		f.mu.Unlock()
+	}()
+
+	rep := &eventReporter{opID: op.id, emit: f.send}
+	rep.Phase(ctx, "preflight", "准备同步", meta.Chat.Name)
+	err := f.a.smartSyncCtx(ctx, op.slug, rep)
+	if err == nil {
+		rep.Phase(ctx, "build", "正在构建网页", "生成页面、搜索与日期索引")
+		var arc *Archive
+		arc, err = f.a.buildWorkspaceModeWithProgressCtx(ctx, op.slug, true, func(p OperationProgress) {
+			f.send("tak:operation", OperationDTO{
+				OpID: op.id, Phase: "build", Stage: p.Stage, Detail: p.Detail,
+				Current: p.Current, Total: p.Total, Unit: p.Unit,
+			})
+		})
+		if err == nil && arc != nil {
+			f.send("tak:done", DoneDTO{
+				OpID: op.id, OK: true, Stage: "完成",
+				Messages: arc.Stats.Messages, Media: arc.Stats.MediaFiles, Missing: arc.Stats.MissingMedia,
+			})
+			return
+		}
+	}
+	stage := "同步失败"
+	if err != nil {
+		stage = err.Error()
+	}
+	f.send("tak:done", DoneDTO{OpID: op.id, OK: false, Stage: stage, Error: stage})
+}
+
+func (f *Facade) Cancel() bool {
+	f.mu.Lock()
+	op := f.op
+	f.mu.Unlock()
+	if op == nil {
+		return false
+	}
+	op.cancel()
+	return true
+}
+
+func (f *Facade) Running() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.op != nil
+}
+
+func (f *Facade) OpenLibrary(slug string) error {
+	target := localFileURL(f.a.libraryIndex(), slug)
+	return openInBrowser(target)
+}
+
+func (f *Facade) RevealChat(slug string) error {
+	return openFolder(f.a.workspaceDir(slug))
+}
+
+func (f *Facade) RevealLogs() error {
+	return osMkdirAndOpen(f.a.logsDir())
+}
+
+func osMkdirAndOpen(dir string) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return openFolder(filepath.Clean(dir))
+}

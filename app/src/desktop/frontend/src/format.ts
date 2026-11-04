@@ -1,0 +1,33 @@
+export function bytes(n: number): string {
+  if (!n || n < 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
+}
+
+export function rate(n: number): string {
+  if (!n || n <= 0) return "0 B/s";
+  return `${bytes(n)}/s`;
+}
+
+export function duration(ms: number): string {
+  if (!ms || ms <= 0) return "--";
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
+export function clock(ts?: number): string {
+  if (!ts) return "--";
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

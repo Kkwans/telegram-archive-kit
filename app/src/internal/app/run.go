@@ -1174,13 +1174,19 @@ func (a *App) preflight(slug string) error {
 }
 
 func (a *App) smartSync(slug string) error {
+	return a.smartSyncCtx(context.Background(), slug, &tuiReporter{a: a})
+}
+
+// smartSyncCtx is the headless sync loop shared by the console and the
+// desktop client. It reports through Reporter and never reads the keyboard.
+func (a *App) smartSyncCtx(ctx context.Context, slug string, rep Reporter) error {
 	globalEngineRestarts := 0
 	_ = a.removeZeroByteMedia(slug)
 	meta, _ := a.readWorkspaceMeta(slug)
 	for pass := 1; pass <= a.Settings.MaxRepairPasses; pass++ {
 		var missing int
 		var path string
-		err := runOperation("核对媒体完整性", meta.Chat.Name, "正在比对 result.json、已有媒体和官方 ChatExport", func(ctx context.Context, update func(OperationProgress)) error {
+		err := rep.Check(ctx, "核对媒体完整性", meta.Chat.Name, "正在比对 result.json、已有媒体和官方 ChatExport", func(cctx context.Context, update func(OperationProgress)) error {
 			update(OperationProgress{Stage: fmt.Sprintf("第 %d 轮 · 正在重新计算真正缺失项", pass), Detail: "按 Message ID 与实际文件大小核对；不会相信旧 Resume 状态"})
 			var er error
 			missing, path, er = a.generateMissingJSON(slug)
@@ -1195,7 +1201,12 @@ func (a *App) smartSync(slug string) error {
 		if missing == 0 {
 			return nil
 		}
-		if err := a.downloadMissing(slug, path, pass, &globalEngineRestarts); err != nil {
+		dctx, ui, done := rep.BeginDownload(ctx, downloadMeta{
+			Slug: slug, Chat: meta.Chat.Name, Pass: pass, PassMax: a.Settings.MaxRepairPasses,
+		})
+		err = a.downloadMissing(dctx, slug, path, pass, &globalEngineRestarts, ui)
+		done()
+		if err != nil {
 			return err
 		}
 		_ = a.removeZeroByteMedia(slug)
@@ -1760,6 +1771,10 @@ func runSelfTest(a *App) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
+	// The sample import persists LastWorkspaceSlug, so a selftest must write to a
+	// throwaway config; otherwise it overwrites the user's real library root.
+	a.ConfigDir = tmp
+	a.ConfigPath = filepath.Join(tmp, "config.json")
 	a.Settings.LibraryRoot = filepath.Join(tmp, "library")
 	if err := a.ensureLibraryDirs(); err != nil {
 		return err

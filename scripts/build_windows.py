@@ -50,6 +50,15 @@ def build_tui() -> None:
     run("go", "vet", "./...", env=env)
 
 
+def build_frontend() -> None:
+    """Build the embedded React UI. Skipped only with --skip-frontend."""
+    frontend = desktop_src / "frontend"
+    npm = "npm.cmd" if os.name == "nt" else "npm"
+    if not (frontend / "node_modules").exists():
+        run(npm, "ci", cwd=frontend)
+    run(npm, "run", "build", cwd=frontend)
+
+
 def build_target(name: str) -> pathlib.Path:
     t = TARGETS[name]
     if name == "desktop":
@@ -74,6 +83,7 @@ def build_target(name: str) -> pathlib.Path:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--target", choices=("console", "desktop", "all"), default="all")
+    p.add_argument("--skip-frontend", action="store_true", help="reuse frontend/dist")
     args = p.parse_args()
 
     if args.target in ("console", "all"):
@@ -82,9 +92,13 @@ def main() -> None:
     if args.target == "console":
         outputs.append(build_target("console"))
     elif args.target == "desktop":
+        if not args.skip_frontend:
+            build_frontend()
         outputs.append(build_target("desktop"))
     else:
         outputs.append(build_target("console"))
+        if not args.skip_frontend:
+            build_frontend()
         outputs.append(build_target("desktop"))
 
     for out in outputs:

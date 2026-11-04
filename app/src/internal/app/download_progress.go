@@ -73,27 +73,30 @@ var dlTransferredRe = regexp.MustCompile(`(?i)\[([0-9]+(?:\.[0-9]+)?)\s*(B|KB|MB
 var dlETARe = regexp.MustCompile(`(?i)~ETA:\s*([^;\]]+)`)
 
 type progressCapture struct {
-	mu          sync.Mutex
-	tail        string
-	recent      []string
-	done        map[string]bool
-	doneBytes   map[string]int64
-	active      map[string]bool
-	speeds      map[string]float64
-	transferred map[string]int64
-	percents    map[string]float64
-	lastMove    time.Time
-	log         io.Writer
-	rawTail     string
-	taskStart   map[string]time.Time
-	lastLine    map[string]string
-	completed   []taskView
+	mu               sync.Mutex
+	tail             string
+	recent           []string
+	done             map[string]bool
+	doneBytes        map[string]int64
+	active           map[string]bool
+	speeds           map[string]float64
+	transferred      map[string]int64
+	percents         map[string]float64
+	etas             map[string]time.Duration
+	completedElapsed map[string]time.Duration
+	lastMove         time.Time
+	log              io.Writer
+	rawTail          string
+	taskStart        map[string]time.Time
+	lastLine         map[string]string
+	completed        []taskView
 }
 
 func newProgressCapture(log io.Writer) *progressCapture {
 	return &progressCapture{
 		done: map[string]bool{}, doneBytes: map[string]int64{}, active: map[string]bool{},
 		speeds: map[string]float64{}, transferred: map[string]int64{}, percents: map[string]float64{},
+		etas: map[string]time.Duration{}, completedElapsed: map[string]time.Duration{},
 		lastMove: time.Now(), log: log, taskStart: map[string]time.Time{}, lastLine: map[string]string{},
 	}
 }
@@ -169,9 +172,11 @@ func (c *progressCapture) updateTask(clean string, keep bool) {
 			elapsed = time.Second
 		}
 		c.completed = append(c.completed, taskView{ID: id, Done: true, Elapsed: formatDuration(elapsed), Name: "", Transferred: humanBytes(c.doneBytes[id]), Percent: "完成"})
+		c.completedElapsed[id] = elapsed
 		if len(c.completed) > 5 {
 			c.completed = c.completed[len(c.completed)-5:]
 		}
+		delete(c.etas, id)
 		delete(c.taskStart, id)
 		delete(c.lastLine, id)
 	} else if id != "" {
@@ -192,6 +197,11 @@ func (c *progressCapture) updateTask(clean string, keep bool) {
 		if sm := dlSpeedRe.FindStringSubmatch(clean); len(sm) == 3 {
 			if v, e := strconv.ParseFloat(sm[1], 64); e == nil {
 				c.speeds[id] = v * unitBytes(sm[2])
+			}
+		}
+		if em := dlETARe.FindStringSubmatch(clean); len(em) == 2 {
+			if d, e := time.ParseDuration(strings.TrimSpace(em[1])); e == nil {
+				c.etas[id] = d
 			}
 		}
 	}
@@ -302,6 +312,56 @@ func (c *progressCapture) dashboardTasks(plan downloadPlan) (active, completed [
 			v.Name = "媒体文件"
 		}
 		completed = append(completed, v)
+	}
+	return
+}
+
+// taskProgress is the numeric twin of dashboardTasks for the desktop client.
+func (c *progressCapture) taskProgress(plan downloadPlan, now time.Time) (active, completed []TaskProgress) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ids := make([]string, 0, len(c.active))
+	for id := range c.active {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, _ := strconv.ParseInt(ids[i], 10, 64)
+		b, _ := strconv.ParseInt(ids[j], 10, 64)
+		return a < b
+	})
+	for _, id := range ids {
+		name := strings.TrimSpace(plan.Names[id])
+		if name == "" {
+			name = "媒体文件"
+		}
+		pct, seen := c.percents[id]
+		if !seen {
+			pct = -1
+		}
+		t := TaskProgress{
+			ID: id, Name: name, Kind: archive.MediaKind(name),
+			Percent: pct, Transferred: c.transferred[id], Expected: plan.IDs[id],
+			Speed: c.speeds[id], ETAMs: c.etas[id].Milliseconds(),
+		}
+		if st, ok := c.taskStart[id]; ok {
+			t.ElapsedMs = now.Sub(st).Milliseconds()
+		}
+		if now.Sub(c.lastMove) > 3*time.Second {
+			t.Speed = 0
+			t.Stalled = true
+		}
+		active = append(active, t)
+	}
+	for i := len(c.completed) - 1; i >= 0; i-- {
+		v := c.completed[i]
+		name := plan.Names[v.ID]
+		if name == "" {
+			name = "媒体文件"
+		}
+		completed = append(completed, TaskProgress{
+			ID: v.ID, Name: name, Kind: archive.MediaKind(name), Done: true, Percent: 100,
+			Expected: plan.IDs[v.ID], ElapsedMs: c.completedElapsed[v.ID].Milliseconds(),
+		})
 	}
 	return
 }

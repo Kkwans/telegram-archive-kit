@@ -468,7 +468,7 @@ func adaptiveTransferProfile(concurrent, threads, stallLevel int, enabled bool) 
 	return concurrent, threads
 }
 
-func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineRestarts *int) error {
+func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass int, globalEngineRestarts *int, ui downloadUI) error {
 	exe, err := a.ensureTdlInstalled(nil)
 	if err != nil {
 		return err
@@ -581,8 +581,8 @@ func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineResta
 			return false, nil
 		}
 		completed, totalBytes := a.downloadProgressState(slug, basePlan, nil)
-		a.renderDownloadDashboardState(chatName, pass, basePlan, completed, totalBytes, 0, time.Since(startedAll), nil,
-			"正在诊断", "疑难文件已完成第一轮重试；正在检查 Telegram 连通性，随后最多整体重启一次", 0, a.Settings.Concurrent, a.Settings.Threads)
+		ui.Render(newDownloadSnapshot(chatName, pass, basePlan, completed, totalBytes, 0, time.Since(startedAll), nil,
+			"正在诊断", "疑难文件已完成第一轮重试；正在检查 Telegram 连通性，随后最多整体重启一次", 0, a.Settings.Concurrent, a.Settings.Threads))
 		diagCh := make(chan SessionStatus, 1)
 		go func() { diagCh <- a.testTdlSession(12 * time.Second) }()
 		diagStarted := time.Now()
@@ -593,10 +593,10 @@ func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineResta
 			case diagnosis = <-diagCh:
 				diagDone = true
 			case <-time.After(250 * time.Millisecond):
-				a.renderDownloadDashboardState(chatName, pass, basePlan, completed, totalBytes, 0, time.Since(startedAll), nil,
-					"正在诊断", fmt.Sprintf("检查连接和授权 · 已等待 %s（最多 12 秒） · 只剩最后一次整体重启", formatDuration(time.Since(diagStarted))), 0, a.Settings.Concurrent, a.Settings.Threads)
+				ui.Render(newDownloadSnapshot(chatName, pass, basePlan, completed, totalBytes, 0, time.Since(startedAll), nil,
+					"正在诊断", fmt.Sprintf("检查连接和授权 · 已等待 %s（最多 12 秒） · 只剩最后一次整体重启", formatDuration(time.Since(diagStarted))), 0, a.Settings.Concurrent, a.Settings.Threads))
 			}
-			if k, ok := pollKey(1 * time.Millisecond); ok && k.Code == keyEsc {
+			if ctx.Err() != nil {
 				return false, errUserAbort
 			}
 		}
@@ -619,8 +619,8 @@ func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineResta
 		exhausted = map[string]bool{}
 		networkAttempt, unknownAttempt = 0, 0
 		networkRetryStart = time.Time{}
-		a.renderDownloadDashboardState(chatName, pass, basePlan, completed, totalBytes, 0, time.Since(startedAll), nil,
-			"诊断完成", fmt.Sprintf("%s；最后一轮（2/2），疑难文件重试次数重新计数", diagnosis.Message), 0, a.Settings.Concurrent, a.Settings.Threads)
+		ui.Render(newDownloadSnapshot(chatName, pass, basePlan, completed, totalBytes, 0, time.Since(startedAll), nil,
+			"诊断完成", fmt.Sprintf("%s；最后一轮（2/2），疑难文件重试次数重新计数", diagnosis.Message), 0, a.Settings.Concurrent, a.Settings.Threads))
 		time.Sleep(900 * time.Millisecond)
 		return true, nil
 	}
@@ -637,7 +637,7 @@ func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineResta
 			effectiveConcurrent = 1
 			effectiveThreads = retryThreads(a.Settings.Threads, deferred[activeDeferred], a.Settings.TransferAdjustment)
 		}
-		failure, runErr := a.runTdlDownloadAttempt(exe, slug, currentJSON, chatName, pass, basePlan, startedAll, effectiveConcurrent, effectiveThreads)
+		failure, runErr := a.runTdlDownloadAttempt(ctx, exe, slug, currentJSON, chatName, pass, basePlan, startedAll, effectiveConcurrent, effectiveThreads, ui)
 		if runErr == nil {
 			if len(deferred) > 0 {
 				more, e := advanceDeferred()
@@ -690,7 +690,7 @@ func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineResta
 			}
 			if more {
 				done, byteCount := a.downloadProgressState(slug, basePlan, nil)
-				if !a.waitForRetry(chatName, pass, basePlan, done, byteCount, time.Since(startedAll), deferredInfo, deferredInfo,
+				if !a.waitForRetry(ctx, ui, chatName, pass, basePlan, done, byteCount, time.Since(startedAll), deferredInfo, deferredInfo,
 					time.Second, effectiveConcurrent, effectiveThreads) {
 					return errUserAbort
 				}
@@ -737,7 +737,7 @@ func (a *App) downloadMissing(slug, jsonPath string, pass int, globalEngineResta
 		}
 		currentJSON = nextJSON
 		done, byteCount := a.downloadProgressState(slug, basePlan, nil)
-		if !a.waitForRetry(chatName, pass, basePlan, done, byteCount, time.Since(startedAll), failure.Summary,
+		if !a.waitForRetry(ctx, ui, chatName, pass, basePlan, done, byteCount, time.Since(startedAll), failure.Summary,
 			fmt.Sprintf("连接恢复尝试 %d/%d · 整体诊断重启 %d/1", networkAttempt, a.Settings.StalledFileRetries, *globalEngineRestarts), delay, a.Settings.Concurrent, a.Settings.Threads) {
 			return errUserAbort
 		}
@@ -782,7 +782,7 @@ func retryBackoff(n int) time.Duration {
 	return steps[n-1] * time.Second
 }
 
-func (a *App) waitForRetry(chat string, pass int, plan downloadPlan, done int, bytesNow int64, elapsed time.Duration, summary, reason string, delay time.Duration, effectiveConcurrent, effectiveThreads int) bool {
+func (a *App) waitForRetry(ctx context.Context, ui downloadUI, chat string, pass int, plan downloadPlan, done int, bytesNow int64, elapsed time.Duration, summary, reason string, delay time.Duration, effectiveConcurrent, effectiveThreads int) bool {
 	until := time.Now().Add(delay)
 	for {
 		remaining := time.Until(until)
@@ -793,9 +793,11 @@ func (a *App) waitForRetry(chat string, pass int, plan downloadPlan, done int, b
 		if strings.TrimSpace(detail) == "" {
 			detail = summary
 		}
-		a.renderDownloadDashboardState(chat, pass, plan, done, bytesNow, 0, elapsed+delay-remaining, nil, "等待网络恢复", detail, remaining, effectiveConcurrent, effectiveThreads)
-		if k, ok := pollKey(120 * time.Millisecond); ok && k.Code == keyEsc {
+		ui.Render(newDownloadSnapshot(chat, pass, plan, done, bytesNow, 0, elapsed+delay-remaining, nil, "等待网络恢复", detail, remaining, effectiveConcurrent, effectiveThreads))
+		select {
+		case <-ctx.Done():
 			return false
+		case <-time.After(120 * time.Millisecond):
 		}
 	}
 }
@@ -813,7 +815,7 @@ func priorUnknownCompleted(basePlan, pendingPlan downloadPlan) int {
 	return n
 }
 
-func (a *App) runTdlDownloadAttempt(exe, slug, jsonPath, chatName string, pass int, basePlan downloadPlan, startedAll time.Time, effectiveConcurrent, effectiveThreads int) (*TdlFailure, error) {
+func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, chatName string, pass int, basePlan downloadPlan, startedAll time.Time, effectiveConcurrent, effectiveThreads int, ui downloadUI) (*TdlFailure, error) {
 	args := append(a.tdlBaseArgs(), "-l", fmt.Sprint(effectiveConcurrent), "-t", fmt.Sprint(effectiveThreads), "download", "--restart", "-f", jsonPath, "-d", a.mediaDir(slug))
 	_ = os.MkdirAll(a.logsDir(), 0755)
 	logPath := filepath.Join(a.logsDir(), "tdl-"+slug+"-"+time.Now().Format("20060102-150405.000")+".log")
@@ -844,7 +846,8 @@ func (a *App) runTdlDownloadAttempt(exe, slug, jsonPath, chatName string, pass i
 	done, bytesNow := progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
 	activeSpeed := sumRates(speeds)
 	active, finished := capture.dashboardTasks(basePlan)
-	a.renderDownloadDashboardDetailed(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished)
+	activeProg, doneProg := capture.taskProgress(basePlan, time.Now())
+	ui.Render(newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg))
 	lastBytes = bytesNow
 
 	for {
@@ -857,7 +860,7 @@ func (a *App) runTdlDownloadAttempt(exe, slug, jsonPath, chatName string, pass i
 				activeSpeed = smoothedSpeed
 			}
 			if runErr == nil {
-				a.renderDownloadDashboardState(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), recent, "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads)
+				ui.Render(newDownloadSnapshot(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), recent, "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads))
 				time.Sleep(260 * time.Millisecond)
 				return nil, nil
 			}
@@ -912,18 +915,21 @@ func (a *App) runTdlDownloadAttempt(exe, slug, jsonPath, chatName string, pass i
 				return f, f
 			}
 			active, finished := capture.dashboardTasks(basePlan)
-			a.renderDownloadDashboardDetailed(chatName, pass, basePlan, done, bytesNow, smoothedSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished)
+			activeProg, doneProg := capture.taskProgress(basePlan, now)
+			ui.Render(newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, smoothedSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg))
 			lastBytes, lastTick = bytesNow, now
 		default:
-			if k, ok := pollKey(70 * time.Millisecond); ok && k.Code == keyEsc {
+			select {
+			case <-ctx.Done():
 				_ = killProcessTree(cmd.Process.Pid)
-				// Do not let a misbehaving child make Esc feel like the old Ctrl+C hang.
+				// Do not let a misbehaving child make cancellation feel like the old Ctrl+C hang.
 				select {
 				case <-result:
 				case <-time.After(3 * time.Second):
 				}
 				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
 				return nil, errUserAbort
+			case <-time.After(70 * time.Millisecond):
 			}
 		}
 	}

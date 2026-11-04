@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	static "telegramarchivekit/assets"
 	"telegramarchivekit/internal/archive"
@@ -511,6 +513,75 @@ func TestBuildArchiveResolvesDocumentsFromFilesDir(t *testing.T) {
 	}
 	if got := arc.Messages[0].Media[0]; got.Path != "files/9_4_bundle.zip" || got.Kind != "file" {
 		t.Fatalf("unexpected resolved media %#v", got)
+	}
+}
+
+func TestSelfTestNeverTouchesUserConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.json")
+	original := []byte(`{"schema_version":985,"library_root":"D:\\MyRealLibrary","last_workspace_slug":"chat_real__1"}`)
+	if err := os.WriteFile(cfg, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{ConfigDir: dir, ConfigPath: cfg, Settings: defaultSettings()}
+	if err := runSelfTest(a); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("selftest overwrote the user config:\nbefore %s\nafter  %s", original, after)
+	}
+}
+
+func TestProgressCaptureProducesNumericTaskRows(t *testing.T) {
+	c := newProgressCapture(nil)
+	line := "Chat(1):42 -> movie.mp4 ... 10.0% [1.00 MB in 10s; 512.00 KB/s; ~ETA: 20s]\n"
+	if _, err := c.Write([]byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	plan := downloadPlan{
+		IDs:   map[string]int64{"42": 10 * 1024 * 1024},
+		Names: map[string]string{"42": "movie.mp4"},
+		Total: 1,
+	}
+	active, _ := c.taskProgress(plan, time.Now())
+	if len(active) != 1 {
+		t.Fatalf("want one active task, got %#v", active)
+	}
+	got := active[0]
+	if got.Percent != 10 || got.Kind != "video" || got.Name != "movie.mp4" {
+		t.Fatalf("unexpected task %#v", got)
+	}
+	if got.Speed <= 0 || got.ETAMs <= 0 || got.Transferred <= 0 {
+		t.Fatalf("numeric fields missing: %#v", got)
+	}
+}
+
+func TestEventReporterThrottlesButKeepsStateChanges(t *testing.T) {
+	var got []DownloadSnapshot
+	r := &eventReporter{opID: "op-1", emit: func(event string, data any) {
+		if s, ok := data.(DownloadSnapshot); ok {
+			got = append(got, s)
+		}
+	}}
+	_, ui, done := r.BeginDownload(context.Background(), downloadMeta{})
+	defer done()
+
+	plan := downloadPlan{Total: 10}
+	ui.Render(DownloadSnapshot{State: "正在下载", Bytes: 1000, Total: 10, plan: plan})
+	ui.Render(DownloadSnapshot{State: "正在下载", Bytes: 2000, Total: 10, plan: plan})
+	if len(got) != 1 {
+		t.Fatalf("same-state frames should throttle, got %d", len(got))
+	}
+	ui.Render(DownloadSnapshot{State: "已完成", Bytes: 2000, Total: 10, plan: plan})
+	if len(got) != 2 || got[1].State != "已完成" {
+		t.Fatalf("state changes must bypass throttling: %#v", got)
+	}
+	if got[0].OpID != "op-1" || got[0].UpdatedAt == 0 {
+		t.Fatalf("envelope fields missing: %#v", got[0])
 	}
 }
 

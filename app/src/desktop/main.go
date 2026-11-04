@@ -9,19 +9,12 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	takapp "telegramarchivekit/internal/app"
 	"telegramarchivekit/internal/model"
 )
 
 //go:embed all:frontend/dist
 var embeddedAssets embed.FS
-
-// DesktopService is the first RPC surface of the desktop client. Business
-// services are added in later phases; P0 only proves the shell and binding path.
-type DesktopService struct{}
-
-func (d *DesktopService) Ping() string { return "pong" }
-
-func (d *DesktopService) Version() string { return model.Version }
 
 func main() {
 	// The desktop exe is a windowed app: CLI output is only useful for the
@@ -34,15 +27,25 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	facade, err := takapp.OpenFacade()
+	if err != nil {
+		log.Fatal(err)
+	}
+	bridge := NewBridge(facade)
+
+	windowsOpts := application.WindowsOptions{
+		DisableQuitOnLastWindowClosed: true,
+	}
+	if os.Getenv("TAK_DEVTOOLS") == "1" {
+		windowsOpts.AdditionalBrowserArgs = append(windowsOpts.AdditionalBrowserArgs, "--remote-debugging-port=9222")
+	}
 
 	app := application.New(application.Options{
 		Name:        "TelegramArchiveKit",
 		Description: "Telegram Archive Kit 桌面客户端",
-		Services: []application.Service{
-			application.NewService(&DesktopService{}),
-		},
 		Assets: application.AssetOptions{
-			Handler: application.BundledAssetFileServer(assets),
+			Handler:    application.BundledAssetFileServer(assets),
+			Middleware: bridge.Middleware,
 		},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.kkwans.telegramarchivekit",
@@ -53,17 +56,15 @@ func main() {
 				}
 			},
 		},
-		Windows: application.WindowsOptions{
-			DisableQuitOnLastWindowClosed: true,
-		},
+		Windows: windowsOpts,
 	})
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:     "main",
-		Title:    "TelegramArchiveKit",
-		Width:    1280,
-		Height:   820,
-		MinWidth: 1040,
+		Name:      "main",
+		Title:     "TelegramArchiveKit",
+		Width:     1280,
+		Height:    820,
+		MinWidth:  1040,
 		MinHeight: 680,
 		Frameless: true,
 		// Mica only works with a translucent background on Windows 11 22621+.
@@ -77,6 +78,7 @@ func main() {
 		},
 	})
 	win.Show()
+	bridge.Attach(win)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
