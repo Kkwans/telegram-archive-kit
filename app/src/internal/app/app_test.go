@@ -659,3 +659,16 @@ func TestReadLoginStreamCapturesPromptWithoutNewline(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadSnapshotNeverMarshalsNullArrays(t *testing.T) {
+	s := newDownloadSnapshot("chat", 1, downloadPlan{}, 0, 0, 0, 0, nil, "空闲", "", 0, 1, 1)
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{`"active":null`, `"completed":null`, `"recent":null`} {
+		if strings.Contains(string(b), bad) {
+			t.Fatalf("snapshot must use empty arrays, got %s", bad)
+		}
+	}
+}

@@ -104,6 +104,9 @@ func newDownloadSnapshot(chat string, pass int, plan downloadPlan, done int, byt
 	retryIn time.Duration, concurrent, threads int) DownloadSnapshot {
 	s := newDownloadSnapshotFull(chat, pass, plan, done, bytes, speed, elapsed, state, detail,
 		retryIn, concurrent, threads, nil, nil, nil, nil)
+	if recent == nil {
+		recent = []string{}
+	}
 	s.Recent = recent
 	return s
 }
@@ -123,6 +126,12 @@ func newDownloadSnapshotFull(chat string, pass int, plan downloadPlan, done int,
 	}
 	if eta <= 0 {
 		source = ""
+	}
+	if active == nil {
+		active = []TaskProgress{}
+	}
+	if completed == nil {
+		completed = []TaskProgress{}
 	}
 	return DownloadSnapshot{
 		Chat: chat, Pass: pass, State: state, Detail: detail,

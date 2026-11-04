@@ -269,9 +269,9 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
       <section className="panel">
         <div className="panel-head">
           <h3>正在下载</h3>
-          <span className="meta">{dl?.active.length ?? 0} 个任务</span>
+          <span className="meta">{(dl?.active ?? []).length} 个任务</span>
         </div>
-        {dl && dl.active.length > 0 ? (
+        {dl && (dl.active ?? []).length > 0 ? (
           <table className="table">
             <thead>
               <tr>
@@ -284,7 +284,7 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
               </tr>
             </thead>
             <tbody>
-              {dl.active.map((t) => (
+              {(dl.active ?? []).map((t) => (
                 <tr key={t.id}>
                   <td className="name" title={t.name}>
                     {t.name}
@@ -320,10 +320,10 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
       <section className="panel">
         <div className="panel-head">
           <h3>最近完成</h3>
-          <span className="meta">{dl?.completed.length ?? 0} 个</span>
+          <span className="meta">{(dl?.completed ?? []).length} 个</span>
         </div>
-        {dl && dl.completed.length > 0 ? (
-          dl.completed.map((t) => (
+        {dl && (dl.completed ?? []).length > 0 ? (
+          (dl.completed ?? []).map((t) => (
             <div className="done-row" key={t.id}>
               <CheckCircle2 size={14} color="var(--ok)" />
               <span className="nm" title={t.name}>
