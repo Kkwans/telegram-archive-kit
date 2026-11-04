@@ -581,3 +581,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .empty-state svg { color: var(--faint); }
 .empty-state h2 { margin: 0; font-size: 17px; color: var(--text); }
 .empty-state p { margin: 0; font-size: 12.5px; max-width: 440px; line-height: 1.8; }
+
+.qr-card {
+  padding: 16px; border-radius: 18px; background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 22, 40, 0.12);
+  display: grid; place-items: center;
+}
+.qr-card svg { display: block; border-radius: 6px; }

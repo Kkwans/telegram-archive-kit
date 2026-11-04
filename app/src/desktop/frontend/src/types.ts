@@ -116,6 +116,7 @@ export interface LoginState {
   kind: string;
   state: "starting" | "waiting" | "success" | "failed" | "cancelled" | "missing";
   screen: string[];
+  qr?: string[];
   prompt?: string;
   message?: string;
   seq: number;

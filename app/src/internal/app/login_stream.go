@@ -29,6 +29,7 @@ type LoginStateDTO struct {
 	Kind    string   `json:"kind"`
 	State   string   `json:"state"` // starting|waiting|success|failed|cancelled
 	Screen  []string `json:"screen"`
+	QR      []string `json:"qr,omitempty"`
 	Prompt  string   `json:"prompt,omitempty"`
 	Message string   `json:"message,omitempty"`
 	Seq     int64    `json:"seq"`
@@ -47,6 +48,8 @@ type loginSession struct {
 	seq       int64
 	inputAt   time.Time
 	lastInput string
+	qrCapture bool
+	qrLines   []string
 }
 
 func (s *loginSession) snapshot() LoginStateDTO {
@@ -54,10 +57,36 @@ func (s *loginSession) snapshot() LoginStateDTO {
 	defer s.mu.Unlock()
 	out := LoginStateDTO{ID: s.id, Kind: s.kind, State: s.state, Prompt: s.prompt, Message: s.message, Seq: s.seq}
 	out.Screen = append([]string{}, s.screen...)
+	out.QR = append([]string{}, s.qrLines...)
 	return out
 }
 
 func (s *loginSession) push(line string) {
+	plain := stripTerminal(strings.TrimRight(line, string(rune(13))))
+	if isBlockLine(line) {
+		if !s.qrCapture {
+			s.qrLines = nil
+		}
+		s.qrCapture = true
+		s.qrLines = append(s.qrLines, plain)
+		if len(s.qrLines) > 60 {
+			s.qrLines = s.qrLines[len(s.qrLines)-60:]
+		}
+	} else if s.qrCapture {
+		if strings.TrimSpace(plain) == "" {
+			s.qrLines = append(s.qrLines, plain)
+			if len(s.qrLines) > 60 {
+				s.qrLines = s.qrLines[len(s.qrLines)-60:]
+			}
+		} else if qrLikeLine(plain) {
+			s.qrLines = append(s.qrLines, plain)
+			if len(s.qrLines) > 60 {
+				s.qrLines = s.qrLines[len(s.qrLines)-60:]
+			}
+		} else {
+			s.qrCapture = false
+		}
+	}
 	line = strings.TrimRight(line, "\r")
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,6 +193,22 @@ func readLoginStream(r io.Reader, sess *loginSession) {
 
 func isBlockLine(line string) bool {
 	plain := stripTerminal(line)
+	return strings.ContainsAny(plain, "█▀▄")
+}
+
+func qrAllBlocks(line string) bool {
+	return line != "" && strings.Trim(line, "█") == ""
+}
+
+func qrLikeLine(plain string) bool {
+	if len(plain) < 15 {
+		return false
+	}
+	for _, r := range plain {
+		if r != '█' && r != '▀' && r != '▄' && r != ' ' {
+			return false
+		}
+	}
 	return strings.ContainsAny(plain, "█▀▄")
 }
 

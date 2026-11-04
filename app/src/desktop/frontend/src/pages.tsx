@@ -1459,6 +1459,84 @@ function extractQr(screen: string[]): string[] {
   return screen.slice(start, end + 1);
 }
 
+function allBlocksLine(line: string): boolean {
+  return line.length > 0 && /^█+\s*$/.test(line);
+}
+
+function lastQrBlock(lines: string[]): string[] {
+  let start = 0;
+  for (let i = 1; i < lines.length; i++) {
+    if (allBlocksLine(lines[i]) && allBlocksLine(lines[i - 1])) start = i - 1;
+  }
+  return lines.slice(start);
+}
+
+function parseQrMatrix(rawLines: string[]): boolean[][] | null {
+  const lines = lastQrBlock(rawLines);
+  if (lines.length < 8) return null;
+  const grid: boolean[][] = [];
+  for (const line of lines) {
+    const top: boolean[] = [];
+    const bottom: boolean[] = [];
+    for (const ch of line) {
+      const light = ch === "█" || ch === "▀" || ch === "▄";
+      top.push(light && ch !== "▄");
+      bottom.push(light && ch !== "▀");
+    }
+    grid.push(top, bottom);
+  }
+  const width = Math.max(...grid.map((r) => r.length));
+  for (const r of grid) while (r.length < width) r.push(false);
+  let y0 = 0;
+  let y1 = grid.length - 1;
+  let x0 = 0;
+  let x1 = width - 1;
+  const rowEmpty = (y: number) => grid[y].every((v) => !v);
+  const colEmpty = (x: number) => grid.every((r) => !r[x]);
+  while (y0 < y1 && rowEmpty(y0)) y0++;
+  while (y1 > y0 && rowEmpty(y1)) y1--;
+  while (x0 < x1 && colEmpty(x0)) x0++;
+  while (x1 > x0 && colEmpty(x1)) x1--;
+  const h = y1 - y0 + 1;
+  const w = x1 - x0 + 1;
+  if (h < 10 || w < 10) return null;
+  const size = Math.max(h, w);
+  const out = Array.from({ length: size }, () => Array<boolean>(size).fill(false));
+  const oy = Math.floor((size - h) / 2);
+  const ox = Math.floor((size - w) / 2);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      out[oy + y][ox + x] = !grid[y0 + y][x0 + x];
+    }
+  }
+  return out;
+}
+
+function QrCodePanel({ lines, fallback }: { lines: string[]; fallback: string[] }) {
+  const matrix = useMemo(() => parseQrMatrix(lines), [lines]);
+  if (!matrix) {
+    return (
+      <div className="qr-wrap" aria-label="登录二维码">
+        <pre className="qr-text">{fallback.join("\n")}</pre>
+      </div>
+    );
+  }
+  const margin = 4;
+  const total = matrix.length + margin * 2;
+  return (
+    <div className="qr-card" aria-label="登录二维码">
+      <svg viewBox={`0 0 ${total} ${total}`} width={280} height={280} shapeRendering="crispEdges" role="img" aria-label="Telegram 登录二维码">
+        <rect width={total} height={total} fill="#ffffff" />
+        {matrix.map((row, y) =>
+          row.map((dark, x) =>
+            dark ? <rect key={`${x}-${y}`} x={margin + x} y={margin + y} width={1.02} height={1.02} fill="#0b0d12" /> : null
+          )
+        )}
+      </svg>
+    </div>
+  );
+}
+
 const LOGIN_STATE_LABEL: Record<string, string> = {
   starting: "正在启动",
   waiting: "等待确认",
@@ -1710,11 +1788,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
         ) : (
           <div className="acct-login live">
             <div className="acct-stage">
-              {showQr && (
-                <div className="qr-wrap" aria-label="登录二维码">
-                  <pre className="qr-text">{qr.join("\n")}</pre>
-                </div>
-              )}
+              {showQr && <QrCodePanel lines={login.qr ?? []} fallback={qr} />}
               {active && login.kind === "qr" && !showQr && !needsInput && !wantsPassword && (
                 <p className="acct-prompt warn">正在等待二维码…</p>
               )}
