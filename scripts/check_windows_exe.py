@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Release gate: TelegramArchiveKit is an interactive *console* application.
+"""Release gate for TelegramArchiveKit binaries.
 
-PE32+ machine must be x86-64 (0x8664), and Subsystem must be Windows CUI (3).
+PE32+ machine must be x86-64 (0x8664). Subsystem is checked explicitly so the
+console client (CUI, 3) and the desktop client (GUI, 2) can both be verified.
 The --reference option additionally asserts parity with a previously working EXE.
 """
 from __future__ import annotations
@@ -29,18 +30,21 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument('exe', type=pathlib.Path)
     p.add_argument('--reference', type=pathlib.Path)
+    p.add_argument('--subsystem', type=int, default=3, choices=(2, 3),
+                   help='2 = Windows GUI, 3 = console (default)')
     args = p.parse_args()
     actual = inspect(args.exe)
-    expected = (0x8664, 0x20B, 3)
+    expected = (0x8664, 0x20B, args.subsystem)
+    kind = 'GUI' if args.subsystem == 2 else 'console'
     print(f'{args.exe}: machine=0x{actual[0]:04x}, magic=0x{actual[1]:03x}, subsystem={actual[2]}')
     if actual != expected:
-        raise SystemExit(f'RELEASE BLOCKED: expected Win64 PE32+ **CONSOLE** executable {expected}; got {actual}')
+        raise SystemExit(f'RELEASE BLOCKED: expected Win64 PE32+ {kind.upper()} executable {expected}; got {actual}')
     if args.reference:
         baseline = inspect(args.reference)
         print(f'Reference {args.reference}: machine=0x{baseline[0]:04x}, magic=0x{baseline[1]:03x}, subsystem={baseline[2]}')
         if baseline != actual:
             raise SystemExit(f'RELEASE BLOCKED: startup subsystem differs from known-good reference: {baseline} vs {actual}')
-    print('PE startup type: PASS (Windows CUI / console)')
+    print(f'PE startup type: PASS (Windows {kind})')
     print('SHA-256:', hashlib.sha256(args.exe.read_bytes()).hexdigest())
 
 
