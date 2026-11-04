@@ -3,6 +3,7 @@
 package app
 
 import (
+	"os"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,11 @@ var (
 	procCreateToolhelpSnapshot  = kernel32.NewProc("CreateToolhelp32Snapshot")
 	procProcess32FirstW         = kernel32.NewProc("Process32FirstW")
 	procProcess32NextW          = kernel32.NewProc("Process32NextW")
+	procGetConsoleScreenBuffer  = kernel32.NewProc("GetConsoleScreenBufferInfo")
+	procSetConsoleBufferSize    = kernel32.NewProc("SetConsoleScreenBufferSize")
+	procSetConsoleWindowInfo    = kernel32.NewProc("SetConsoleWindowInfo")
+	procGetConsoleWindow        = kernel32.NewProc("GetConsoleWindow")
+	procShowWindow              = user32.NewProc("ShowWindow")
 	procOpenClipboard           = user32.NewProc("OpenClipboard")
 	procCloseClipboard          = user32.NewProc("CloseClipboard")
 	procGetClipboardData        = user32.NewProc("GetClipboardData")
@@ -193,16 +199,89 @@ type consoleScreenBufferInfoW struct {
 }
 
 func terminalWidth() int {
+	cols, _, _, _ := consoleViewport()
+	return cols
+}
+
+func terminalHeight() int {
+	_, rows, _, _ := consoleViewport()
+	return rows
+}
+
+func consoleViewport() (cols, rows, maxCols, maxRows int) {
 	h := stdHandle(stdOutputHandle)
 	var info consoleScreenBufferInfoW
-	proc := kernel32.NewProc("GetConsoleScreenBufferInfo")
-	if r, _, _ := proc.Call(uintptr(h), uintptr(unsafe.Pointer(&info))); r != 0 {
-		w := int(info.Window.Right-info.Window.Left) + 1
-		if w > 0 {
-			return w
+	if r, _, _ := procGetConsoleScreenBuffer.Call(uintptr(h), uintptr(unsafe.Pointer(&info))); r == 0 {
+		return 100, 30, 100, 200
+	}
+	cols = int(info.Window.Right-info.Window.Left) + 1
+	rows = int(info.Window.Bottom-info.Window.Top) + 1
+	maxCols, maxRows = int(info.MaximumWindowSize.X), int(info.MaximumWindowSize.Y)
+	if cols < 20 {
+		cols = 100
+	}
+	if rows < 5 {
+		rows = 30
+	}
+	return cols, rows, maxCols, maxRows
+}
+
+// setConsoleViewport resizes the classic console host so the rounded panel is
+// never clipped. Windows Terminal owns its own window and ignores these calls,
+// which is why the menu layout also adapts to whatever size it is given.
+func setConsoleViewport(cols, rows int) bool {
+	if windowsTerminalActive() {
+		return false
+	}
+	_, _, maxCols, maxRows := consoleViewport()
+	if maxCols > 0 && cols > maxCols {
+		cols = maxCols
+	}
+	if maxRows > 0 && rows > maxRows {
+		rows = maxRows
+	}
+	if cols < 68 || rows < 15 {
+		return false
+	}
+	h := stdHandle(stdOutputHandle)
+	var info consoleScreenBufferInfoW
+	if r, _, _ := procGetConsoleScreenBuffer.Call(uintptr(h), uintptr(unsafe.Pointer(&info))); r == 0 {
+		return false
+	}
+	if int(info.Size.X) == cols && int(info.Window.Right-info.Window.Left)+1 == cols &&
+		int(info.Size.Y) == rows && int(info.Window.Bottom-info.Window.Top)+1 == rows {
+		return true
+	}
+	// COORD is packed as X in the low 16 bits and Y in the high 16 bits.
+	coord := uintptr(uint32(uint16(cols)) | uint32(uint16(rows))<<16)
+	win := smallRectW{Left: 0, Top: 0, Right: int16(cols - 1), Bottom: int16(rows - 1)}
+	grow := cols >= int(info.Size.X) || rows >= int(info.Size.Y)
+	if grow {
+		if r, _, _ := procSetConsoleBufferSize.Call(uintptr(h), coord); r == 0 {
+			return false
 		}
 	}
-	return 100
+	if r, _, _ := procSetConsoleWindowInfo.Call(uintptr(h), 1, uintptr(unsafe.Pointer(&win))); r == 0 {
+		return false
+	}
+	if !grow {
+		_, _, _ = procSetConsoleBufferSize.Call(uintptr(h), coord)
+	}
+	return true
+}
+
+func windowsTerminalActive() bool { return os.Getenv("WT_SESSION") != "" }
+
+// maximizeHostWindow is the fallback when the console APIs cannot size the
+// window (Windows Terminal draws its own chrome). It only ever touches the
+// window that hosts this console, never an unrelated foreground window.
+func maximizeHostWindow() bool {
+	h, _, _ := procGetConsoleWindow.Call()
+	if h == 0 {
+		return false
+	}
+	procShowWindow.Call(h, 3) // SW_MAXIMIZE
+	return true
 }
 
 func flushInput() {

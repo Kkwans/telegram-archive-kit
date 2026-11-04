@@ -8,9 +8,10 @@ import (
 	"time"
 )
 
-func terminalInit()      {}
-func terminalWidth() int { return 100 }
-func flushInput()        {}
+func terminalInit()       {}
+func terminalWidth() int  { return 100 }
+func terminalHeight() int { return 30 }
+func flushInput()         {}
 
 func readKey() Key {
 	r, _, _ := bufio.NewReader(os.Stdin).ReadRune()
@@ -27,6 +28,9 @@ func readKey() Key {
 }
 func pollKey(timeout time.Duration) (Key, bool) { return Key{}, false }
 
-func enablePerMonitorDPI()            {}
-func processRunning(name string) bool { return false }
-func readClipboardText() string       { return "" }
+func enablePerMonitorDPI()                   {}
+func processRunning(name string) bool        { return false }
+func readClipboardText() string              { return "" }
+func setConsoleViewport(cols, rows int) bool { return false }
+func windowsTerminalActive() bool            { return false }
+func maximizeHostWindow() bool               { return false }

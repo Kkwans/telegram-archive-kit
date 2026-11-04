@@ -2,11 +2,13 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	imagecolor "image/color"
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -389,6 +391,126 @@ func TestInlineEditorFiltersControlCharacters(t *testing.T) {
 	e.insert("x\x00y")
 	if e.value() != "a  b cxy" {
 		t.Fatalf("inserted controls should be filtered: %q", e.value())
+	}
+}
+
+func sampleMenuItems(n int) []menuItem {
+	items := make([]menuItem, 0, n)
+	for i := 0; i < n; i++ {
+		items = append(items, menuItem{Key: strconv.Itoa(i), Icon: "◆", Label: fmt.Sprintf("菜单项 %02d", i+1), Desc: "每一项都带一行说明文字，用来验证高度预算"})
+	}
+	return items
+}
+
+func TestPlanMenuKeepsEveryFrameInsideTheViewport(t *testing.T) {
+	status := []string{"档案库   D:/Library", "工具     tdl 已就绪", "聊天     3 个"}
+	items := sampleMenuItems(11)
+	for _, avail := range []int{60, 47, 40, 30, 24, 20, 16} {
+		win := planMenu(avail, len(items), 5, func(w menuWindow) string {
+			return composeFrame(menuBody("主菜单", "离线档案工作台", status, items, 5, w))
+		})
+		frame := composeFrame(menuBody("主菜单", "离线档案工作台", status, items, 5, win))
+		if got := frameRows(frame); got > avail {
+			t.Fatalf("avail %d still overflows with %d rows (window %+v)", avail, got, win)
+		}
+		if win.count < 1 || win.first < 0 || win.first+win.count > len(items) {
+			t.Fatalf("bad window %+v for avail %d", win, avail)
+		}
+		if avail >= 47 && win.count != len(items) {
+			t.Fatalf("full layout expected at avail %d, got %+v", avail, win)
+		}
+		if avail < 47 && win.count == len(items) && !win.compact {
+			t.Fatalf("expected degradation at avail %d, got %+v", avail, win)
+		}
+	}
+}
+
+func TestMenuFrameLinesNeverWrap(t *testing.T) {
+	status := []string{"档案库   D:/Library", "聊天     3 个 · 当前：一个很长的中文聊天名称"}
+	items := sampleMenuItems(11)
+	frame := composeFrame(menuBody("主菜单", "离线 Telegram 档案工作台", status, items, 0, menuWindow{count: len(items)}))
+	inner := uiInnerWidth()
+	want := len(uiLeadFor(inner)) + inner + 6
+	for i, line := range strings.Split(frame, "\n") {
+		if visibleWidth(line) > want {
+			t.Fatalf("line %d wraps: width %d > panel %d\n%s", i+1, visibleWidth(line), want, ansiRE.ReplaceAllString(line, ""))
+		}
+	}
+}
+
+func TestOrganizeDocumentFilesSeparatesDocsFromMedia(t *testing.T) {
+	a := &App{Settings: defaultSettings()}
+	a.Settings.LibraryRoot = t.TempDir()
+	slug := "chat_分目录__7"
+	media := a.mediaDir(slug)
+	if err := os.MkdirAll(media, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"7_1_photo.jpg": "jpg", "7_2_clip.mp4": "mp4", "7_3_voice.mp3": "mp3",
+		"7_4_bundle.zip": "zip-bytes", "7_5_empty.zip": "",
+	} {
+		if err := os.WriteFile(filepath.Join(media, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	moved, err := a.organizeDocumentFiles(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved != 1 {
+		t.Fatalf("only the non-empty document should move, got %d", moved)
+	}
+	for _, keep := range []string{"7_1_photo.jpg", "7_2_clip.mp4", "7_3_voice.mp3", "7_5_empty.zip"} {
+		if !fileExists(filepath.Join(media, keep)) {
+			t.Fatalf("media/%s must stay in media/", keep)
+		}
+	}
+	if fileExists(filepath.Join(media, "7_4_bundle.zip")) {
+		t.Fatal("document still in media/")
+	}
+	if !fileExists(filepath.Join(a.filesDir(slug), "7_4_bundle.zip")) {
+		t.Fatal("document did not reach files/")
+	}
+	again, err := a.organizeDocumentFiles(slug)
+	if err != nil || again != 0 {
+		t.Fatalf("relocation must be idempotent, moved %d err %v", again, err)
+	}
+}
+
+func TestBuildArchiveResolvesDocumentsFromFilesDir(t *testing.T) {
+	a := &App{Settings: defaultSettings()}
+	a.Settings.LibraryRoot = t.TempDir()
+	slug := "chat_解析__9"
+	if err := os.MkdirAll(a.filesDir(slug), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(a.mediaDir(slug), 0755); err != nil {
+		t.Fatal(err)
+	}
+	doc := []byte("zip-bytes")
+	if err := os.WriteFile(filepath.Join(a.filesDir(slug), "9_4_bundle.zip"), doc, 0644); err != nil {
+		t.Fatal(err)
+	}
+	root := map[string]any{"name": "解析", "type": "private_channel", "id": 9, "messages": []any{
+		map[string]any{"id": 4, "type": "message", "date": "2026-01-01T00:00:00", "media_type": "document", "document": "bundle.zip", "file_size": len(doc)},
+	}}
+	b, _ := json.Marshal(root)
+	if err := os.MkdirAll(filepath.Dir(a.sourcePath(slug)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.sourcePath(slug), b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	arc, err := a.buildArchiveForWorkspace(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arc.Stats.MissingMedia != 0 || len(arc.Messages[0].Media) != 1 {
+		t.Fatalf("document in files/ should resolve, missing=%d media=%#v", arc.Stats.MissingMedia, arc.Messages[0].Media)
+	}
+	if got := arc.Messages[0].Media[0]; got.Path != "files/9_4_bundle.zip" || got.Kind != "file" {
+		t.Fatalf("unexpected resolved media %#v", got)
 	}
 }
 

@@ -21,6 +21,10 @@ type officialIndexFile struct {
 	Exports   []officialIndexedExport `json:"exports"`
 }
 
+// officialIndexVersion 2 records that only class-tagged media elements count as
+// attachments; older caches also swallowed stickers embedded in message text.
+const officialIndexVersion = 2
+
 func (a *App) officialIndexPath(slug string) string {
 	return filepath.Join(a.workspaceDir(slug), "official-media-index.json")
 }
@@ -39,15 +43,49 @@ func (a *App) loadOfficialIndex(slug string) (officialIndexFile, error) {
 }
 
 func (a *App) saveOfficialIndex(slug string, idx officialIndexFile) error {
-	idx.Version = 1
+	idx.Version = officialIndexVersion
 	idx.UpdatedAt = time.Now().Format(time.RFC3339)
 	return writeJSON(a.officialIndexPath(slug), idx)
 }
 
+// refreshOfficialIndex re-analyses every recorded export so a cache written by
+// an older scanner is repaired in place. Exports whose folder is gone are kept
+// untouched rather than dropped, because the archive still references them.
+func (a *App) refreshOfficialIndex(slug string, idx officialIndexFile) officialIndexFile {
+	ws := a.workspaceDir(slug)
+	for i := range idx.Exports {
+		root := idx.Exports[i].Meta.Root
+		candidates := []string{root, filepath.Join(ws, filepath.FromSlash(root))}
+		found := ""
+		for _, c := range candidates {
+			if st, err := os.Stat(c); err == nil && st.IsDir() {
+				found = c
+				break
+			}
+		}
+		if found == "" {
+			continue
+		}
+		meta, media, err := archive.AnalyzeOfficialExport(found, ws, idx.Exports[i].Meta.Mode)
+		if err != nil || len(media) == 0 {
+			continue
+		}
+		if meta.Name == "" {
+			meta.Name = idx.Exports[i].Meta.Name
+		}
+		idx.Exports[i] = officialIndexedExport{Meta: meta, Media: media}
+	}
+	_ = a.saveOfficialIndex(slug, idx)
+	return idx
+}
+
 func (a *App) officialMediaByID(slug string) map[string][]Media {
 	idx, err := a.loadOfficialIndex(slug)
-	if err != nil {
+	if err != nil || len(idx.Exports) == 0 {
 		return nil
+	}
+	if idx.Version < officialIndexVersion {
+		idx = a.refreshOfficialIndex(slug, idx)
 	}
 	out := map[string][]Media{}
 	for _, ex := range idx.Exports {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -343,6 +344,18 @@ func RenderClassicMessage(m Message, sender string, joined bool) string {
 	return b.String()
 }
 
+// mediaHref percent-encodes each path segment so names with spaces, CJK or a
+// literal '#' still resolve as files rather than fragments.
+func mediaHref(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i, p := range parts {
+		if p != "" {
+			parts[i] = url.PathEscape(p)
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
 func RenderClassicMedia(m Media) string {
 	href := filepath.ToSlash(m.Path)
 	preview := href
@@ -362,8 +375,31 @@ func RenderClassicMedia(m Media) string {
 	case "audio":
 		return `<a class="tak-file-card tak-audio-card" href="` + html.EscapeString(href) + `" target="_blank"><span class="tak-file-icon">♫</span><span><strong>` + html.EscapeString(m.Name) + `</strong><small>` + FormatBytes(m.Size) + `</small></span></a>`
 	default:
-		return `<a class="tak-file-card" href="` + html.EscapeString(href) + `" target="_blank"><span class="tak-file-icon">▤</span><span><strong>` + html.EscapeString(m.Name) + `</strong><small>` + FormatBytes(m.Size) + `</small></span></a>`
+		return renderFileRow(m, href)
 	}
+}
+
+// renderFileRow gives non-media documents their own row: Telegram shows a file
+// as a compact card, never as a thumbnail floating beside a photo. A web page
+// cannot launch the OS file manager, so the only action is the real download.
+func renderFileRow(m Media, href string) string {
+	link := mediaHref(href)
+	ext := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(m.Ext)), ".")
+	if ext == "" {
+		ext = strings.TrimPrefix(strings.ToLower(filepath.Ext(m.Name)), ".")
+	}
+	meta := ext + " · " + FormatBytes(m.Size)
+	if ext == "" {
+		meta = FormatBytes(m.Size)
+	}
+	label := strings.ToUpper(ext)
+	if ext == "" {
+		label = "文件"
+	}
+	return `<div class="tak-file-row"><span class="tak-file-row-icon">` + html.EscapeString(label) + `</span>` +
+		`<span class="tak-file-row-copy"><strong title="` + html.EscapeString(m.Name) + `">` + html.EscapeString(m.Name) + `</strong><small>` + html.EscapeString(meta) + `</small></span>` +
+		`<a class="tak-file-row-btn" href="` + html.EscapeString(link) + `" download="` + html.EscapeString(m.Name) + `" title="下载 ` + html.EscapeString(m.Name) + `">下载</a>` +
+		`</div>`
 }
 
 func RenderEntities(entities []Entity, fallback string) string {

@@ -51,7 +51,7 @@ func (a *App) ensureProvisionalWorkspace(name string) (WorkspaceMeta, error) {
 		return a.readWorkspaceMeta(slug)
 	}
 	ws := a.workspaceDir(slug)
-	for _, p := range []string{filepath.Join(ws, "source"), filepath.Join(ws, "source", "history"), a.mediaDir(slug), a.dataDir(slug)} {
+	for _, p := range []string{filepath.Join(ws, "source"), filepath.Join(ws, "source", "history"), a.mediaDir(slug), a.filesDir(slug), a.dataDir(slug)} {
 		if err := os.MkdirAll(p, 0755); err != nil {
 			return WorkspaceMeta{}, err
 		}

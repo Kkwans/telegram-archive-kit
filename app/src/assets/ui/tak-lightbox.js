@@ -1,18 +1,42 @@
 /* TAK v9.9.6 parent-owned media viewer. The chat iframe is never resized or hidden. */
 (()=>{'use strict';
   const $=(s,r=document)=>r.querySelector(s);
-  const state={items:[],index:0,filter:'all',generation:0,timer:0,visible:false,zoom:1,x:0,y:0,drag:null,preloads:new Map(),focus:null,ratio:0,box:null};
+  const state={items:[],index:0,filter:'all',generation:0,timer:0,visible:false,zoom:1,x:0,y:0,drag:null,preloads:new Map(),focus:null,ratio:0,box:null,wasPlaying:null};
   const icon=(path)=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
   const el=document.createElement('div');el.className='tak-global-lightbox';el.hidden=true;el.tabIndex=-1;el.setAttribute('role','dialog');el.setAttribute('aria-modal','true');el.setAttribute('aria-label','媒体查看器');
-  el.innerHTML=`<div class="tak-lb-shade" data-close></div><div class="tak-lb-filters" role="group" aria-label="媒体筛选"><button data-filter="all">全部</button><button data-filter="image">图片</button><button data-filter="video">视频</button></div><button class="tak-lb-close" data-close aria-label="关闭灯箱" title="关闭 (Esc)">${icon('M18 6 6 18M6 6l12 12')}</button><button class="tak-lb-arrow tak-lb-prev" data-prev aria-label="上一项" title="上一项 (←)">${icon('m15 18-6-6 6-6')}</button><div class="tak-lb-stage" data-stage><div class="tak-lb-content" data-content></div><div class="tak-lb-wait" data-wait aria-hidden="true"><span class="tak-lb-spinner"></span></div><div class="tak-lb-error" data-error hidden>媒体加载失败。可以尝试打开原文件。</div></div><button class="tak-lb-arrow tak-lb-next" data-next aria-label="下一项" title="下一项 (→)">${icon('m9 18 6-6-6-6')}</button><div class="tak-lb-counter"><span data-counter></span><a data-source target="_blank" rel="noopener" title="在新标签页打开原文件">打开原文件 ↗</a></div>`;
+  el.innerHTML=`<div class="tak-lb-shade" data-close></div><div class="tak-lb-filters" role="group" aria-label="媒体筛选"><button data-filter="all">全部</button><button data-filter="image">图片</button><button data-filter="video">视频</button></div><a class="tak-lb-tool tak-lb-download" data-download target="_blank" rel="noopener" title="下载 / 打开原文件" aria-label="下载原文件">${icon('M12 3v12m0 0 4-4m-4 4-4-4M4 21h16')}</a><button class="tak-lb-close" data-close aria-label="关闭灯箱" title="关闭 (Esc)">${icon('M18 6 6 18M6 6l12 12')}</button><button class="tak-lb-arrow tak-lb-prev" data-prev aria-label="上一项" title="上一项 (←)">${icon('m15 18-6-6 6-6')}</button><div class="tak-lb-stage" data-stage><div class="tak-lb-content" data-content></div><div class="tak-lb-wait" data-wait aria-hidden="true"><span class="tak-lb-spinner"></span></div><div class="tak-lb-error" data-error hidden>媒体加载失败。可以尝试打开原文件。</div></div><button class="tak-lb-arrow tak-lb-next" data-next aria-label="下一项" title="下一项 (→)">${icon('m9 18 6-6-6-6')}</button><div class="tak-lb-counter"><span data-counter></span><a data-source target="_blank" rel="noopener" title="在新标签页打开原文件">打开原文件 ↗</a></div>`;
   document.body.appendChild(el);
   const content=$('[data-content]',el),wait=$('[data-wait]',el),error=$('[data-error]',el),stage=$('[data-stage]',el),source=$('[data-source]',el);
+  const download=$('[data-download]',el);
+  // Both the still image and the video surface are zoomable; only the gestures
+  // differ because a video owns its own click/controls behaviour.
+  const isZoomTarget=t=>!!t&&(t.tagName==='IMG'||t.tagName==='VIDEO');
+  const fileNameOf=url=>{try{return decodeURIComponent(String(url).split('/').pop().split('?')[0].split('#')[0])}catch{return'媒体文件'}};
+  function syncTools(m){
+    const href=m?.src||'';
+    if(!download)return;
+    download.href=href;download.download=fileNameOf(href);download.style.display=href?'':'none';
+  }
   const filtered=()=>state.filter==='all'?state.items:state.items.filter(m=>m.type===state.filter);
   const current=()=>filtered()[state.index];
   const clearTimer=()=>{clearTimeout(state.timer);state.timer=0;wait.classList.remove('show')};
   const validURL=s=>{try{const u=new URL(s,location.href);return ['file:','https:','http:','blob:'].includes(u.protocol)?u.href:''}catch{return''}};
-  function resetZoom(){state.zoom=1;state.x=0;state.y=0;state.drag=null;if(state.box){state.box.style.transform='';state.box.style.transition='';state.box.classList.remove('zoomed')}content.classList.remove('zoomed')}
+  function resetZoom(){state.zoom=1;state.x=0;state.y=0;state.drag=null;state.wasPlaying=null;if(state.box){state.box.style.transform='';state.box.style.transition='';state.box.classList.remove('zoomed')}content.classList.remove('zoomed')}
   function applyZoom(){if(!state.box)return;state.box.style.transform=`translate3d(${state.x}px,${state.y}px,0) scale(${state.zoom})`;state.box.classList.toggle('zoomed',state.zoom>1);content.classList.toggle('zoomed',state.zoom>1)}
+  // Zoom is anchored to the pointer so the point under the cursor stays put
+  // instead of always growing away from the centre of the frame.
+  function zoomAt(px,py,next){
+    if(!state.box)return;
+    const r=state.box.getBoundingClientRect();
+    const c0x=r.left+r.width/2-state.x,c0y=r.top+r.height/2-state.y;
+    const z0=state.zoom,z=Math.max(1,Math.min(6,Number(next)||1));
+    if(z===1){state.x=0;state.y=0}
+    else{
+      state.x=(px-c0x)-(z/z0)*(px-c0x-state.x);
+      state.y=(py-c0y)-(z/z0)*(py-c0y-state.y);
+    }
+    state.zoom=z;applyZoom();
+  }
   function startWait(g){clearTimer();state.timer=setTimeout(()=>{if(state.generation===g&&state.visible)wait.classList.add('show')},280)}
   // Preserve each file's intrinsic aspect ratio. The visual/media hit area is
   // exactly its onscreen content rectangle, not a viewport-wide 1180px pane.
@@ -35,7 +59,7 @@
   function show(){
     const m=current();if(!m){close();return}
     state.generation++;const g=state.generation;clearTimer();resetZoom();error.hidden=true;state.ratio=0;state.box=null;
-    source.href=m.src;source.style.display=m.src?'':'none';const list=filtered();
+    source.href=m.src;source.style.display=m.src?'':'none';syncTools(m);const list=filtered();
     $('[data-counter]',el).textContent=`${state.index+1} / ${list.length}`;
     el.querySelectorAll('[data-filter]').forEach(b=>{b.classList.toggle('active',b.dataset.filter===state.filter);b.setAttribute('aria-pressed',String(b.dataset.filter===state.filter))});
     const both=list.length>1;el.querySelector('[data-prev]').disabled=!both;el.querySelector('[data-next]').disabled=!both;
@@ -91,16 +115,38 @@
   // In 9.9.6 it was occupied by a full-screen content element instead.
   stage.addEventListener('click',e=>{if(e.target===stage)close()});$('[data-prev]',el).addEventListener('click',()=>step(-1));$('[data-next]',el).addEventListener('click',()=>step(1));el.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>changeFilter(b.dataset.filter)));
   document.addEventListener('keydown',e=>{if(!state.visible)return;if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();return}if(['ArrowLeft','ArrowRight'].includes(e.key)){const v=$('video',content);if(v&&v.matches(':hover')){v.currentTime=Math.max(0,Math.min(v.duration||Infinity,v.currentTime+(e.key==='ArrowRight'?5:-5)));return}e.preventDefault();e.stopPropagation();step(e.key==='ArrowRight'?1:-1)}} ,true);
-  content.addEventListener('click',e=>{if(e.target.tagName!=='IMG'||state.drag?.moved||content.dataset.dragged)return;state.zoom=state.zoom>1?1:2;state.x=0;state.y=0;applyZoom()});
-  content.addEventListener('wheel',e=>{if(e.target.tagName!=='IMG')return;e.preventDefault();state.zoom=Math.max(1,Math.min(6,state.zoom+(e.deltaY<0?.25:-.25)));if(state.zoom===1){state.x=0;state.y=0}applyZoom()},{passive:false});
-  content.addEventListener('pointerdown',e=>{if(e.target.tagName!=='IMG'||state.zoom<=1||e.pointerType==='touch')return;state.drag={id:e.pointerId,startX:e.clientX,startY:e.clientY,x:state.x,y:state.y,moved:false};state.box.style.transition='none'});
-  content.addEventListener('pointermove',e=>{if(!state.drag||e.pointerId!==state.drag.id)return;const dx=e.clientX-state.drag.startX,dy=e.clientY-state.drag.startY;const firstMove=!state.drag.moved&&Math.hypot(dx,dy)>4;state.drag.moved=state.drag.moved||firstMove;if(firstMove)content.setPointerCapture(e.pointerId);state.x=state.drag.x+dx;state.y=state.drag.y+dy;applyZoom()});
+  content.addEventListener('click',e=>{
+    if(e.target.tagName!=='IMG'||state.drag?.moved||content.dataset.dragged)return;
+    zoomAt(e.clientX,e.clientY,state.zoom>1?1:2);
+  });
+  content.addEventListener('wheel',e=>{if(!isZoomTarget(e.target))return;e.preventDefault();zoomAt(e.clientX,e.clientY,state.zoom+(e.deltaY<0?.25:-.25))},{passive:false});
+  content.addEventListener('pointerdown',e=>{
+    if(!isZoomTarget(e.target)||state.zoom<=1||e.pointerType==='touch')return;
+    // The native control strip stays usable; only the picture surface pans.
+    if(e.target.tagName==='VIDEO'){
+      const r=state.box.getBoundingClientRect();
+      if(e.clientY>r.bottom-64)return;
+      state.wasPlaying=!e.target.paused;
+    }
+    state.drag={id:e.pointerId,startX:e.clientX,startY:e.clientY,x:state.x,y:state.y,moved:false};
+    state.box.style.transition='none';
+  });
+  content.addEventListener('pointermove',e=>{if(!state.drag||e.pointerId!==state.drag.id)return;const dx=e.clientX-state.drag.startX,dy=e.clientY-state.drag.startY;const firstMove=!state.drag.moved&&Math.hypot(dx,dy)>4;state.drag.moved=state.drag.moved||firstMove;if(firstMove){try{content.setPointerCapture(e.pointerId)}catch{/* capture is best-effort; panning must continue */}}state.x=state.drag.x+dx;state.y=state.drag.y+dy;applyZoom()});
   content.addEventListener('pointerup',e=>{if(state.drag?.id!==e.pointerId)return;const moved=state.drag.moved;state.drag=null;if(state.box)state.box.style.transition='';if(moved){content.dataset.dragged='1';setTimeout(()=>delete content.dataset.dragged,160)}});
+  // Dragging a zoomed video must not also toggle playback: swallow the click
+  // that follows the pointer release and restore the state it would have set.
+  content.addEventListener('click',e=>{
+    if(e.target.tagName!=='VIDEO'||!content.dataset.dragged)return;
+    e.preventDefault();e.stopPropagation();
+    if(state.wasPlaying===true)e.target.play().catch(()=>{});
+    else if(state.wasPlaying===false)e.target.pause();
+    state.wasPlaying=null;
+  },true);
   // Mobile: pinch to zoom and one-finger pan the actual image; gestures never
   // turn into a backdrop click and never alter the iframe or parent layout.
   let touchGesture=null;
   content.addEventListener('touchstart',e=>{
-    if(e.target.tagName!=='IMG')return;
+    if(!isZoomTarget(e.target))return;
     if(e.touches.length===2){
       const a=e.touches[0],b=e.touches[1];
       touchGesture={kind:'pinch',distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),zoom:state.zoom,x:state.x,y:state.y,moved:false};
@@ -113,8 +159,8 @@
     if(!touchGesture)return;
     if(touchGesture.kind==='pinch'&&e.touches.length===2){
       e.preventDefault();const a=e.touches[0],b=e.touches[1],dist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
-      state.zoom=Math.max(1,Math.min(6,touchGesture.zoom*dist/Math.max(touchGesture.distance,1)));
-      if(state.zoom<=1){state.x=0;state.y=0}applyZoom();touchGesture.moved=true;
+      zoomAt((a.clientX+b.clientX)/2,(a.clientY+b.clientY)/2,touchGesture.zoom*dist/Math.max(touchGesture.distance,1));
+      touchGesture.moved=true;
     }else if(touchGesture.kind==='pan'&&e.touches.length===1){
       e.preventDefault();state.x=touchGesture.x+e.touches[0].clientX-touchGesture.sx;state.y=touchGesture.y+e.touches[0].clientY-touchGesture.sy;
       applyZoom();touchGesture.moved=true;

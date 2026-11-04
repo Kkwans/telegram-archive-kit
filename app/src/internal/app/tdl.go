@@ -941,26 +941,28 @@ func (a *App) cleanupInterruptedMedia(slug string, active map[string]bool, plan 
 	if len(active) == 0 {
 		return
 	}
-	_ = filepath.WalkDir(a.mediaDir(slug), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	for _, root := range a.storageDirs(slug) {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			base := d.Name()
+			id := archive.MessageIDFromFilename(base)
+			if !active[id] {
+				return nil
+			}
+			info, er := d.Info()
+			if er != nil {
+				return nil
+			}
+			expected := plan.IDs[id]
+			if expected > 0 && info.Size() == expected {
+				return nil
+			}
+			_ = os.Remove(path)
 			return nil
-		}
-		base := d.Name()
-		id := archive.MessageIDFromFilename(base)
-		if !active[id] {
-			return nil
-		}
-		info, er := d.Info()
-		if er != nil {
-			return nil
-		}
-		expected := plan.IDs[id]
-		if expected > 0 && info.Size() == expected {
-			return nil
-		}
-		_ = os.Remove(path)
-		return nil
-	})
+		})
+	}
 }
 
 func killProcessTree(pid int) error {

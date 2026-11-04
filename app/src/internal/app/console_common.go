@@ -277,7 +277,10 @@ func kvText(label, value string, labelWidth int) string {
 	return padVisible(label, labelWidth) + "  " + value
 }
 func uiInnerWidth() int {
-	w := terminalWidth() - 16
+	// The panel is inner + 6 columns wide (borders and padding), and uiLeadFor
+	// keeps at least two blank columns on each side, so terminalWidth-10 is the
+	// widest content that still fits without touching the window edge.
+	w := terminalWidth() - 10
 	if w < 60 {
 		w = 60
 	}

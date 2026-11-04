@@ -151,7 +151,17 @@ func (a *App) sourcePath(slug string) string {
 	return filepath.Join(a.workspaceDir(slug), "source", "result.json")
 }
 func (a *App) mediaDir(slug string) string { return filepath.Join(a.workspaceDir(slug), "media") }
-func (a *App) dataDir(slug string) string  { return filepath.Join(a.workspaceDir(slug), "data") }
+
+// filesDir holds documents (zip, pdf, stickers...) that are not playable media.
+// tdl still downloads everything into media/ so its resume state stays valid;
+// organizeDocumentFiles relocates documents here on every build, which also
+// migrates libraries created before the split existed.
+func (a *App) filesDir(slug string) string { return filepath.Join(a.workspaceDir(slug), "files") }
+
+// storageDirs lists every folder that can hold a chat's own files.
+func (a *App) storageDirs(slug string) []string { return []string{a.mediaDir(slug), a.filesDir(slug)} }
+
+func (a *App) dataDir(slug string) string { return filepath.Join(a.workspaceDir(slug), "data") }
 func (a *App) reportPath(slug string) string {
 	return filepath.Join(a.workspaceDir(slug), "archive-report.json")
 }
@@ -337,7 +347,7 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 		slug = a.migrateWorkspaceSlug(slug, chat)
 	}
 	ws := a.workspaceDir(slug)
-	for _, p := range []string{filepath.Join(ws, "source"), filepath.Join(ws, "source", "history"), a.mediaDir(slug), a.dataDir(slug)} {
+	for _, p := range []string{filepath.Join(ws, "source"), filepath.Join(ws, "source", "history"), a.mediaDir(slug), a.filesDir(slug), a.dataDir(slug)} {
 		if err := os.MkdirAll(p, 0755); err != nil {
 			return WorkspaceMeta{}, existed, err
 		}
@@ -509,7 +519,10 @@ func (a *App) listWorkspaces() []WorkspaceMeta {
 }
 
 func (a *App) buildArchiveForWorkspace(slug string) (*Archive, error) {
-	return archive.BuildArchiveWithExtra(a.sourcePath(slug), a.mediaDir(slug), a.officialMediaByID(slug))
+	if _, err := a.organizeDocumentFiles(slug); err != nil {
+		return nil, err
+	}
+	return archive.BuildArchiveWithDirs(a.sourcePath(slug), a.storageDirs(slug), a.officialMediaByID(slug))
 }
 
 func (a *App) buildWorkspace(slug string) (*Archive, error) {
@@ -540,11 +553,14 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 	if err := a.ensureLibraryDirs(); err != nil {
 		return nil, err
 	}
+	if _, err := a.organizeDocumentFiles(slug); err != nil {
+		return nil, err
+	}
 	jsonPath := a.sourcePath(slug)
 	if _, err := os.Stat(jsonPath); err != nil {
 		return nil, fmt.Errorf("找不到聊天源数据: %s", jsonPath)
 	}
-	arc, err := archive.BuildArchiveWithExtra(jsonPath, a.mediaDir(slug), a.officialMediaByID(slug))
+	arc, err := archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug))
 	if err != nil {
 		return nil, err
 	}
@@ -835,18 +851,67 @@ func copyFile(src, dst string) error {
 
 func (a *App) removeZeroByteMedia(slug string) int {
 	count := 0
-	_ = filepath.WalkDir(a.mediaDir(slug), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	for _, dir := range a.storageDirs(slug) {
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, er := d.Info(); er == nil && info.Size() == 0 {
+				if os.Remove(path) == nil {
+					count++
+				}
+			}
 			return nil
+		})
+	}
+	return count
+}
+
+// organizeDocumentFiles moves non-media documents out of media/ into files/.
+// It is idempotent and never deletes: a destination that already exists with
+// the same size means the file was relocated earlier or by another library.
+func (a *App) organizeDocumentFiles(slug string) (int, error) {
+	src := a.mediaDir(slug)
+	dst := a.filesDir(slug)
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
 		}
-		if info, er := d.Info(); er == nil && info.Size() == 0 {
-			if os.Remove(path) == nil {
-				count++
+		return 0, err
+	}
+	moved := 0
+	for _, e := range entries {
+		if e.IsDir() || !archive.IsDocumentKind(e.Name()) {
+			continue
+		}
+		from := filepath.Join(src, e.Name())
+		info, er := e.Info()
+		if er != nil || info.Size() == 0 {
+			continue
+		}
+		to := filepath.Join(dst, e.Name())
+		if st, er := os.Stat(to); er == nil {
+			if st.Size() == info.Size() {
+				continue
+			}
+			// Same name, different content: keep both by tagging the message ID.
+			to = filepath.Join(dst, strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))+"_"+slug+filepath.Ext(e.Name()))
+		}
+		if er := os.MkdirAll(dst, 0755); er != nil {
+			return moved, er
+		}
+		if er := os.Rename(from, to); er != nil {
+			if cerr := copyFile(from, to); cerr != nil {
+				return moved, fmt.Errorf("移动文档到 files/ 失败: %w", cerr)
+			}
+			if er := os.Remove(from); er != nil {
+				return moved, er
 			}
 		}
-		return nil
-	})
-	return count
+		moved++
+	}
+	return moved, nil
 }
 
 // estimateMissingMedia reports the number of currently missing media messages and the

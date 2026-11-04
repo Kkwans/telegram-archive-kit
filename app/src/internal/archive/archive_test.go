@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +61,53 @@ func TestOfficialExportIndexAndInheritance(t *testing.T) {
 	}
 	if arc.Stats.MissingMedia != 1 || len(arc.Missing) != 1 || arc.Missing[0] != "2" {
 		t.Fatalf("official media should satisfy msg1, missing=%v", arc.Missing)
+	}
+}
+
+// A sticker used inside the message text is exported as a bare anchor with no
+// media class, and Telegram gives every such sticker the same shared filename.
+// It must never become a file attachment on the message.
+func TestOfficialExportIgnoresInlineTextSticker(t *testing.T) {
+	root := t.TempDir()
+	for _, p := range []string{"photos", "video_files", "stickers"} {
+		if err := os.MkdirAll(filepath.Join(root, p), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel string, body string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("video_files/V (109).mp4", "video-bytes")
+	write("photos/p1.jpg", "photo-bytes")
+	write("stickers/AnimatedSticker.tgs", "sticker-bytes")
+	html := `<!doctype html><div class="page_header"><div class="text bold">宿舍</div></div><div class="history">` +
+		`<div class="message default clearfix" id="message32533"><div class="body">` +
+		`<div class="media_wrap clearfix"><a class="video_file_wrap clearfix pull_left" href="video_files/V (109).mp4"><img class="video_file" src="video_files/missing_thumb.jpg"></a></div>` +
+		`<div class="text">#话题 <a href = "stickers/AnimatedSticker.tgs">🔴</a> 重要通知 <a href="https://t.me/x">频道</a> <a href="" onclick="return ShowHashtag(&quot;a&quot;)">#a</a></div>` +
+		`</div></div>` +
+		`<div class="message default clearfix" id="message32534"><div class="body">` +
+		`<div class="media_wrap clearfix"><a class="photo_wrap clearfix pull_left" href="photos/p1.jpg"><img class="photo" src="photos/p1.jpg"></a></div>` +
+		`</div></div></div>`
+	if err := os.WriteFile(filepath.Join(root, "messages.html"), []byte(html), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, media, err := AnalyzeOfficialExport(root, t.TempDir(), "referenced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(media["32533"]) != 1 || media["32533"][0].Name != "V (109).mp4" || media["32533"][0].Kind != "video" {
+		t.Fatalf("message 32533 should carry only its real video: %#v", media["32533"])
+	}
+	if len(media["32534"]) != 1 || media["32534"][0].Name != "p1.jpg" {
+		t.Fatalf("message 32534 should carry its photo: %#v", media["32534"])
+	}
+	for id, list := range media {
+		for _, m := range list {
+			if strings.Contains(strings.ToLower(m.Name), "animatedsticker") || strings.Contains(strings.ToLower(m.Path), "animatedsticker") {
+				t.Fatalf("inline text sticker leaked into message %s: %#v", id, m)
+			}
+		}
 	}
 }

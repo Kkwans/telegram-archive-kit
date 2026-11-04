@@ -15,9 +15,15 @@ import (
 
 var (
 	officialMessageIDRE = regexp.MustCompile(`(?i)id=["']message(\d+)["']`)
-	officialHrefRE      = regexp.MustCompile(`(?i)href\s*=\s*["']([^"']+)["']`)
 	officialTitleRE     = regexp.MustCompile(`(?is)<div[^>]*class=["'][^"']*\btext\s+bold\b[^"']*["'][^>]*>(.*?)</div>`)
 	htmlTagRE           = regexp.MustCompile(`(?s)<[^>]+>`)
+	// Telegram Desktop marks every real attachment with a media class, while a
+	// sticker used *inside the message text* is exported as a bare
+	// <a href = "stickers/AnimatedSticker.tgs">🔴</a>. Harvesting every href
+	// therefore turned inline emoji stickers into phantom file attachments that
+	// all pointed at the same shared .tgs. Only tagged media elements count.
+	officialMediaTagRE = regexp.MustCompile(`(?is)<(?:a|audio|video|source|img)\b[^>]*\bclass=["'][^"']*(?:photo_wrap|video_file_wrap|round_file_wrap|sticker|file|voice|audio|photo|video_file|thumbnail)[^"']*["'][^>]*>`)
+	officialSrcAttrRE  = regexp.MustCompile(`(?i)\b(?:href|src)\s*=\s*["']([^"']+)["']`)
 )
 
 func OfficialPageNumber(name string) int {
@@ -151,10 +157,13 @@ func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta
 				end = locs[i+1][0]
 			}
 			chunk := text[start:end]
-			hrefs := officialHrefRE.FindAllStringSubmatch(chunk, -1)
 			seen := map[string]bool{}
-			for _, hm := range hrefs {
-				abs, ok := ResolveOfficialHref(root, hm[1])
+			for _, tag := range officialMediaTagRE.FindAllString(chunk, -1) {
+				sm := officialSrcAttrRE.FindStringSubmatch(tag)
+				if sm == nil {
+					continue
+				}
+				abs, ok := ResolveOfficialHref(root, sm[1])
 				if !ok || seen[abs] {
 					continue
 				}

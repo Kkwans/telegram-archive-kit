@@ -107,9 +107,14 @@ func (dst *App) copyChatFromLibrary(srcRoot, srcSlug string) (WorkspaceMeta, err
 	targetSlug := target.Slug
 
 	// Native tdl media and source history are copied incrementally.
-	if st, er := os.Stat(src.mediaDir(srcSlug)); er == nil && st.IsDir() {
-		if _, _, er = transfer.CopyDirIncremental(src.mediaDir(srcSlug), dst.mediaDir(targetSlug)); er != nil {
-			return WorkspaceMeta{}, er
+	for _, pair := range []struct{ srcDir, dstDir string }{
+		{src.mediaDir(srcSlug), dst.mediaDir(targetSlug)},
+		{src.filesDir(srcSlug), dst.filesDir(targetSlug)},
+	} {
+		if st, er := os.Stat(pair.srcDir); er == nil && st.IsDir() {
+			if _, _, er = transfer.CopyDirIncremental(pair.srcDir, pair.dstDir); er != nil {
+				return WorkspaceMeta{}, er
+			}
 		}
 	}
 	srcHist := filepath.Join(srcWS, "source", "history")

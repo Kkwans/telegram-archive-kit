@@ -32,6 +32,13 @@ func BuildArchive(jsonPath, mediaDir string) (*Archive, error) {
 }
 
 func BuildArchiveWithExtra(jsonPath, mediaDir string, extra map[string][]Media) (*Archive, error) {
+	return BuildArchiveWithDirs(jsonPath, []string{mediaDir}, extra)
+}
+
+// BuildArchiveWithDirs resolves media from several folders. TAK keeps photos,
+// videos and audio in media/ but relocates documents to files/, so a build has
+// to look in both without downloading anything twice.
+func BuildArchiveWithDirs(jsonPath string, mediaDirs []string, extra map[string][]Media) (*Archive, error) {
 	b, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return nil, fmt.Errorf("读取 result.json 失败: %w", err)
@@ -46,9 +53,20 @@ func BuildArchiveWithExtra(jsonPath, mediaDir string, extra map[string][]Media) 
 		return nil, errors.New("result.json 中没有 messages；请导出单个聊天，而不是完整账号数据")
 	}
 
-	mediaByID, unmatched, err := ScanMedia(mediaDir)
-	if err != nil {
-		return nil, err
+	mediaByID := map[string][]Media{}
+	var unmatched []string
+	for _, dir := range mediaDirs {
+		by, um, err := ScanMedia(dir)
+		if err != nil {
+			return nil, err
+		}
+		for id, list := range by {
+			mediaByID[id] = append(mediaByID[id], list...)
+		}
+		unmatched = append(unmatched, um...)
+	}
+	for id := range mediaByID {
+		mediaByID[id] = DedupeMedia(mediaByID[id])
 	}
 	for id, files := range extra {
 		mediaByID[id] = DedupeMedia(append(mediaByID[id], files...))
@@ -352,6 +370,9 @@ func MediaKind(name string) string {
 		return "file"
 	}
 }
+
+// IsDocumentKind reports the files TAK stores separately from playable media.
+func IsDocumentKind(name string) bool { return MediaKind(name) == "file" }
 
 func AnyString(v any) string {
 	switch x := v.(type) {

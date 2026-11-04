@@ -146,7 +146,8 @@ Telegram Archive Library/            ← 数据目录，升级程序时不要删
         ├── source/
         │   ├── result.json          ← 合并后的消息源数据
         │   └── history/             ← 每次导入的原始快照
-        ├── media/                   ← 下载的媒体文件
+        ├── media/                   ← 图片 / 视频 / 音频
+        ├── files/                   ← 非媒体文档（zip、pdf、贴纸等）
         ├── thumbs/                  ← 720px 缩略图缓存
         ├── data/                    ← 消息数据、搜索索引、日期索引
         ├── messages.html …          ← 网页分页（strict-messages* 为严格模式）

@@ -322,22 +322,24 @@ func unitBytes(u string) float64 {
 func (a *App) downloadExistingSnapshot(slug string, plan downloadPlan) (completed map[string]bool, bytes int64) {
 	completed = map[string]bool{}
 	totals := make(map[string][]int64, min(plan.Total, 4096))
-	_ = filepath.WalkDir(a.mediaDir(slug), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	for _, root := range a.storageDirs(slug) {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			base := d.Name()
+			id := archive.MessageIDFromFilename(base)
+			if _, wanted := plan.IDs[id]; !wanted {
+				return nil
+			}
+			info, er := d.Info()
+			if er != nil || info.Size() <= 0 {
+				return nil
+			}
+			totals[id] = append(totals[id], info.Size())
 			return nil
-		}
-		base := d.Name()
-		id := archive.MessageIDFromFilename(base)
-		if _, wanted := plan.IDs[id]; !wanted {
-			return nil
-		}
-		info, er := d.Info()
-		if er != nil || info.Size() <= 0 {
-			return nil
-		}
-		totals[id] = append(totals[id], info.Size())
-		return nil
-	})
+		})
+	}
 	for id, files := range a.officialMediaByID(slug) {
 		if _, wanted := plan.IDs[id]; !wanted {
 			continue

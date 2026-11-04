@@ -73,9 +73,9 @@ function addSearch(){
    if(kind){
     // For video without FFmpeg poster, load metadata in a small muted preview.
     const thumb=preview?`<img alt="" loading="lazy" src="${esc(preview)}">`:kind==='video'&&mediaSrc?`<video muted playsinline preload="none" data-poster-src="${esc(mediaSrc)}"></video>`:'';
-    cover=`<span class="tak-search-cover" ${thumb?'':'data-missing="true"'}>${thumb}${kind==='video'?'<span class="tak-search-play"><span>▶</span></span>':''}</span>`;
+    cover=`<span class="tak-search-cover category-message-image" ${thumb?'':'data-missing="true"'}>${thumb}${kind==='video'?'<span class="tak-search-play"><span>▶</span></span>':''}</span>`;
    }
-   return `<button type="button" class="tak-search-result ${keyboardSelection&&i===sel?'tak-keyboard-selected':''}" data-i="${i}">${cover}<span class="tak-search-copy"><span class="meta"><span>#${esc(r.ID)}</span><span>${esc(r.From||'')}</span>${r.Media?.length?`<span>${r.Media.length} 个媒体</span>`:''}</span><span class="preview">${esc(r.Text||(r.Media||[]).join(' · ')||'媒体消息')}</span></span></button>`;
+   return `<button type="button" class="tak-search-result category-message-item ${keyboardSelection&&i===sel?'tak-keyboard-selected':''}" data-i="${i}">${cover}<span class="tak-search-copy category-message-content"><span class="meta"><span>#${esc(r.ID)}</span><span>${esc(r.From||'')}</span>${r.Media?.length?`<span>${r.Media.length} 个媒体</span>`:''}</span><span class="preview category-message-preview">${esc(r.Text||(r.Media||[]).join(' · ')||'媒体消息')}</span></span></button>`;
   }).join('');
   qsa('[data-i]',host).forEach(b=>b.onclick=()=>go(filtered[Number(b.dataset.i)]));
   if(keyboardSelection)qsa('[data-i]',host)[sel]?.scrollIntoView({block:'nearest'});

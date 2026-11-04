@@ -32,6 +32,11 @@ type menuItem struct {
 func Run() {
 	enablePerMonitorDPI()
 	terminalInit()
+	if windowsTerminalActive() {
+		// Windows Terminal ignores the console sizing APIs, so maximizing its
+		// window is the only way to guarantee the whole frame is visible.
+		maximizeHostWindow()
+	}
 	defer showCursor()
 	defer func() {
 		if r := recover(); r != nil {
@@ -269,7 +274,7 @@ func (a *App) runMainLoop() {
 		choice := runMenu("主菜单", "离线 Telegram 档案工作台", status, items, false)
 		switch choice {
 		case "one":
-			a.actionOneClick(selected)
+			a.actionOneClickEntry()
 		case "add":
 			a.actionAddChats(true)
 		case "refresh":
@@ -436,6 +441,138 @@ func menuEmoji(icon, label string) string {
 	return icon
 }
 
+// menuWindow is the slice of an item list that fits the terminal.
+type menuWindow struct {
+	first   int
+	count   int
+	compact bool // keep descriptions only for the selected item
+	slim    bool // collapse the status block to a single line
+	bare    bool // drop descriptions entirely (last resort before clipping)
+}
+
+func frameRows(frame string) int { return strings.Count(frame, "\n") + 1 }
+
+// planMenu spends the viewport in the order the user notices it: item
+// descriptions, then the status block, and scrolling only as the last resort.
+// It measures real frames instead of duplicating the panel's row arithmetic.
+func planMenu(avail, itemCount, sel int, build func(menuWindow) string) menuWindow {
+	full := menuWindow{0, itemCount, false, false, false}
+	if itemCount == 0 || frameRows(build(full)) <= avail {
+		return full
+	}
+	compact := menuWindow{0, itemCount, true, false, false}
+	if frameRows(build(compact)) <= avail {
+		return compact
+	}
+	for _, base := range []menuWindow{{0, itemCount, true, true, false}, {0, itemCount, true, true, true}} {
+		for k := itemCount; k >= 1; k-- {
+			w := base
+			w.count = k
+			w.first = windowFirst(sel, k, itemCount)
+			if frameRows(build(w)) <= avail {
+				return w
+			}
+		}
+	}
+	return menuWindow{first: min(max(sel, 0), itemCount-1), count: 1, compact: true, slim: true, bare: true}
+}
+
+func windowFirst(sel, count, itemCount int) int {
+	if count > itemCount {
+		count = itemCount
+	}
+	first := sel - count/2
+	if first < 0 {
+		first = 0
+	}
+	if first+count > itemCount {
+		first = itemCount - count
+	}
+	return max(first, 0)
+}
+
+// fitConsoleTo grows the classic console host once per screen so the whole
+// frame is visible. It never shrinks, so navigating between menus of different
+// heights does not make the window jump around.
+func fitConsoleTo(frame string) {
+	need := frameRows(frame)
+	cols := uiInnerWidth() + 10
+	if cols < 104 {
+		cols = 104
+	}
+	if cols > 120 {
+		cols = 120
+	}
+	if need > consoleRowsFit {
+		consoleRowsFit = need
+	}
+	if consoleColsFit < cols {
+		consoleColsFit = cols
+	}
+	_, rows, _, _ := consoleViewport()
+	if rows >= consoleRowsFit {
+		return
+	}
+	_ = setConsoleViewport(consoleColsFit, consoleRowsFit)
+}
+
+var (
+	consoleRowsFit int
+	consoleColsFit int
+)
+
+// menuBody builds one complete menu frame body. The trailing hint line is what
+// composeFrame promotes to the permanent footer row.
+func menuBody(title, subtitle string, status []string, items []menuItem, sel int, win menuWindow) string {
+	inner := uiInnerWidth()
+	lead := uiLeadFor(inner)
+	var b strings.Builder
+	b.WriteString(topFrame(title, subtitle))
+
+	if len(status) > 0 {
+		if win.slim {
+			b.WriteString(lead + muted(truncatePlain(strings.Join(status, "   ·   "), inner-4)) + "\n\n")
+		} else {
+			b.WriteString(lead + ansiBold + ansiWhite + "状态概览" + ansiReset + "\n")
+			for _, line := range status {
+				b.WriteString(lead + "  " + muted(truncatePlain(line, inner-4)) + "\n")
+			}
+			b.WriteString("\n\n")
+		}
+	}
+
+	labelIndent := "         "
+	last := win.first + win.count - 1
+	if win.first > 0 {
+		b.WriteString(lead + labelIndent + muted(fmt.Sprintf("↑ 还有 %d 项未显示", win.first)) + "\n\n")
+	}
+	for i := win.first; i <= last && i < len(items); i++ {
+		it := items[i]
+		num := fmt.Sprintf("%02d", i+1)
+		if i == sel {
+			b.WriteString(lead + cyan("›") + " " + cyan(num) + "  " + cyan(bold(padVisible(it.Icon, 3))) + "  " + ansiBold + ansiWhite + it.Label + ansiReset + "\n")
+			if it.Desc != "" && !win.bare {
+				b.WriteString(lead + labelIndent + ansiGray + truncatePlain(it.Desc, inner-visibleWidth(labelIndent)) + ansiReset + "\n")
+			}
+		} else {
+			b.WriteString(lead + "  " + muted(num) + "  " + blue(padVisible(it.Icon, 3)) + "  " + ansiGray + it.Label + ansiReset + "\n")
+			if !win.compact && it.Desc != "" {
+				b.WriteString(lead + labelIndent + muted(truncatePlain(it.Desc, inner-visibleWidth(labelIndent))) + "\n")
+			}
+		}
+		if i != last {
+			b.WriteString("\n")
+		}
+	}
+	if last < len(items)-1 {
+		b.WriteString("\n" + lead + labelIndent + muted(fmt.Sprintf("↓ 还有 %d 项未显示", len(items)-last-1)) + "\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(lead + cyan("↑↓") + " 选择   " + cyan("Enter") + " 确认   " + cyan("Esc") + " 返回   " + muted("1–9 快捷键  ·  ? 帮助") + "\n")
+	return b.String()
+}
+
 func runMenu(title, subtitle string, status []string, items []menuItem, allowEsc bool) string {
 	if len(items) == 0 {
 		return ""
@@ -447,42 +584,16 @@ func runMenu(title, subtitle string, status []string, items []menuItem, allowEsc
 	legacyFrameActive = false
 	hideCursor()
 	defer hideCursor()
+	build := func(w menuWindow) string {
+		if w.count > len(items) {
+			w.count = len(items)
+		}
+		return menuBody(title, subtitle, status, items, sel, w)
+	}
+	fitConsoleTo(build(menuWindow{first: 0, count: len(items)}))
 	for {
-		inner := uiInnerWidth()
-		lead := uiLeadFor(inner)
-		var b strings.Builder
-		b.WriteString(topFrame(title, subtitle))
-
-		if len(status) > 0 {
-			b.WriteString(lead + ansiBold + ansiWhite + "状态概览" + ansiReset + "\n")
-			for _, line := range status {
-				b.WriteString(lead + "  " + muted(truncatePlain(line, inner-4)) + "\n")
-			}
-			b.WriteString("\n\n")
-		}
-
-		labelIndent := "         "
-		for i, it := range items {
-			num := fmt.Sprintf("%02d", i+1)
-			if i == sel {
-				b.WriteString(lead + cyan("›") + " " + cyan(num) + "  " + cyan(bold(padVisible(it.Icon, 3))) + "  " + ansiBold + ansiWhite + it.Label + ansiReset + "\n")
-				if it.Desc != "" {
-					b.WriteString(lead + labelIndent + ansiGray + truncatePlain(it.Desc, inner-visibleWidth(labelIndent)) + ansiReset + "\n")
-				}
-			} else {
-				b.WriteString(lead + "  " + muted(num) + "  " + blue(padVisible(it.Icon, 3)) + "  " + ansiGray + it.Label + ansiReset + "\n")
-				if it.Desc != "" {
-					b.WriteString(lead + labelIndent + muted(truncatePlain(it.Desc, inner-visibleWidth(labelIndent))) + "\n")
-				}
-			}
-			if i != len(items)-1 {
-				b.WriteString("\n")
-			}
-		}
-
-		b.WriteString("\n")
-		b.WriteString(lead + cyan("↑↓") + " 选择   " + cyan("Enter") + " 确认   " + cyan("Esc") + " 返回   " + muted("1–9 快捷键  ·  ? 帮助") + "\n")
-		renderFrame(b.String())
+		win := planMenu(terminalHeight(), len(items), sel, build)
+		renderFrame(menuBody(title, subtitle, status, items, sel, win))
 		k := readKey()
 		switch k.Code {
 		case keyUp:
@@ -771,6 +882,56 @@ func (a *App) refreshWorkspaceWebInteractive(slug, name string) {
 		return
 	}
 	showMessage("网页已重新生成", name+" · 媒体、统计和源数据均未改动")
+}
+
+// actionOneClickEntry always asks which chat to process. Silently starting on
+// whichever chat happened to be current forced a trip through 聊天管理 first,
+// and switching chats there is several screens deep.
+func (a *App) actionOneClickEntry() {
+	list := a.listWorkspaces()
+	if len(list) == 0 {
+		showMessage("还没有聊天", "先导入 result.json 或继承官方 ChatExport，再回来执行一键完成")
+		a.actionAddChats(true)
+		return
+	}
+	current := selectedSlug(a.selectedWorkspace(list))
+	items := make([]menuItem, 0, len(list)+2)
+	for _, m := range list {
+		label := m.Chat.Name
+		if m.Slug == current {
+			label += "（当前）"
+		}
+		badge := fmt.Sprintf("%d 条消息 · %d 媒体", m.MessageCount, m.MediaCount)
+		if m.MissingCount > 0 {
+			badge += fmt.Sprintf(" · 缺失 %d", m.MissingCount)
+		}
+		items = append(items, menuItem{Key: m.Slug, Icon: "●", Label: label, Desc: badge})
+	}
+	items = append(items,
+		menuItem{Key: "add", Icon: "＋", Label: "导入新的 result.json", Desc: "这个聊天还没归档；导入后直接继续一键完成"},
+		menuItem{Key: "back", Icon: "←", Label: "返回主菜单", Desc: ""})
+	status := []string{
+		"档案库   " + a.Settings.LibraryRoot,
+		fmt.Sprintf("聊天     %d 个已归档；选中的会成为当前聊天", len(list)),
+	}
+	choice := runMenu("一键完成 · 选择聊天", "选定后自动执行：环境预检 → 补齐缺失媒体 → 生成网页 → 校验 → 打开", status, items, true)
+	switch choice {
+	case "", "back":
+		return
+	case "add":
+		a.actionAddChats(true)
+		return
+	}
+	m, err := a.readWorkspaceMeta(choice)
+	if err != nil {
+		showErrorAndWait(err)
+		return
+	}
+	if m.Slug != current {
+		a.Settings.LastWorkspaceSlug = m.Slug
+		_ = a.saveSettings()
+	}
+	a.actionOneClick(&m)
 }
 
 func (a *App) actionOneClick(selected *WorkspaceMeta) {
