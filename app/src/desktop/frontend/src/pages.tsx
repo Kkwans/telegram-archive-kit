@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   CheckCircle2,
   Download,
   FolderOpen,
   HardDrive,
+  Film,
+  FileText,
   KeyRound,
+  Maximize2,
+  Music,
   Play,
   QrCode,
   RefreshCw,
@@ -15,6 +19,7 @@ import {
   UserRound,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { call } from "./rpc";
 import type {
@@ -23,6 +28,7 @@ import type {
   DoneState,
   DownloadState,
   LoginState,
+  MediaItem,
   OperationState,
   SessionCheck,
   TdlInfo,
@@ -509,9 +515,18 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
             {chats.map((c) => (
               <tr
                 key={c.slug}
+                tabIndex={0}
+                aria-selected={c.slug === selected}
                 onClick={() => {
                   setSelected(c.slug);
                   setStats(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(c.slug);
+                    setStats(null);
+                  }
                 }}
                 style={{ cursor: "pointer", background: c.slug === selected ? "var(--accent-soft)" : undefined }}
               >
@@ -587,7 +602,259 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           )}
         </section>
       )}
+
+      {current && <MediaGallery ctx={ctx} chat={current} />}
     </>
+  );
+}
+
+/* =========================== Media gallery =========================== */
+const MEDIA_FILTERS = [
+  { key: "all", label: "全部" },
+  { key: "image", label: "图片" },
+  { key: "video", label: "视频" },
+  { key: "audio", label: "音频" },
+  { key: "file", label: "文件" },
+];
+
+const mediaURL = (slug: string, name: string) =>
+  `/api/media?slug=${encodeURIComponent(slug)}&f=${encodeURIComponent(name)}`;
+
+function mediaIcon(kind: string) {
+  if (kind === "video") return <Film size={20} />;
+  if (kind === "audio") return <Music size={20} />;
+  return <FileText size={20} />;
+}
+
+export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
+  const { toast } = ctx;
+  const [items, setItems] = useState<MediaItem[] | null>(null);
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [limit, setLimit] = useState(120);
+  const [viewer, setViewer] = useState(-1);
+
+  const load = () => {
+    setItems(null);
+    setError("");
+    call<MediaItem[]>("chatMedia", { slug: chat.slug })
+      .then(setItems)
+      .catch((e: Error) => setError(e.message));
+  };
+  useEffect(load, [chat.slug]);
+  useEffect(() => {
+    setLimit(120);
+    setViewer(-1);
+  }, [filter, chat.slug]);
+
+  const filtered = useMemo(
+    () => (items ?? []).filter((i) => filter === "all" || i.kind === filter),
+    [items, filter]
+  );
+
+  useEffect(() => {
+    if (viewer >= filtered.length) setViewer(-1);
+  }, [filtered.length, viewer]);
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>媒体与文件</h3>
+        <span className="meta">{items ? `${filtered.length} 个本地文件` : "正在读取…"}</span>
+        <div className="tabs media-tabs" role="tablist" aria-label="媒体筛选">
+          {MEDIA_FILTERS.map((f) => (
+            <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""} onClick={() => setFilter(f.key)}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error ? (
+        <div className="state-box error">
+          <p>读取媒体列表失败：{error}</p>
+          <button className="btn ghost" onClick={load}>
+            <RefreshCw size={13} /> 重试
+          </button>
+        </div>
+      ) : items === null ? (
+        <div className="media-grid" aria-hidden="true">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="media-tile skeleton" />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="state-box">
+          <p>{filter === "all" ? "这个聊天还没有下载到本地媒体。" : "当前筛选没有文件。"}</p>
+          <button className="btn ghost" onClick={() => call("revealChat", { slug: chat.slug })}>
+            <FolderOpen size={13} /> 打开聊天目录
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="media-grid">
+            {filtered.slice(0, limit).map((item, idx) => (
+              <button key={item.name} className="media-tile" title={item.name} onClick={() => setViewer(idx)}>
+                {item.kind === "image" ? (
+                  <img src={mediaURL(chat.slug, item.name)} alt={item.name} loading="lazy" />
+                ) : (
+                  <span className={`media-ph ${item.kind}`}>{mediaIcon(item.kind)}</span>
+                )}
+                <span className="media-cap">
+                  <b>{item.kind === "image" ? "图片" : item.kind === "video" ? "视频" : item.kind === "audio" ? "音频" : "文件"}</b>
+                  <i>{bytes(item.size)}</i>
+                </span>
+              </button>
+            ))}
+          </div>
+          {filtered.length > limit && (
+            <div className="media-more">
+              <button className="btn ghost" onClick={() => setLimit((n) => n + 240)}>
+                加载更多（剩余 {filtered.length - limit} 个）
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {viewer >= 0 && filtered[viewer] && (
+        <MediaViewer
+          chat={chat}
+          items={filtered}
+          index={viewer}
+          onIndex={setViewer}
+          onClose={() => setViewer(-1)}
+          onError={(m) => toast(m, true)}
+        />
+      )}
+    </section>
+  );
+}
+
+function MediaViewer({
+  chat,
+  items,
+  index,
+  onIndex,
+  onClose,
+  onError,
+}: {
+  chat: ChatRow;
+  items: MediaItem[];
+  index: number;
+  onIndex: (n: number) => void;
+  onClose: () => void;
+  onError: (msg: string) => void;
+}) {
+  const item = items[index];
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const src = mediaURL(chat.slug, item.name);
+
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [index]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
+      else if (e.key === "ArrowRight" && index < items.length - 1) onIndex(index + 1);
+      else if (e.key === "0") {
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [index, items.length, onClose, onIndex]);
+
+  const zoomBy = (next: number) => {
+    const clamped = Math.min(6, Math.max(1, next));
+    setZoom(clamped);
+    if (clamped === 1) setPan({ x: 0, y: 0 });
+  };
+
+  return (
+    <div className="viewer" role="dialog" aria-modal="true" aria-label={`查看 ${item.name}`}>
+      <header className="viewer-head">
+        <span className="viewer-name" title={item.name}>
+          {item.name}
+        </span>
+        <span className="viewer-count">
+          {index + 1} / {items.length}
+        </span>
+        {item.kind === "image" && (
+          <span className="viewer-zoom">
+            <button className="btn sm ghost" aria-label="缩小" onClick={() => zoomBy(zoom / 1.4)}>
+              −
+            </button>
+            <b>{Math.round(zoom * 100)}%</b>
+            <button className="btn sm ghost" aria-label="放大" onClick={() => zoomBy(zoom * 1.4)}>
+              +
+            </button>
+            <button className="btn sm ghost" aria-label="重置缩放" onClick={() => zoomBy(1)}>
+              <Maximize2 size={12} />
+            </button>
+          </span>
+        )}
+        <span className="spacer" />
+        <button className="btn sm ghost" onClick={() => call("openPath", { path: chat.dir }).catch((e: Error) => onError(e.message))}>
+          <FolderOpen size={12} /> 所在目录
+        </button>
+        <button className="btn sm close-x" aria-label="关闭查看器" autoFocus onClick={onClose}>
+          <X size={12} />
+          <span>关闭</span>
+        </button>
+      </header>
+      <div
+        className={`viewer-stage ${zoom > 1 ? "zoomed" : ""}`}
+        onWheel={(e) => {
+          if (item.kind !== "image") return;
+          e.preventDefault();
+          zoomBy(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+        }}
+        onDoubleClick={() => item.kind === "image" && zoomBy(zoom > 1 ? 1 : 2.4)}
+        onMouseDown={(e) => {
+          if (item.kind !== "image" || zoom <= 1) return;
+          drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+        }}
+        onMouseMove={(e) => {
+          if (!drag.current) return;
+          setPan({ x: drag.current.px + e.clientX - drag.current.x, y: drag.current.py + e.clientY - drag.current.y });
+        }}
+        onMouseUp={() => (drag.current = null)}
+        onMouseLeave={() => (drag.current = null)}
+      >
+        {item.kind === "image" && (
+          <img
+            src={src}
+            alt={item.name}
+            draggable={false}
+            style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+          />
+        )}
+        {item.kind === "video" && <video src={src} controls autoPlay playsInline />}
+        {item.kind === "audio" && <audio src={src} controls autoPlay />}
+        {item.kind === "file" && (
+          <div className="viewer-file">
+            <FileText size={40} />
+            <p>{item.name}</p>
+            <a className="btn primary" href={src} download>
+              下载文件
+            </a>
+          </div>
+        )}
+      </div>
+      <button className="viewer-nav prev" disabled={index <= 0} aria-label="上一个" onClick={() => onIndex(index - 1)}>
+        ‹
+      </button>
+      <button className="viewer-nav next" disabled={index >= items.length - 1} aria-label="下一个" onClick={() => onIndex(index + 1)}>
+        ›
+      </button>
+    </div>
   );
 }
 

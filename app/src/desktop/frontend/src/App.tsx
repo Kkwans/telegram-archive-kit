@@ -10,6 +10,7 @@ import {
   MessagesSquare,
   Minus,
   Moon,
+  Search,
   Settings,
   Square,
   Stethoscope,
@@ -49,6 +50,9 @@ export default function App() {
   const [pending, setPending] = useState<PendingInput | null>(null);
   const [dropMode, setDropMode] = useState("copy");
   const [dropBusy, setDropBusy] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteActive, setPaletteActive] = useState(0);
   const lastSample = useRef(0);
   const toastTimer = useRef(0);
   const lastNotice = useRef(0);
@@ -64,6 +68,21 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("tak-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((v) => !v);
+        setPaletteQuery("");
+        setPaletteActive(0);
+      } else if (e.key === "Escape" && palette) {
+        setPalette(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [palette]);
 
   const consume = (st: DesktopState) => {
     setChats(st.chats ?? []);
@@ -140,6 +159,79 @@ export default function App() {
 
   const current = chats.find((c) => c.slug === selected) || null;
 
+  interface Command {
+    id: string;
+    label: string;
+    hint?: string;
+    run: () => void;
+  }
+  const commands = useMemo<Command[]>(() => {
+    const nav: Command[] = [
+      { id: "nav-overview", label: "前往：概览", hint: "总览", run: () => setPage("overview") },
+      { id: "nav-chats", label: "前往：聊天资料库", hint: "聊天", run: () => setPage("chats") },
+      { id: "nav-library", label: "前往：档案库", hint: "档案库", run: () => setPage("library") },
+      { id: "nav-account", label: "前往：账号", hint: "登录", run: () => setPage("account") },
+      { id: "nav-settings", label: "前往：设置", hint: "设置", run: () => setPage("settings") },
+      { id: "nav-diagnostics", label: "前往：诊断与日志", hint: "诊断", run: () => setPage("diagnostics") },
+    ];
+    const chatsCmds: Command[] = chats.map((c) => ({
+      id: `chat-${c.slug}`,
+      label: `打开聊天：${c.name}`,
+      hint: `${c.messages.toLocaleString()} 条消息`,
+      run: () => {
+        setSelected(c.slug);
+        setPage("overview");
+      },
+    }));
+    const actions: Command[] = [];
+    if (selected) {
+      actions.push({
+        id: "act-sync",
+        label: "一键同步当前聊天",
+        hint: "下载缺失媒体并重建网页",
+        run: () => {
+          call("startOneClick", { slug: selected }).catch((e: Error) => toast(e.message, true));
+          setPage("overview");
+        },
+      });
+      actions.push({
+        id: "act-open",
+        label: "打开当前聊天的归档库网页",
+        hint: "浏览器",
+        run: () => call("openLibrary", { slug: selected }).catch((e: Error) => toast(e.message, true)),
+      });
+      actions.push({
+        id: "act-dir",
+        label: "打开当前聊天目录",
+        hint: "资源管理器",
+        run: () => call("revealChat", { slug: selected }).catch((e: Error) => toast(e.message, true)),
+      });
+    }
+    actions.push(
+      { id: "act-theme", label: theme === "light" ? "切换到深色外观" : "切换到浅色外观", hint: "外观", run: () => setTheme(theme === "light" ? "dark" : "light") },
+      { id: "act-refresh", label: "重新读取状态", hint: "刷新", run: refresh },
+      { id: "act-logs", label: "打开日志目录", hint: "诊断", run: () => call("revealLogs").catch((e: Error) => toast(e.message, true)) }
+    );
+    return [...nav, ...actions, ...chatsCmds];
+  }, [chats, selected, theme]);
+
+  const filteredCommands = useMemo(() => {
+    const q = paletteQuery.trim().toLowerCase();
+    if (!q) return commands;
+    return commands.filter((c) => `${c.label} ${c.hint ?? ""}`.toLowerCase().includes(q));
+  }, [commands, paletteQuery]);
+
+  useEffect(() => {
+    setPaletteActive(0);
+  }, [paletteQuery]);
+
+  const runCommand = (cmd: Command | undefined) => {
+    if (!cmd) return;
+    setPalette(false);
+    setPaletteQuery("");
+    cmd.run();
+  };
+
   const closePending = () => {
     if (pending) call("ackPending", { seq: pending.seq }).catch(() => undefined);
     setPending(null);
@@ -204,6 +296,10 @@ export default function App() {
           </span>
         )}
         <span className="spacer" />
+        <button className="cmdk" title="命令面板 (Ctrl+K)" aria-label="打开命令面板" onClick={() => setPalette(true)}>
+          <Search size={12} />
+          Ctrl K
+        </button>
         <span className="pill" title={boot?.tdl || "未安装 tdl"}>
           <i className={`dot ${boot?.tdl ? (boot.tdlRunning ? "warn" : "") : "off"}`} />
           {boot?.tdl ? (boot.tdlRunning ? "tdl 运行中" : "tdl 已连接") : "tdl 未安装"}
@@ -213,20 +309,20 @@ export default function App() {
           {boot?.hasSession ? "有会话文件" : "未登录"}
         </span>
         <div className="seg" role="group" aria-label="外观">
-          <button className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")} title="浅色">
+          <button className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")} title="浅色" aria-label="切换浅色外观" aria-pressed={theme === "light"}>
             <Sun size={13} />
           </button>
-          <button className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")} title="深色">
+          <button className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")} title="深色" aria-label="切换深色外观" aria-pressed={theme === "dark"}>
             <Moon size={13} />
           </button>
         </div>
-        <button className="wbtn" title="最小化" onClick={() => call("windowMinimize")}>
+        <button className="wbtn" title="最小化" aria-label="最小化窗口" onClick={() => call("windowMinimize")}>
           <Minus size={11} />
         </button>
-        <button className="wbtn" title="最大化" onClick={() => call("windowToggleMaximize")}>
+        <button className="wbtn" title="最大化" aria-label="最大化或还原窗口" onClick={() => call("windowToggleMaximize")}>
           <Square size={10} />
         </button>
-        <button className="wbtn close" title="关闭" onClick={() => call("windowClose")}>
+        <button className="wbtn close" title="关闭" aria-label="关闭窗口（隐藏到托盘）" onClick={() => call("windowClose")}>
           <X size={11} />
         </button>
       </header>
@@ -311,6 +407,55 @@ export default function App() {
         <span className="spacer" />
         <span>Telegram Archive Kit {boot?.version ?? "1.2"} · 桌面客户端</span>
       </footer>
+
+      {palette && (
+        <div
+          className="modal-backdrop palette-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPalette(false);
+          }}
+        >
+          <div className="palette" role="dialog" aria-modal="true" aria-label="命令面板">
+            <input
+              autoFocus
+              value={paletteQuery}
+              placeholder="搜索命令、聊天或页面…"
+              aria-label="搜索命令"
+              onChange={(e) => setPaletteQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setPaletteActive((n) => Math.min(filteredCommands.length - 1, n + 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setPaletteActive((n) => Math.max(0, n - 1));
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  runCommand(filteredCommands[paletteActive]);
+                }
+              }}
+            />
+            <div className="palette-list" role="listbox" aria-label="命令">
+              {filteredCommands.length === 0 && <div className="palette-empty">没有匹配的命令</div>}
+              {filteredCommands.map((c, i) => (
+                <button
+                  key={c.id}
+                  role="option"
+                  aria-selected={i === paletteActive}
+                  className={i === paletteActive ? "on" : ""}
+                  onMouseEnter={() => setPaletteActive(i)}
+                  onClick={() => runCommand(c)}
+                >
+                  <span>{c.label}</span>
+                  {c.hint && <span className="hint">{c.hint}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="palette-foot">↑↓ 选择 · Enter 执行 · Esc 关闭</div>
+          </div>
+        </div>
+      )}
 
       {pending && (
         <div className="modal-backdrop" role="presentation">

@@ -137,6 +137,14 @@ export interface SessionCheck {
   code: number;
 }
 
+export interface MediaItem {
+  id: string;
+  name: string;
+  kind: "image" | "video" | "audio" | "file";
+  size: number;
+  modTime: number;
+}
+
 export interface PendingInput {
   seq: number;
   paths?: string[];

@@ -56,6 +56,10 @@ func (b *Bridge) Attach(w *application.WebviewWindow) { b.window = w }
 
 func (b *Bridge) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/media" {
+			b.serveMedia(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			b.serve(w, r)
 			return
@@ -127,6 +131,8 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.facade.Bootstrap(), nil
 	case "listChats":
 		return b.facade.ListChats(), nil
+	case "chatMedia":
+		return b.facade.ChatMedia(p.Slug)
 	case "state":
 		return b.stateReply(), nil
 	case "ackPending":
@@ -361,6 +367,33 @@ func (b *Bridge) syncCurrent() (map[string]string, error) {
 	}
 	b.showWindow()
 	return map[string]string{"slug": slug}, nil
+}
+
+func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	slug := r.URL.Query().Get("slug")
+	name := r.URL.Query().Get("f")
+	path, err := b.facade.MediaFilePath(slug, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	http.ServeContent(w, r, name, st.ModTime(), f)
 }
 
 func (b *Bridge) pickJSON() ([]string, error) {
