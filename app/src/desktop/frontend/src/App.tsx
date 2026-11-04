@@ -205,7 +205,9 @@ export default function App() {
     tasks.forEach((t) => {
       const prev = seenTasks.current.get(t.id);
       seenTasks.current.set(t.id, t.state);
-      if (prev === "running" && t.state !== "running") {
+      const justFinished = prev === "running" && t.state !== "running";
+      const finishedBeforeFirstPoll = prev === undefined && t.state !== "running";
+      if (justFinished || finishedBeforeFirstPoll) {
         completed = true;
         toast(t.state === "done" ? `任务完成：${t.title}` : `任务失败：${t.title}${t.error ? " · " + t.error : ""}`, t.state !== "done");
       }
@@ -345,7 +347,7 @@ export default function App() {
         <div className="brand">
           <img className="brand-mark" src="./app-icon.png" alt="Telegram Archive Kit" />
           <span className="brand-name">Telegram Archive Kit</span>
-          <span className="brand-ver">{boot?.version ?? "2.0"}</span>
+          <span className="brand-ver">{boot?.version ?? "2.1"}</span>
         </div>
         {boot && (
           <span className="libchip" title={boot.libraryRoot}>
@@ -472,7 +474,7 @@ export default function App() {
         </span>
         <span>{boot?.hasSession ? "会话已保存" : "未登录 Telegram"}</span>
         <span className="spacer" />
-        <span>Telegram Archive Kit {boot?.version ?? "2.0"} · 桌面客户端</span>
+        <span>Telegram Archive Kit {boot?.version ?? "2.1"} · 桌面客户端</span>
       </footer>
 
       {taskOpen && (

@@ -392,6 +392,7 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const idle = !running && !dl && !op;
   const stageText = running
     ? dl
       ? `${dl.state}${dl.detail ? " · " + dl.detail : ""}`
@@ -402,7 +403,9 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
     ? done.ok
       ? "上次任务已完成"
       : "上次任务失败"
-    : "空闲";
+    : current
+    ? "准备就绪 · 点击「开始同步」检查并补齐当前聊天"
+    : "先在左侧选择聊天";
 
   return (
     <>
@@ -433,18 +436,18 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
 
       <section className={`hero ${!running && !dl ? "idle" : ""}`}>
         <div
-          className="ring"
+          className={`ring ${idle ? "idle" : ""}`}
           role="progressbar"
           aria-valuenow={Math.round(percent)}
           aria-valuemin={0}
           aria-valuemax={100}
-          style={{ background: `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` }}
+          style={{ background: idle ? "var(--surface-3)" : `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` }}
         >
-          <b>{Math.round(percent)}%</b>
+          {idle ? <Play size={20} /> : <b>{Math.round(percent)}%</b>}
         </div>
         <div className="hero-main">
           <div className="hero-title">
-            {running ? dl?.state ?? "同步中" : "同步与构建"}
+            {running ? dl?.state ?? "同步中" : idle ? "准备同步" : "同步与构建"}
             {running && <span className="tag">进行中</span>}
             {done && !running && <span className="tag">{done.ok ? "已完成" : "失败"}</span>}
           </div>
@@ -768,6 +771,28 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <h3>聊天操作</h3>
           <span className="meta">最近更新 {current.updatedAt || "--"}</span>
         </div>
+        <div className="chat-facts">
+          <span>
+            <b>类型</b> {current.type || "--"}
+          </span>
+          <span>
+            <b>Chat ID</b> {current.id || "--"}
+          </span>
+          <span>
+            <b>官方导出</b> {current.official} 个
+          </span>
+          <span className="fact-path" title={current.dir}>
+            <b>目录</b> {current.dir}
+          </span>
+          <button
+            className="btn sm ghost"
+            onClick={() => {
+              navigator.clipboard?.writeText(current.dir).then(() => toast("目录已复制")).catch(() => toast("复制失败", true));
+            }}
+          >
+            复制路径
+          </button>
+        </div>
         <div className="chat-actions">
           <button className="btn sm" disabled={busy === "verify"} onClick={verify}>
             <ShieldCheck size={12} /> {busy === "verify" ? "核对中…" : "核对完整性"}
@@ -881,11 +906,20 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
           {items ? `${shown.length} 个图片 / 视频${showFiles ? ` · ${fileItems.length} 个文件` : ""}` : "正在读取…"}
         </span>
         <div className="tabs media-tabs" role="tablist" aria-label="媒体筛选">
-          {MEDIA_FILTERS.map((f) => (
-            <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""} onClick={() => setFilter(f.key)}>
-              {f.label}
-            </button>
-          ))}
+          {MEDIA_FILTERS.map((f) => {
+            const count =
+              f.key === "all"
+                ? mediaItems.length
+                : f.key === "file"
+                  ? fileItems.length
+                  : mediaItems.filter((i) => i.kind === f.key).length;
+            return (
+              <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""} onClick={() => setFilter(f.key)}>
+                {f.label}
+                <span className="tab-count">{count}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1322,6 +1356,25 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         </div>
       </div>
 
+      <section className="kpis library-kpis">
+        <div className="kpi">
+          <span>聊天</span>
+          <b>{chats.length}</b>
+        </div>
+        <div className="kpi">
+          <span>消息</span>
+          <b>{chats.reduce((n, c) => n + c.messages, 0).toLocaleString()}</b>
+        </div>
+        <div className="kpi">
+          <span>媒体</span>
+          <b>{chats.reduce((n, c) => n + c.media, 0).toLocaleString()}</b>
+        </div>
+        <div className="kpi">
+          <span>缺失</span>
+          <b className={chats.some((c) => c.missing > 0) ? "warn" : ""}>{chats.reduce((n, c) => n + c.missing, 0)}</b>
+        </div>
+      </section>
+
       <section className="panel">
         <div className="panel-head">
           <h3>导入与更新</h3>
@@ -1531,6 +1584,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <span className="meta">默认 2 × 4 是 Telegram 友好的稳定参数</span>
         </div>
         <div className="form">
+          <div className="form-section">下载参数</div>
           <div className="field">
             <label>并发文件任务（1–8）</label>
             <input type="number" min={1} max={8} value={form.concurrent} onChange={(e) => set("concurrent", Number(e.target.value))} />
@@ -1541,6 +1595,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
             <input type="number" min={1} max={16} value={form.threads} onChange={(e) => set("threads", Number(e.target.value))} />
             <span className="hint">一个文件内部并行分片数</span>
           </div>
+          <div className="form-section">网络与重试</div>
           <div className="field">
             <label>网络自动恢复窗口（分钟）</label>
             <input type="number" min={1} max={180} value={form.networkRetryMinutes} onChange={(e) => set("networkRetryMinutes", Number(e.target.value))} />
@@ -1579,6 +1634,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
             <label>重连超时</label>
             <input type="text" value={form.reconnectTimeout} onChange={(e) => set("reconnectTimeout", e.target.value)} />
           </div>
+          <div className="form-section">构建与外观</div>
           <div className="field">
             <label>最大修复轮数</label>
             <input type="number" min={1} max={10} value={form.maxRepairPasses} onChange={(e) => set("maxRepairPasses", Number(e.target.value))} />
@@ -1684,6 +1740,14 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
         <div className="panel-head">
           <h3>日志</h3>
           <span className="meta">{logs.length} 个文件</span>
+          <button
+            className="btn sm ghost"
+            style={{ marginLeft: "auto" }}
+            disabled={!content}
+            onClick={() => navigator.clipboard?.writeText(content).then(() => toast("日志已复制")).catch(() => toast("复制失败", true))}
+          >
+            复制当前日志
+          </button>
         </div>
         {logs.length === 0 ? (
           <div className="chart-empty">还没有日志。</div>
@@ -1797,7 +1861,7 @@ function QrCodePanel({ lines, fallback }: { lines: string[]; fallback: string[] 
   const total = matrix.length + margin * 2;
   return (
     <div className="qr-card" aria-label="登录二维码">
-      <svg viewBox={`0 0 ${total} ${total}`} width={280} height={280} shapeRendering="crispEdges" role="img" aria-label="Telegram 登录二维码">
+      <svg viewBox={`0 0 ${total} ${total}`} width={240} height={240} shapeRendering="crispEdges" role="img" aria-label="Telegram 登录二维码">
         <rect width={total} height={total} fill="#ffffff" />
         {matrix.map((row, y) =>
           row.map((dark, x) =>
@@ -1973,7 +2037,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
         <div className="panel-head">
           <h3>tdl 与本地会话</h3>
           <span className="meta">
-            <span className={`dot ${info?.hasSession ? "" : "off"}`} /> {sessionState}
+            <span className={`dot ${info?.hasSession ? "" : "off"}`} /> {info?.hasSession ? "本地有会话文件" : "无会话文件"}
           </span>
         </div>
         <dl className="kv">
@@ -1985,8 +2049,8 @@ export function Account({ ctx }: { ctx: PageCtx }) {
           <dd>{info?.namespace || "-"}</dd>
           <dt>会话目录</dt>
           <dd>{info?.sessionDir || "-"}</dd>
-          <dt>本地登录</dt>
-          <dd className={info?.hasSession ? "" : "warn"}>{sessionState}</dd>
+          <dt>本地会话文件</dt>
+          <dd className={info?.hasSession ? "" : "warn"}>{info?.hasSession ? "已发现（不代表授权有效）" : "未发现"}</dd>
           <dt>进程状态</dt>
           <dd className={info?.running ? "warn" : ""}>{info?.running ? "tdl.exe 正在运行" : "未运行"}</dd>
         </dl>
@@ -2005,6 +2069,11 @@ export function Account({ ctx }: { ctx: PageCtx }) {
             </button>
           )}
         </div>
+        {!check && (
+          <p className="acct-subhint">
+            「本地有会话文件」只说明磁盘上存在登录数据，不代表 Telegram 仍认可它。请点「检查连接 / 授权」；若显示授权不可用，重新扫码即可覆盖。
+          </p>
+        )}
         {check && (
           <div className={`check-result ${checkTone}`}>
             <b>

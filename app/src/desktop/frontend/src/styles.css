@@ -744,3 +744,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .palette-item-wrap { display: flex; flex-direction: column; gap: 1px; }
 .palette-section { margin: 9px 8px 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
 .palette-foot { flex-shrink: 0; }
+
+/* =========================== Page polish =========================== */
+.tab-count {
+  margin-left: 5px; padding: 1px 5px; border-radius: 99px; background: var(--surface-3);
+  color: var(--faint); font-size: 9.5px; font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.media-tabs button.on .tab-count { background: rgba(47, 107, 255, 0.14); color: var(--accent); }
+.chat-facts {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+  font-size: 11.5px; color: var(--muted);
+}
+.chat-facts b { color: var(--faint); font-weight: 600; margin-right: 5px; }
+.fact-path { max-width: min(560px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-facts .btn { margin-left: auto; }
+.library-kpis .kpi b { font-size: 19px; }
+.form-section {
+  grid-column: 1 / -1; margin-top: 6px; padding: 14px 0 0; border-top: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
+}
+.form-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+@media (max-width: 1180px) {
+  .titlebar .pill { display: none; }
+}
+@media (max-width: 1020px) {
+  .cmdk { font-size: 0; gap: 0; padding: 0 7px; }
+  .taskbtn { font-size: 0; gap: 4px; padding: 0 7px; }
+}
+
+.check-result .warn { color: var(--warn); line-height: 1.6; }
+
+.acct-subhint { margin: 0 16px 14px; font-size: 11.5px; line-height: 1.7; color: var(--faint); }
+
+.ring.idle { color: var(--faint); place-items: center; }
+.ring.idle::before { inset: 7px; }
