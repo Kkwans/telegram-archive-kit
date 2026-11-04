@@ -40,12 +40,18 @@ func newApp() (*App, error) {
 		cfgBase = filepath.Join(home, "AppData", "Roaming")
 	}
 	cfgDir := filepath.Join(cfgBase, "TelegramArchiveKit")
+	if custom := strings.TrimSpace(os.Getenv("TAK_CONFIG_DIR")); custom != "" {
+		cfgDir = custom
+	}
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		return nil, err
 	}
 	a := &App{ExeDir: exeDir, ConfigDir: cfgDir, ConfigPath: filepath.Join(cfgDir, "config.json")}
 	a.Settings = defaultSettings()
 	_ = a.loadSettings()
+	if root := strings.TrimSpace(os.Getenv("TAK_LIBRARY_ROOT")); root != "" {
+		a.Settings.LibraryRoot = root
+	}
 	return a, nil
 }
 

@@ -159,13 +159,13 @@ func createFFmpegStill(src, dst string, isVideo bool) error {
 		args = append(args, "-ss", "00:00:00.6")
 	}
 	args = append(args, "-i", src, "-vf", "scale=w=720:h=720:force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "4", "-y", tmp)
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := hideWindow(exec.CommandContext(ctx, exe, args...))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if isVideo {
 			// Very short videos and corrupt timestamps may reject a 0.6-second seek.
 			// Retry at the first decodable frame before reporting a missing poster.
 			fallbackArgs := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-i", src, "-vf", "scale=w=720:h=720:force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "4", "-y", tmp}
-			if retryOut, retryErr := exec.CommandContext(ctx, exe, fallbackArgs...).CombinedOutput(); retryErr == nil && fileExists(tmp) {
+			if retryOut, retryErr := hideWindow(exec.CommandContext(ctx, exe, fallbackArgs...)).CombinedOutput(); retryErr == nil && fileExists(tmp) {
 				return os.Rename(tmp, dst)
 			} else {
 				_ = retryOut

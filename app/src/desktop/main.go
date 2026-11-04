@@ -2,10 +2,13 @@ package main
 
 import (
 	"embed"
+	"io"
 	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/debug"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -19,6 +22,12 @@ import (
 var embeddedAssets embed.FS
 
 func main() {
+	setupDesktopLog()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("desktop panic: %v\n%s", r, debug.Stack())
+		}
+	}()
 	// The desktop exe is a windowed app: CLI output is only useful for the
 	// headless smoke test, which writes a file instead of stdout.
 	if handleHeadlessCLI(os.Args[1:]) {
@@ -48,8 +57,10 @@ func main() {
 		windowsOpts.AdditionalBrowserArgs = append(windowsOpts.AdditionalBrowserArgs, "--remote-debugging-port=9222")
 	}
 
+	appIcon, _ := static.UI.ReadFile("ui/favicon.ico")
 	app := application.New(application.Options{
 		Name:        "TelegramArchiveKit",
+		Icon:        appIcon,
 		Description: "Telegram Archive Kit 桌面客户端",
 		Assets: application.AssetOptions{
 			Handler:    application.BundledAssetFileServer(assets),
@@ -116,8 +127,8 @@ func main() {
 	menu.Add("退出").OnClick(func(*application.Context) { bridge.quit() })
 
 	tray := app.SystemTray.New()
-	if icon, err := static.UI.ReadFile("ui/favicon.ico"); err == nil {
-		tray.SetIcon(icon)
+	if len(appIcon) > 0 {
+		tray.SetIcon(appIcon)
 	}
 	tray.SetTooltip("Telegram Archive Kit")
 	tray.SetMenu(menu)
@@ -127,6 +138,24 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func setupDesktopLog() {
+	base, err := os.UserCacheDir()
+	if err != nil || base == "" {
+		return
+	}
+	dir := filepath.Join(base, "TelegramArchiveKit")
+	if os.MkdirAll(dir, 0755) != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "desktop.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.Printf("desktop start: %s", filepath.Join(dir, "desktop.log"))
 }
 
 func handleHeadlessCLI(args []string) bool {

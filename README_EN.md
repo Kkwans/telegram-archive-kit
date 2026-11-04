@@ -4,7 +4,7 @@
 
 **Turn your Telegram chats into a fully offline, searchable, beautifully rendered local web archive.**
 
-Powered by [tdl](https://github.com/iyear/tdl) as the download engine and Telegram Desktop's official export data,
+Windows desktop client + console edition. Powered by [tdl](https://github.com/iyear/tdl) as the download engine and Telegram Desktop's official export data,
 it handles everything end to end: media download → archive management → a gorgeous static website. All data stays on your own disk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

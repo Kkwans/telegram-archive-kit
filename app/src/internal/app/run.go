@@ -1373,6 +1373,13 @@ func openFolder(path string) error {
 	return openInBrowser(path)
 }
 
+func revealFileInExplorer(path string) error {
+	if runtime.GOOS != "windows" {
+		return openFolder(filepath.Dir(path))
+	}
+	return exec.Command("explorer.exe", "/select,", path).Start()
+}
+
 func (a *App) importMediaInteractive(slug string) {
 	p, err := selectFolder("选择已有媒体目录", a.mediaDir(slug))
 	if err != nil {

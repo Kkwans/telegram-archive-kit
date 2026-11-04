@@ -42,7 +42,7 @@ func validatedFFmpeg(path string) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, path, "-hide_banner", "-version").Run() == nil
+	return hideWindow(exec.CommandContext(ctx, path, "-hide_banner", "-version")).Run() == nil
 }
 
 func ffmpegClient() *http.Client {

@@ -143,6 +143,8 @@ export interface MediaItem {
   kind: "image" | "video" | "audio" | "file";
   size: number;
   modTime: number;
+  rel: string;
+  thumb?: string;
 }
 
 export interface PendingInput {
@@ -150,6 +152,15 @@ export interface PendingInput {
   paths?: string[];
   folders?: string[];
   source?: string;
+}
+
+export interface PickedDialog {
+  seq: number;
+  kind: string;
+  purpose: string;
+  paths?: string[];
+  folder?: string;
+  error?: string;
 }
 
 export interface Notice {
@@ -165,5 +176,6 @@ export interface DesktopState {
   login?: LoginState;
   pending?: PendingInput;
   notice?: Notice;
+  dialog?: PickedDialog;
   running: boolean;
 }

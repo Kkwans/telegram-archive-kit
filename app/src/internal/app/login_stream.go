@@ -39,13 +39,14 @@ type loginSession struct {
 	cancel   context.CancelFunc
 	stdin    io.WriteCloser
 
-	mu      sync.Mutex
-	state   string
-	screen  []string
-	prompt  string
-	message string
-	seq     int64
-	inputAt time.Time
+	mu        sync.Mutex
+	state     string
+	screen    []string
+	prompt    string
+	message   string
+	seq       int64
+	inputAt   time.Time
+	lastInput string
 }
 
 func (s *loginSession) snapshot() LoginStateDTO {
@@ -61,7 +62,7 @@ func (s *loginSession) push(line string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seq++
-	masked := !s.inputAt.IsZero() && time.Since(s.inputAt) < 5*time.Second
+	masked := s.lastInput != "" && strings.Contains(line, s.lastInput)
 	if masked {
 		s.prompt = "输入已提交，等待 Telegram 响应"
 		s.screen = append(s.screen, "••••••（输入已隐藏）")
@@ -98,7 +99,11 @@ func (s *loginSession) setPartial(text string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.inputAt.IsZero() && time.Since(s.inputAt) < 5*time.Second {
+	if s.lastInput != "" && strings.Contains(text, s.lastInput) {
+		if s.prompt != "输入已提交，等待 Telegram 响应" {
+			s.prompt = "输入已提交，等待 Telegram 响应"
+			s.seq++
+		}
 		return
 	}
 	if clean != s.prompt {
@@ -392,7 +397,9 @@ func (f *Facade) LoginInput(id, text string) error {
 	}
 	sess.mu.Lock()
 	in := sess.stdin
+	trimmed := strings.TrimSpace(text)
 	sess.inputAt = time.Now()
+	sess.lastInput = trimmed
 	sess.mu.Unlock()
 	if in == nil {
 		return fmt.Errorf("当前登录方式不需要输入")

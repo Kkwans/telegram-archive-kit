@@ -4,7 +4,7 @@
 
 **把 Telegram 聊天变成一个完全离线、可检索、高颜值的本地网页档案库。**
 
-以 [tdl](https://github.com/iyear/tdl) 为下载引擎，结合 Telegram Desktop 官方导出数据，
+Windows 桌面客户端 + 终端版。以 [tdl](https://github.com/iyear/tdl) 为下载引擎，结合 Telegram Desktop 官方导出数据，
 一条龙完成：媒体下载 → 档案库管理 → 生成美化静态网页，全程数据留在你自己的硬盘上。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -35,7 +35,7 @@
 
 ## 这是什么
 
-**Telegram Archive Kit（TAK）** 是一个运行在 Windows 终端里的交互式归档工作台。它解决的问题很具体：
+**Telegram Archive Kit（TAK）** 是一个 Windows 桌面归档客户端（另附终端版 `TelegramArchiveKit-Console.exe`，供排障与服务器场景使用）。它解决的问题很具体：
 
 - Telegram Desktop 的官方导出功能可以拿到 `result.json` 和一份 HTML 网页，但**不能批量补齐媒体、不能增量更新、几十 GB 的聊天翻起来很慢**；
 - [tdl](https://github.com/iyear/tdl) 下载能力很强，但**只负责下载，不负责整理和浏览**。
@@ -45,6 +45,16 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 > ⚠️ 本工具仅用于**个人聊天记录的备份与查阅**，请遵守 Telegram 服务条款及所在地法律法规，请勿用于批量抓取他人数据。
 
 ## ✨ 功能特性
+
+### 🖥️ 桌面客户端
+
+- 双击 `TelegramArchiveKit.exe` 直接进入桌面客户端：默认浅色、可切深色，无边框标题栏 + Win11 Mica，关闭后驻留系统托盘。
+- 下载看板：进度环、阶段条、实时/平均/峰值速度、速度曲线、预计剩余、本轮完成、并发 × 线程与重试计数；逐项任务表显示文件名、类型、百分比、已传/期望、单项速度、单项 ETA、耗时和卡死状态。
+- 应用内登录：二维码直接显示在窗口里用手机扫描；手机号验证码与两步验证也可在应用内完成，输入回显打码、不落盘，取消后没有孤儿进程。
+- 聊天与档案库：导入 `result.json`、继承官方 ChatExport、一键同步、只重建网页、完整性核对、导出/删除、切换/新建/合并档案库、诊断与日志查看，功能与终端版一一对应。
+- 媒体查看器：图片/视频/音频/文档网格，按类型筛选；图片滚轮/双击缩放、拖动平移，视频/音频内嵌播放并支持拖动进度，键盘上一张/下一张。
+- Ctrl+K 命令面板、把 `result.json` 或 ChatExport 目录拖进窗口、第二实例参数转交首窗、任务栏下载进度。
+- 数据安全：桌面端运行时终端版会拒绝同时写入同一档案库（命名互斥体 + 会话文件），设置原子写入；排障可设 `TAK_ALLOW_CONCURRENT=1`。
 
 ### 📥 智能媒体下载（基于 tdl）
 
@@ -90,17 +100,18 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 |---|---|
 | 操作系统 | Windows 10 / 11（x64） |
 | 运行时依赖 | 无（tdl、FFmpeg 均按需自动安装，也可手动放置） |
+| 运行库 | 桌面端使用系统 WebView2（Win11 自带；Win10 如缺失请安装 Microsoft Edge WebView2 Runtime） |
 | 网络 | 登录与下载时需要；浏览网页完全离线 |
 | 磁盘 | 取决于聊天媒体总量，建议预留空间并使用 NTFS 磁盘 |
 
 ## 🚀 快速开始
 
 1. **获取 Telegram 数据**：在 Telegram Desktop 中打开目标聊天 → 右上角菜单 → **导出聊天记录** → 选择 *机器可读 JSON 格式*，导出得到 `result.json`（也可以只导出部分类型）。
-2. **下载并运行**：从 [Releases](https://github.com/Kkwans/telegram-archive-kit/releases) 下载 ZIP，解压到任意目录，双击 `TelegramArchiveKit.exe`。
-3. **选择档案库位置**：首次启动选择数据存放位置（默认 `文档\Telegram Archive Library`，也可选便携模式）。**以后升级版本不要删除这个目录。**
-4. **登录**：菜单「Telegram 账号与会话」→ 扫二维码或输入验证码登录。
-5. **导入并同步**：把 `result.json` 拖到 EXE 上（或在「添加/更新聊天」中选择），然后执行 **「一键完成」**——程序会自动预检环境、下载缺失媒体、生成缩略图和网页。
-6. **开始浏览**：完成后自动打开档案库首页 `index.html`，也可随时从菜单打开。建议收藏到浏览器。
+2. **下载并运行**：从 [Releases](https://github.com/Kkwans/telegram-archive-kit/releases) 下载 ZIP，解压到任意目录，双击 `TelegramArchiveKit.exe` 打开桌面客户端（终端版为 `TelegramArchiveKit-Console.exe`，两者共用档案库）。
+3. **选择档案库位置**：首次启动选择数据存放位置（默认 `文档\Telegram Archive Library`，也可在终端版选便携模式）。**以后升级版本不要删除这个目录。**
+4. **登录**：打开「账号」页 → 用手机扫描窗口里的二维码；也可改用手机号验证码登录。
+5. **导入并同步**：把 `result.json` 或 ChatExport 文件夹拖进窗口（或在「聊天」页导入），然后执行 **「一键同步」**——程序会自动预检环境、下载缺失媒体、生成缩略图和网页。
+6. **开始浏览**：完成后点「打开归档库」查看 `index.html`，也可随时从托盘菜单打开。建议收藏到浏览器。
 
 > 💡 已有官方 ChatExport HTML 导出？先执行「继承 Telegram 官方 ChatExport」，再导入当前的 `result.json`，旧媒体可以直接复用。详见 [使用指南](docs/USAGE.md)。
 >
@@ -109,7 +120,7 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 ## 🔭 工作原理
 
 ```text
-┌────────────────────────────── Telegram Archive Kit (TUI) ──────────────────────────────┐
+┌─────────────────────── Telegram Archive Kit（桌面客户端 / 终端版）───────────────────────┐
 │                                                                                        │
 │  Telegram Desktop 导出        tdl（下载引擎，自动安装）              档案库 Archive Library  │
 │  ┌────────────────┐          ┌──────────────────────┐        ┌────────────────────┐    │
@@ -126,7 +137,7 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **TAK 本体**：Go 1.23+ 编写的单文件程序，**零第三方依赖**，Windows 控制台 TUI。
+- **TAK 本体**：Go 编写的单文件程序。终端版保持 Go 1.23+ 与**零第三方依赖**；桌面端为独立模块（Wails v3 + React 19），二者共用同一归档引擎。
 - **tdl**：运行时以子进程方式调用，不捆绑、不修改其代码；会话数据保存在 `%USERPROFILE%\.tdl`。
 - **美化主题**：TAK 内置了 [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) 的完整主题（上游 commit `608ac73`），随程序分发、完全离线，不从网络拉取任何资源。
 - **配置文件**：`%APPDATA%\TelegramArchiveKit\config.json`。
@@ -159,26 +170,36 @@ Telegram Archive Library/            ← 数据目录，升级程序时不要删
 ## 🛠 从源码构建
 
 ```bash
-# 环境要求：Go 1.23+ 和 Python 3（仅构建脚本使用）
+# 环境要求：Go 1.26+（桌面端模块）、Node.js 20+ / npm（前端）、Python 3（构建脚本）
 git clone https://github.com/Kkwans/telegram-archive-kit.git
 cd telegram-archive-kit
 
-# 一键构建（单元测试 → go vet → 交叉编译 Win64 → PE 校验）
-python scripts/build_windows.py
+# 一键构建两个客户端（终端版测试/vet → 前端 npm ci + build → 两个 Win64 目标 → PE 子系统校验）
+python scripts/build_windows.py --target all
 
-# 产物：项目根目录下的 TelegramArchiveKit.exe（Windows 控制台程序）
+# 产物：
+#   TelegramArchiveKit.exe          桌面客户端（Windows GUI，子系统 2）
+#   TelegramArchiveKit-Console.exe  终端版（控制台，子系统 3）
 ```
 
-也可以手动构建：
+也可以分开构建：
 
 ```bash
+# 终端版：仍是零依赖、可离线
 cd app/src
 go test ./...
 go vet ./...
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../TelegramArchiveKit.exe .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../TelegramArchiveKit-Console.exe .
+
+# 桌面端：前端 + Wails
+cd desktop/frontend && npm ci && npm run build && cd ..
+go build -trimpath -tags production -ldflags="-s -w -H windowsgui" -o ../../TelegramArchiveKit.exe .
+
+# 打包 zip（本地验收用）
+python scripts/build_windows.py --target all --zip
 ```
 
-> 注意：不要加 `-H=windowsgui`，本程序需要真实控制台读取键盘输入。
+> 终端版需要真实控制台读取键盘输入，**不要**给 `-Console.exe` 加 `-H=windowsgui`；桌面端则必须使用 `-H windowsgui` + `-tags production`。
 
 ## 📚 文档
 

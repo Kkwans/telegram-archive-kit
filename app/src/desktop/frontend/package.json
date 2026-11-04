@@ -9,9 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vidstack/react": "^1.15.7",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "yet-another-react-lightbox": "^3.33.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

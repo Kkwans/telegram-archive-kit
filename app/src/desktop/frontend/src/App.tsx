@@ -57,6 +57,8 @@ export default function App() {
   const toastTimer = useRef(0);
   const lastNotice = useRef(0);
   const lastPending = useRef(0);
+  const lastDialog = useRef(0);
+  const pickerWaiters = useRef(new Map<string, { resolve: (paths: string[]) => void; reject: (e: Error) => void }>());
 
   const toast = (text: string, err = false) => {
     setToastMsg({ text, err });
@@ -101,7 +103,29 @@ export default function App() {
       lastPending.current = st.pending.seq;
       setPending(st.pending);
     }
+    if (st.dialog && st.dialog.seq !== lastDialog.current) {
+      lastDialog.current = st.dialog.seq;
+      const waiter = pickerWaiters.current.get(st.dialog.purpose);
+      if (waiter) {
+        pickerWaiters.current.delete(st.dialog.purpose);
+        if (st.dialog.error) waiter.reject(new Error(st.dialog.error));
+        else waiter.resolve(st.dialog.paths ?? []);
+      }
+      call("ackDialog", { seq: st.dialog.seq }).catch(() => undefined);
+    }
   };
+
+  const requestPick = (method: string, purpose: string, title: string) =>
+    new Promise<string[]>((resolve, reject) => {
+      pickerWaiters.current.set(purpose, { resolve, reject });
+      call(method, { purpose, title }).catch((e: Error) => {
+        pickerWaiters.current.delete(purpose);
+        reject(e);
+      });
+    });
+  const pickFiles = (purpose: string) => requestPick("pickJSON", purpose, "");
+  const pickFolder = (purpose: string, title: string) =>
+    requestPick("pickFolder", purpose, title).then((paths) => paths[0] ?? "");
 
   const refresh = () => {
     call<DesktopState>("state")
@@ -153,6 +177,8 @@ export default function App() {
       refresh,
       toast,
       go: setPage,
+      pickFiles,
+      pickFolder,
     }),
     [boot, chats, selected, dl, op, done, login, running, history]
   );

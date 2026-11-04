@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -24,7 +26,18 @@ type Bridge struct {
 	mu      sync.Mutex
 	pending *PendingInput
 	notice  *Notice
+	dialog  *PickedDialog
 	seq     int64
+}
+
+// PickedDialog is the asynchronous result of a native file/folder picker.
+type PickedDialog struct {
+	Seq     int64    `json:"seq"`
+	Kind    string   `json:"kind"`
+	Purpose string   `json:"purpose"`
+	Paths   []string `json:"paths,omitempty"`
+	Folder  string   `json:"folder,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 // Notice is a one-shot message (for example a failed tray action) that the
@@ -48,6 +61,7 @@ type stateReply struct {
 	takapp.DesktopState
 	Pending *PendingInput `json:"pending,omitempty"`
 	Notice  *Notice       `json:"notice,omitempty"`
+	Dialog  *PickedDialog `json:"dialog,omitempty"`
 }
 
 func NewBridge(f *takapp.Facade) *Bridge { return &Bridge{facade: f} }
@@ -80,6 +94,12 @@ type apiReply struct {
 }
 
 func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("rpc panic on %s: %v\n%s", r.URL.Path, rec, debug.Stack())
+			_ = json.NewEncoder(w).Encode(apiReply{Error: "内部错误，详见桌面日志"})
+		}
+	}()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPost {
@@ -117,6 +137,7 @@ type apiParams struct {
 	Text     string              `json:"text"`
 	Timeout  int                 `json:"timeout"`
 	Seq      int64               `json:"seq"`
+	Purpose  string              `json:"purpose"`
 }
 
 func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
@@ -127,12 +148,19 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	switch method {
 	case "ping":
 		return b.facade.Ping(), nil
+	case "clientLog":
+		log.Printf("client: %s", p.Text)
+		return nil, nil
 	case "bootstrap":
 		return b.facade.Bootstrap(), nil
 	case "listChats":
 		return b.facade.ListChats(), nil
 	case "chatMedia":
 		return b.facade.ChatMedia(p.Slug)
+	case "revealMedia":
+		return nil, b.facade.RevealMedia(p.Slug, p.Path)
+	case "openMedia":
+		return nil, b.facade.OpenMedia(p.Slug, p.Path)
 	case "state":
 		return b.stateReply(), nil
 	case "ackPending":
@@ -159,9 +187,14 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return nil, b.facade.OpenFolderPath(p.Path)
 
 	case "pickJSON":
-		return b.pickJSON()
+		b.startPicker("json", "选择 Telegram Desktop 导出的 result.json（可多选）", p.Purpose)
+		return map[string]bool{"started": true}, nil
 	case "pickFolder":
-		return b.pickFolder(p.Title, p.Initial)
+		b.startPicker("folder", p.Title, p.Purpose)
+		return map[string]bool{"started": true}, nil
+	case "ackDialog":
+		b.ackDialog(p.Seq)
+		return nil, nil
 
 	case "importJSON":
 		return b.facade.ImportJSONFiles(p.Paths)
@@ -255,6 +288,7 @@ func (b *Bridge) stateReply() stateReply {
 	b.mu.Lock()
 	out.Pending = b.pending
 	out.Notice = b.notice
+	out.Dialog = b.dialog
 	b.mu.Unlock()
 	b.updateTaskbar(st)
 	return out
@@ -294,6 +328,47 @@ func (b *Bridge) queue(raw []string, source string) {
 	b.mu.Unlock()
 }
 
+func (b *Bridge) startPicker(kind, title, purpose string) {
+	if purpose == "" {
+		purpose = kind
+	}
+	go func() {
+		var paths []string
+		var err error
+		if kind == "json" {
+			paths, err = showFileDialog(b.owner(), fileDialogOptions{
+				Title:      title,
+				FilterName: "JSON 文件",
+				FilterSpec: "*.json",
+				Multiple:   true,
+			})
+		} else {
+			paths, err = showFileDialog(b.owner(), fileDialogOptions{Title: title, Folder: true})
+		}
+		result := &PickedDialog{Kind: kind, Purpose: purpose, Paths: paths}
+		if len(paths) > 0 && kind == "folder" {
+			result.Folder = paths[0]
+		}
+		if err != nil {
+			result.Error = err.Error()
+			log.Printf("picker %s failed: %v", kind, err)
+		}
+		b.mu.Lock()
+		b.seq++
+		result.Seq = b.seq
+		b.dialog = result
+		b.mu.Unlock()
+	}()
+}
+
+func (b *Bridge) ackDialog(seq int64) {
+	b.mu.Lock()
+	if b.dialog != nil && b.dialog.Seq == seq {
+		b.dialog = nil
+	}
+	b.mu.Unlock()
+}
+
 func (b *Bridge) QueueNotice(text string) {
 	b.mu.Lock()
 	b.seq++
@@ -325,6 +400,12 @@ func (b *Bridge) showWindow() {
 	b.window.Focus()
 }
 
+// owner stays 0: IFileOpenDialog deadlocks when given the WebView2 child
+// window; an unowned dialog still comes to the foreground when shown.
+func (b *Bridge) owner() uintptr {
+	return 0
+}
+
 func (b *Bridge) closeWindow() {
 	if b.window == nil {
 		return
@@ -339,16 +420,12 @@ func (b *Bridge) closeWindow() {
 	if login && !running {
 		what = "登录会话"
 	}
-	dlg := application.Get().Dialog.Question().
-		SetTitle("Telegram Archive Kit").
-		SetMessage("仍有" + what + "在进行。关闭窗口后任务会继续，可从托盘图标恢复。").
-		AttachToWindow(b.window)
-	hide := dlg.AddButton("隐藏到托盘")
-	hide.SetAsDefault().OnClick(func() { b.window.Hide() })
-	quit := dlg.AddButton("停止并退出")
-	quit.OnClick(func() { b.quit() })
-	dlg.SetCancelButton(hide)
-	dlg.Show()
+	hide := askHideOrQuit(b.owner(), "仍有"+what+"在进行。选择「是」隐藏到托盘并继续；选择「否」停止任务并退出。")
+	if hide {
+		b.window.Hide()
+		return
+	}
+	b.quit()
 }
 
 func (b *Bridge) quit() {
@@ -394,41 +471,4 @@ func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, name, st.ModTime(), f)
-}
-
-func (b *Bridge) pickJSON() ([]string, error) {
-	d := application.Get().Dialog.OpenFile().
-		SetTitle("选择 Telegram Desktop 导出的 result.json（可多选）").
-		AddFilter("JSON 文件", "*.json").
-		CanChooseFiles(true).
-		CanChooseDirectories(false)
-	if b.window != nil {
-		d.AttachToWindow(b.window)
-	}
-	paths, err := d.PromptForMultipleSelection()
-	if err != nil {
-		return nil, err
-	}
-	return paths, nil
-}
-
-func (b *Bridge) pickFolder(title, initial string) (string, error) {
-	if strings.TrimSpace(title) == "" {
-		title = "选择目录"
-	}
-	d := application.Get().Dialog.OpenFile().
-		SetTitle(title).
-		CanChooseFiles(false).
-		CanChooseDirectories(true)
-	if strings.TrimSpace(initial) != "" {
-		d.SetDirectory(initial)
-	}
-	if b.window != nil {
-		d.AttachToWindow(b.window)
-	}
-	path, err := d.PromptForSingleSelection()
-	if err != nil {
-		return "", err
-	}
-	return path, nil
 }

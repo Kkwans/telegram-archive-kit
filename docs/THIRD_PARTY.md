@@ -22,6 +22,17 @@
 - 使用方式：仅在需要生成视频封面/解码 HEIC/WebP 时，由 TAK 自动下载 `ffmpeg-release-essentials.zip`（附带官方 SHA-256 校验），仅解压 `bin/ffmpeg.exe` 安装到用户目录。也可手动安装。
 - 上游许可证：FFmpeg 为 LGPL/GPL，具体取决于构建配置；TAK 仅以独立进程调用其可执行文件。
 
+## 桌面客户端依赖
+
+桌面端是独立模块（`app/src/desktop`），不进入终端版的零依赖构建：
+
+- **Wails v3**（<https://github.com/wailsapp/wails/v3>，MIT）：Windows 原生窗口、WebView2 宿主、托盘与单实例。
+- **React 19 / React DOM**（<https://react.dev>，MIT）：界面组件。
+- **Vite**（<https://vite.dev>，MIT）与 **TypeScript**（<https://www.typescriptlang.org>，Apache-2.0）：前端构建与类型检查。
+- **Lucide**（<https://lucide.dev>，ISC）：图标。
+- **Microsoft Edge WebView2**：由 Windows 系统提供的运行时（Win11 自带；Win10 需单独安装），TAK 不打包其二进制。
+- **Windows Pseudo Console（ConPTY）**：Windows 10 1809+ 系统 API，用于在应用内承载 tdl 的交互式登录；通过 Go 标准库 `syscall` 直接调用，无第三方代码。
+
 ## 架构参考（仅参考，未使用代码）
 
 - <https://github.com/rand0451/Telegram-Chat-Export-Viewer>

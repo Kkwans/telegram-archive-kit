@@ -373,7 +373,7 @@ func (a *App) testTdlSession(timeout time.Duration) SessionStatus {
 	// diagnostic, not a trustworthy authorization oracle. The exact command also
 	// matches the simple `tdl -n ... chat ls` that users commonly test manually.
 	args := append(a.tdlBaseArgs(), "chat", "ls")
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := hideWindow(exec.CommandContext(ctx, exe, args...))
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return SessionStatus{State: "timeout", Message: "连接检查超时；本地会话仍然保留", Detail: string(out), Code: -2}
@@ -427,7 +427,7 @@ func (a *App) tdlVersion() string {
 	if exe == "" {
 		return ""
 	}
-	out, err := exec.Command(exe, "version").CombinedOutput()
+	out, err := hideWindow(exec.Command(exe, "version")).CombinedOutput()
 	if err != nil {
 		return ""
 	}
@@ -827,7 +827,7 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 		defer logFile.Close()
 	}
 	capture := newProgressCapture(logFile)
-	cmd := exec.Command(exe, args...)
+	cmd := hideWindow(exec.Command(exe, args...))
 	cmd.Stdout = capture
 	cmd.Stderr = capture
 	cmd.Stdin = nil
@@ -976,7 +976,7 @@ func (a *App) cleanupInterruptedMedia(slug string, active map[string]bool, plan 
 
 func killProcessTree(pid int) error {
 	if runtime.GOOS == "windows" {
-		return exec.Command("taskkill", "/PID", fmt.Sprint(pid), "/T", "/F").Run()
+		return hideWindow(exec.Command("taskkill", "/PID", fmt.Sprint(pid), "/T", "/F")).Run()
 	}
 	p, err := os.FindProcess(pid)
 	if err != nil {
@@ -996,7 +996,7 @@ func killAllTdl() error {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
-	cmd := exec.Command("taskkill", "/F", "/IM", "tdl.exe", "/T")
+	cmd := hideWindow(exec.Command("taskkill", "/F", "/IM", "tdl.exe", "/T"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// If there is no process, taskkill returns non-zero. Treat that as success.

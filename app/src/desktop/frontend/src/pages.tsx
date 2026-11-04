@@ -5,9 +5,13 @@ import {
   Download,
   FolderOpen,
   HardDrive,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
   Film,
   FileText,
   KeyRound,
+  LocateFixed,
   Maximize2,
   Music,
   Play,
@@ -21,6 +25,19 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
+import Lightbox from "yet-another-react-lightbox";
+import Zoom from "yet-another-react-lightbox/plugins/zoom";
+import Thumbnails from "yet-another-react-lightbox/plugins/thumbnails";
+import Counter from "yet-another-react-lightbox/plugins/counter";
+import Fullscreen from "yet-another-react-lightbox/plugins/fullscreen";
+import "yet-another-react-lightbox/styles.css";
+import "yet-another-react-lightbox/plugins/thumbnails.css";
+import "yet-another-react-lightbox/plugins/counter.css";
+import { MediaPlayer, MediaProvider } from "@vidstack/react";
+import { DefaultAudioLayout, DefaultVideoLayout, defaultLayoutIcons } from "@vidstack/react/player/layouts/default";
+import "@vidstack/react/player/styles/default/theme.css";
+import "@vidstack/react/player/styles/default/layouts/video.css";
+import "@vidstack/react/player/styles/default/layouts/audio.css";
 import { call } from "./rpc";
 import type {
   Bootstrap,
@@ -49,6 +66,8 @@ export interface PageCtx {
   refresh: () => void;
   toast: (msg: string, err?: boolean) => void;
   go: (page: string) => void;
+  pickFiles: (purpose: string) => Promise<string[]>;
+  pickFolder: (purpose: string, title: string) => Promise<string>;
 }
 
 const kindLabel = (kind: string): string =>
@@ -351,7 +370,7 @@ interface Stats {
 }
 
 export function Chats({ ctx }: { ctx: PageCtx }) {
-  const { chats, selected, setSelected, refresh, toast } = ctx;
+  const { chats, selected, setSelected, refresh, toast, pickFiles, pickFolder } = ctx;
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
   const [target, setTarget] = useState("");
   const [mode, setMode] = useState("reference");
@@ -361,7 +380,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
   const importJSON = async () => {
     try {
-      const paths = await call<string[]>("pickJSON");
+      const paths = await pickFiles("import-json");
       if (!paths || paths.length === 0) return;
       const list = await call<ChatRow[]>("importJSON", { paths });
       toast(`已导入 ${list.length} 个聊天`);
@@ -373,7 +392,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
   const analyzeOfficial = async () => {
     try {
-      const folder = await call<string>("pickFolder", { title: "选择 Telegram Desktop 导出的 ChatExport 文件夹", initial: "" });
+      const folder = await pickFolder("official-folder", "选择 Telegram Desktop 导出的 ChatExport 文件夹");
       if (!folder) return;
       const preview = await call<OfficialPreview>("analyzeOfficial", { folder });
       setOfficial(preview);
@@ -422,7 +441,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
   const exportChat = async () => {
     if (!current) return;
     try {
-      const dst = await call<string>("pickFolder", { title: "选择目标档案库目录（可新建空目录）", initial: "" });
+      const dst = await pickFolder("export-target", "选择目标档案库目录（可新建空目录）");
       if (!dst) return;
       await call("exportChat", { slug: current.slug, dst });
       toast("已复制到目标档案库");
@@ -617,8 +636,29 @@ const MEDIA_FILTERS = [
   { key: "file", label: "文件" },
 ];
 
-const mediaURL = (slug: string, name: string) =>
-  `/api/media?slug=${encodeURIComponent(slug)}&f=${encodeURIComponent(name)}`;
+const mediaURL = (slug: string, rel: string) =>
+  `/api/media?slug=${encodeURIComponent(slug)}&f=${encodeURIComponent(rel)}`;
+const thumbURL = (slug: string, rel?: string) =>
+  rel ? mediaURL(slug, rel) : "";
+
+const VIDEO_MIME: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  mkv: "video/x-matroska",
+  webm: "video/webm",
+  avi: "video/x-msvideo",
+};
+const AUDIO_MIME: Record<string, string> = {
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  ogg: "audio/ogg",
+  opus: "audio/ogg",
+  flac: "audio/flac",
+  wav: "audio/wav",
+  aac: "audio/aac",
+};
+const fileExt = (name: string) => (name.split(".").pop() ?? "").toLowerCase();
 
 function mediaIcon(kind: string) {
   if (kind === "video") return <Film size={20} />;
@@ -632,7 +672,9 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
   const [limit, setLimit] = useState(120);
-  const [viewer, setViewer] = useState(-1);
+  const [imageIndex, setImageIndex] = useState(-1);
+  const [videoIndex, setVideoIndex] = useState(-1);
+  const [audioItem, setAudioItem] = useState<MediaItem | null>(null);
 
   const load = () => {
     setItems(null);
@@ -644,23 +686,41 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
   useEffect(load, [chat.slug]);
   useEffect(() => {
     setLimit(120);
-    setViewer(-1);
+    setImageIndex(-1);
+    setVideoIndex(-1);
+    setAudioItem(null);
   }, [filter, chat.slug]);
 
-  const filtered = useMemo(
-    () => (items ?? []).filter((i) => filter === "all" || i.kind === filter),
-    [items, filter]
-  );
+  const mediaItems = useMemo(() => (items ?? []).filter((i) => i.kind !== "file"), [items]);
+  const fileItems = useMemo(() => (items ?? []).filter((i) => i.kind === "file"), [items]);
+  const images = useMemo(() => mediaItems.filter((i) => i.kind === "image"), [mediaItems]);
+  const videos = useMemo(() => mediaItems.filter((i) => i.kind === "video"), [mediaItems]);
+  const audios = useMemo(() => mediaItems.filter((i) => i.kind === "audio"), [mediaItems]);
 
-  useEffect(() => {
-    if (viewer >= filtered.length) setViewer(-1);
-  }, [filtered.length, viewer]);
+  const shown = useMemo(() => {
+    if (filter === "all") return mediaItems;
+    return mediaItems.filter((i) => i.kind === filter);
+  }, [mediaItems, filter]);
+  const showFiles = filter === "all" || filter === "file";
+
+  const openItem = (item: MediaItem) => {
+    if (item.kind === "image") setImageIndex(images.findIndex((i) => i.rel === item.rel));
+    else if (item.kind === "video") setVideoIndex(videos.findIndex((i) => i.rel === item.rel));
+    else if (item.kind === "audio") setAudioItem(item);
+  };
+
+  const reveal = (item: MediaItem) =>
+    call("revealMedia", { slug: chat.slug, path: item.rel }).catch((e: Error) => toast(e.message, true));
+  const openExternal = (item: MediaItem) =>
+    call("openMedia", { slug: chat.slug, path: item.rel }).catch((e: Error) => toast(e.message, true));
 
   return (
     <section className="panel">
       <div className="panel-head">
         <h3>媒体与文件</h3>
-        <span className="meta">{items ? `${filtered.length} 个本地文件` : "正在读取…"}</span>
+        <span className="meta">
+          {items ? `${shown.length} 个图片 / 视频${showFiles ? ` · ${fileItems.length} 个文件` : ""}` : "正在读取…"}
+        </span>
         <div className="tabs media-tabs" role="tablist" aria-label="媒体筛选">
           {MEDIA_FILTERS.map((f) => (
             <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""} onClick={() => setFilter(f.key)}>
@@ -683,184 +743,287 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
             <div key={i} className="media-tile skeleton" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="state-box">
-          <p>{filter === "all" ? "这个聊天还没有下载到本地媒体。" : "当前筛选没有文件。"}</p>
-          <button className="btn ghost" onClick={() => call("revealChat", { slug: chat.slug })}>
-            <FolderOpen size={13} /> 打开聊天目录
-          </button>
-        </div>
       ) : (
         <>
-          <div className="media-grid">
-            {filtered.slice(0, limit).map((item, idx) => (
-              <button key={item.name} className="media-tile" title={item.name} onClick={() => setViewer(idx)}>
-                {item.kind === "image" ? (
-                  <img src={mediaURL(chat.slug, item.name)} alt={item.name} loading="lazy" />
-                ) : (
-                  <span className={`media-ph ${item.kind}`}>{mediaIcon(item.kind)}</span>
-                )}
-                <span className="media-cap">
-                  <b>{item.kind === "image" ? "图片" : item.kind === "video" ? "视频" : item.kind === "audio" ? "音频" : "文件"}</b>
-                  <i>{bytes(item.size)}</i>
-                </span>
+          {shown.length === 0 && filter !== "all" && filter !== "file" ? (
+            <div className="state-box">
+              <p>当前筛选没有文件。</p>
+              <button className="btn ghost" onClick={() => call("revealChat", { slug: chat.slug })}>
+                <FolderOpen size={13} /> 打开聊天目录
               </button>
-            ))}
-          </div>
-          {filtered.length > limit && (
+            </div>
+          ) : (
+            shown.length > 0 && (
+              <div className="media-grid">
+                {shown.slice(0, limit).map((item) => (
+                  <button
+                    key={item.rel}
+                    className={`media-tile ${item.kind}`}
+                    title={`${item.name}${item.id ? ` · 消息 #${item.id}` : ""}`}
+                    onClick={() => openItem(item)}
+                  >
+                    {item.thumb ? (
+                      <img src={thumbURL(chat.slug, item.thumb)} alt={item.name} loading="lazy" />
+                    ) : item.kind === "image" ? (
+                      <img src={mediaURL(chat.slug, item.rel)} alt={item.name} loading="lazy" />
+                    ) : (
+                      <span className={`media-ph ${item.kind}`}>{mediaIcon(item.kind)}</span>
+                    )}
+                    {item.kind === "video" && (
+                      <span className="media-play">
+                        <Play size={14} fill="currentColor" />
+                      </span>
+                    )}
+                    <span className="media-cap">
+                      <b>{item.name}</b>
+                      <i>{bytes(item.size)}</i>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )
+          )}
+          {shown.length > limit && (
             <div className="media-more">
               <button className="btn ghost" onClick={() => setLimit((n) => n + 240)}>
-                加载更多（剩余 {filtered.length - limit} 个）
+                加载更多（剩余 {shown.length - limit} 个）
               </button>
+            </div>
+          )}
+
+          {showFiles && fileItems.length > 0 && (
+            <div className="file-block">
+              <div className="file-block-head">
+                <h4>文档与其它文件</h4>
+                <span>{fileItems.length} 个</span>
+              </div>
+              <div className="file-list">
+                {fileItems.map((f) => (
+                  <div className="file-row" key={f.rel}>
+                    <span className={`file-ext ext-${fileExt(f.name).slice(0, 4)}`}>{fileExt(f.name).toUpperCase().slice(0, 4) || "FILE"}</span>
+                    <div className="file-info">
+                      <b title={f.name}>{f.name}</b>
+                      <span>
+                        {f.id ? `消息 #${f.id} · ` : ""}
+                        {bytes(f.size)}
+                      </span>
+                    </div>
+                    <div className="file-actions">
+                      <button className="btn sm ghost" onClick={() => openExternal(f)}>
+                        <ExternalLink size={12} /> 打开
+                      </button>
+                      <button className="btn sm ghost" onClick={() => reveal(f)}>
+                        <LocateFixed size={12} /> 定位
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </>
       )}
 
-      {viewer >= 0 && filtered[viewer] && (
-        <MediaViewer
+      {imageIndex >= 0 && images[imageIndex] && (
+        <ImageViewer
           chat={chat}
-          items={filtered}
-          index={viewer}
-          onIndex={setViewer}
-          onClose={() => setViewer(-1)}
-          onError={(m) => toast(m, true)}
+          images={images}
+          index={imageIndex}
+          onIndex={setImageIndex}
+          onClose={() => setImageIndex(-1)}
+          onReveal={reveal}
         />
+      )}
+      {videoIndex >= 0 && videos[videoIndex] && (
+        <VideoViewer
+          chat={chat}
+          videos={videos}
+          index={videoIndex}
+          onIndex={setVideoIndex}
+          onClose={() => setVideoIndex(-1)}
+          onReveal={reveal}
+          onOpen={openExternal}
+        />
+      )}
+      {audioItem && (
+        <AudioViewer chat={chat} item={audioItem} onClose={() => setAudioItem(null)} onReveal={reveal} />
       )}
     </section>
   );
 }
 
-function MediaViewer({
+function ImageViewer({
   chat,
-  items,
+  images,
   index,
   onIndex,
   onClose,
-  onError,
+  onReveal,
 }: {
   chat: ChatRow;
-  items: MediaItem[];
+  images: MediaItem[];
   index: number;
   onIndex: (n: number) => void;
   onClose: () => void;
-  onError: (msg: string) => void;
+  onReveal: (item: MediaItem) => void;
 }) {
-  const item = items[index];
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
-  const src = mediaURL(chat.slug, item.name);
+  const current = images[index];
+  const slides = images.map((i) => ({
+    src: mediaURL(chat.slug, i.rel),
+    alt: i.name,
+  }));
+  return (
+    <>
+      <Lightbox
+        open
+        close={onClose}
+        index={index}
+        slides={slides}
+        plugins={[Zoom, Thumbnails, Counter, Fullscreen]}
+        on={{ view: ({ index: n }) => onIndex(n) }}
+        animation={{ fade: 200, swipe: 220 }}
+        zoom={{ maxZoomPixelRatio: 4, scrollToZoom: true }}
+        thumbnails={{ width: 84, height: 60, gap: 6, borderRadius: 6 }}
+        carousel={{ finite: false }}
+      />
+      <div className="lb-actions">
+        <span className="lb-name" title={current.name}>
+          {current.name}
+        </span>
+        <button className="btn sm ghost" onClick={() => onReveal(current)}>
+          <LocateFixed size={12} /> 定位文件
+        </button>
+      </div>
+    </>
+  );
+}
 
-  useEffect(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, [index]);
+function VideoViewer({
+  chat,
+  videos,
+  index,
+  onIndex,
+  onClose,
+  onReveal,
+  onOpen,
+}: {
+  chat: ChatRow;
+  videos: MediaItem[];
+  index: number;
+  onIndex: (n: number) => void;
+  onClose: () => void;
+  onReveal: (item: MediaItem) => void;
+  onOpen: (item: MediaItem) => void;
+}) {
+  const item = videos[index];
+  const mime = VIDEO_MIME[fileExt(item.name)] ?? "video/mp4";
+  const src = { src: mediaURL(chat.slug, item.rel), type: mime } as never;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
-      else if (e.key === "ArrowRight" && index < items.length - 1) onIndex(index + 1);
-      else if (e.key === "0") {
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-      }
+      else if (e.key === "ArrowRight" && index < videos.length - 1) onIndex(index + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [index, items.length, onClose, onIndex]);
-
-  const zoomBy = (next: number) => {
-    const clamped = Math.min(6, Math.max(1, next));
-    setZoom(clamped);
-    if (clamped === 1) setPan({ x: 0, y: 0 });
-  };
+  }, [index, videos.length, onClose, onIndex]);
 
   return (
-    <div className="viewer" role="dialog" aria-modal="true" aria-label={`查看 ${item.name}`}>
-      <header className="viewer-head">
-        <span className="viewer-name" title={item.name}>
+    <div className="media-modal" role="dialog" aria-modal="true" aria-label={`视频：${item.name}`}>
+      <header className="media-modal-head">
+        <span className="media-modal-name" title={item.name}>
           {item.name}
         </span>
-        <span className="viewer-count">
-          {index + 1} / {items.length}
+        <span className="media-modal-count">
+          {index + 1} / {videos.length} · {bytes(item.size)}
         </span>
-        {item.kind === "image" && (
-          <span className="viewer-zoom">
-            <button className="btn sm ghost" aria-label="缩小" onClick={() => zoomBy(zoom / 1.4)}>
-              −
-            </button>
-            <b>{Math.round(zoom * 100)}%</b>
-            <button className="btn sm ghost" aria-label="放大" onClick={() => zoomBy(zoom * 1.4)}>
-              +
-            </button>
-            <button className="btn sm ghost" aria-label="重置缩放" onClick={() => zoomBy(1)}>
-              <Maximize2 size={12} />
-            </button>
-          </span>
-        )}
         <span className="spacer" />
-        <button className="btn sm ghost" onClick={() => call("openPath", { path: chat.dir }).catch((e: Error) => onError(e.message))}>
-          <FolderOpen size={12} /> 所在目录
+        <button className="btn sm ghost" onClick={() => onOpen(item)}>
+          <ExternalLink size={12} /> 系统播放器
         </button>
-        <button className="btn sm close-x" aria-label="关闭查看器" autoFocus onClick={onClose}>
-          <X size={12} />
-          <span>关闭</span>
+        <button className="btn sm ghost" onClick={() => onReveal(item)}>
+          <LocateFixed size={12} /> 定位文件
+        </button>
+        <button className="btn sm close-x" aria-label="关闭视频" onClick={onClose}>
+          <X size={14} />
         </button>
       </header>
-      <div
-        className={`viewer-stage ${zoom > 1 ? "zoomed" : ""}`}
-        onWheel={(e) => {
-          if (item.kind !== "image") return;
-          e.preventDefault();
-          zoomBy(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
-        }}
-        onDoubleClick={() => item.kind === "image" && zoomBy(zoom > 1 ? 1 : 2.4)}
-        onMouseDown={(e) => {
-          if (item.kind !== "image" || zoom <= 1) return;
-          drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-        }}
-        onMouseMove={(e) => {
-          if (!drag.current) return;
-          setPan({ x: drag.current.px + e.clientX - drag.current.x, y: drag.current.py + e.clientY - drag.current.y });
-        }}
-        onMouseUp={() => (drag.current = null)}
-        onMouseLeave={() => (drag.current = null)}
-      >
-        {item.kind === "image" && (
-          <img
-            src={src}
-            alt={item.name}
-            draggable={false}
-            style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
-          />
-        )}
-        {item.kind === "video" && <video src={src} controls autoPlay playsInline />}
-        {item.kind === "audio" && <audio src={src} controls autoPlay />}
-        {item.kind === "file" && (
-          <div className="viewer-file">
-            <FileText size={40} />
-            <p>{item.name}</p>
-            <a className="btn primary" href={src} download>
-              下载文件
-            </a>
-          </div>
-        )}
+      <div className="media-modal-main">
+        <MediaPlayer
+          key={item.rel}
+          src={src}
+          title={item.name}
+          autoPlay
+          playsInline
+          className="tak-player"
+        >
+          <MediaProvider />
+          <DefaultVideoLayout icons={defaultLayoutIcons} />
+        </MediaPlayer>
       </div>
-      <button className="viewer-nav prev" disabled={index <= 0} aria-label="上一个" onClick={() => onIndex(index - 1)}>
-        ‹
+      <div className="media-strip">
+        {videos.map((v, i) => (
+          <button key={v.rel} className={i === index ? "on" : ""} title={v.name} onClick={() => onIndex(i)}>
+            {v.thumb ? <img src={thumbURL(chat.slug, v.thumb)} alt="" loading="lazy" /> : <Film size={18} />}
+          </button>
+        ))}
+      </div>
+      <button className="media-nav prev" disabled={index <= 0} aria-label="上一个视频" onClick={() => onIndex(index - 1)}>
+        <ChevronLeft size={26} />
       </button>
-      <button className="viewer-nav next" disabled={index >= items.length - 1} aria-label="下一个" onClick={() => onIndex(index + 1)}>
-        ›
+      <button className="media-nav next" disabled={index >= videos.length - 1} aria-label="下一个视频" onClick={() => onIndex(index + 1)}>
+        <ChevronRight size={26} />
       </button>
+    </div>
+  );
+}
+
+function AudioViewer({
+  chat,
+  item,
+  onClose,
+  onReveal,
+}: {
+  chat: ChatRow;
+  item: MediaItem;
+  onClose: () => void;
+  onReveal: (item: MediaItem) => void;
+}) {
+  const mime = AUDIO_MIME[fileExt(item.name)] ?? "audio/mpeg";
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="media-modal audio" role="dialog" aria-modal="true" aria-label={`音频：${item.name}`}>
+      <header className="media-modal-head">
+        <span className="media-modal-name">{item.name}</span>
+        <span className="spacer" />
+        <button className="btn sm ghost" onClick={() => onReveal(item)}>
+          <LocateFixed size={12} /> 定位文件
+        </button>
+        <button className="btn sm close-x" aria-label="关闭音频" onClick={onClose}>
+          <X size={14} />
+        </button>
+      </header>
+      <div className="audio-body">
+        <div className="audio-art">
+          <Music size={44} />
+        </div>
+        <MediaPlayer key={item.rel} src={{ src: mediaURL(chat.slug, item.rel), type: mime } as never} autoPlay className="tak-audio">
+          <MediaProvider />
+          <DefaultAudioLayout icons={defaultLayoutIcons} />
+        </MediaPlayer>
+      </div>
     </div>
   );
 }
 
 /* ============================= Library ============================= */
 export function Library({ ctx }: { ctx: PageCtx }) {
-  const { boot, chats, refresh, toast } = ctx;
+  const { boot, chats, refresh, toast, pickFolder } = ctx;
   const history = boot?.history ?? [];
 
   const switchTo = async (root: string) => {
@@ -875,7 +1038,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
   const pickAndSwitch = async () => {
     try {
-      const root = await call<string>("pickFolder", { title: "选择或新建 Telegram Archive Library 目录", initial: boot?.libraryRoot || "" });
+      const root = await pickFolder("switch-library", "选择或新建 Telegram Archive Library 目录");
       if (root) await switchTo(root);
     } catch (e) {
       toast((e as Error).message, true);
@@ -884,7 +1047,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
   const merge = async () => {
     try {
-      const root = await call<string>("pickFolder", { title: "选择要合并进来的档案库", initial: "" });
+      const root = await pickFolder("merge-library", "选择要合并进来的档案库");
       if (!root) return;
       const res = await call<{ merged: number; total: number }>("mergeLibrary", { root });
       toast(`合并完成：${res.merged}/${res.total} 个聊天`);
@@ -1243,10 +1406,10 @@ const CHECK_LABEL: Record<string, string> = {
 
 function promptLabel(prompt?: string): string {
   const p = (prompt ?? "").toLowerCase();
-  if (p.includes("phone")) return "请输入手机号（含国家码，例如 +8613800000000）";
-  if (p.includes("code")) return "请输入 Telegram 发来的验证码";
-  if (p.includes("password")) return "请输入两步验证密码";
-  return "按终端提示输入内容后发送";
+  if (p.includes("2fa") || p.includes("password") || p.includes("两步")) return "请输入两步验证密码";
+  if (p.includes("phone") || p.includes("手机号") || p.includes("number")) return "请输入手机号（含国家码，例如 +8613800000000）";
+  if (p.includes("code") || p.includes("验证码")) return "请输入 Telegram 发来的验证码";
+  return "按提示输入内容后发送";
 }
 
 export function Account({ ctx }: { ctx: PageCtx }) {
@@ -1355,6 +1518,12 @@ export function Account({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const lp = (login?.prompt ?? "").toLowerCase();
+  const wantsPassword = /2fa|password|two-step|两步|密码/.test(lp);
+  const wantsPhone = !wantsPassword && /phone|手机号/.test(lp);
+  const wantsCode = !wantsPassword && !wantsPhone && /enter code|verification code|login code|验证码/.test(lp);
+  const needsInput = active && (login?.kind === "code" || wantsPassword || wantsCode || wantsPhone);
+  const showQr = active && login?.kind === "qr" && qr.length > 0 && !wantsPassword && !wantsCode && !wantsPhone && !/submitted|已提交/.test(lp);
   const sessionState = info?.hasSession ? "已发现本地会话" : "未发现本地会话";
   const checkTone =
     check && (check.state === "ready" ? "ok" : check.state === "unauthorized" ? "danger" : check.state === "busy" ? "" : "warn");
@@ -1432,7 +1601,11 @@ export function Account({ ctx }: { ctx: PageCtx }) {
       <section className="panel">
         <div className="panel-head">
           <h3>Telegram 登录</h3>
-          <span className="meta">{active && login ? `${loginKindLabel(login.kind)} · ${LOGIN_STATE_LABEL[login.state] ?? login.state}` : "扫码或验证码"}</span>
+          <span className="meta">
+            {active && login
+              ? `${loginKindLabel(login.kind)} · ${wantsPassword ? "需要两步验证" : LOGIN_STATE_LABEL[login.state] ?? login.state}`
+              : "扫码或验证码"}
+          </span>
         </div>
 
         {!active ? (
@@ -1446,7 +1619,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
               <button className="acct-choice" disabled={busy === "login" || tdlMissing || running} onClick={() => startLogin("code")}>
                 <KeyRound size={22} />
                 <b>手机号验证码登录</b>
-                <span>扫码不方便时，输入手机号和 Telegram 验证码</span>
+                <span>扫码不方便时使用；验证码由 Telegram 发送</span>
               </button>
             </div>
             <div className="acct-note">
@@ -1463,20 +1636,31 @@ export function Account({ ctx }: { ctx: PageCtx }) {
         ) : (
           <div className="acct-login live">
             <div className="acct-stage">
-              {login.kind === "qr" && qr.length === 0 && <p className="acct-prompt warn">正在等待二维码…</p>}
-              {login.kind === "qr" && qr.length > 0 && (
+              {showQr && (
                 <div className="qr-wrap" aria-label="登录二维码">
                   <pre className="qr-text">{qr.join("\n")}</pre>
                 </div>
               )}
-              {login.kind === "code" && (
+              {active && login.kind === "qr" && !showQr && !needsInput && !wantsPassword && (
+                <p className="acct-prompt warn">正在等待二维码…</p>
+              )}
+              {needsInput && (
                 <div className="acct-code">
-                  <p>{login.prompt || "按终端提示输入手机号或验证码"}</p>
+                  <p className="acct-question">
+                    {wantsPassword
+                      ? "二维码已扫描，请输入 Telegram 两步验证密码"
+                      : wantsPhone
+                        ? "请输入手机号（含国家码）"
+                        : wantsCode
+                          ? "请输入 Telegram 发来的验证码"
+                          : "按提示输入手机号或验证码"}
+                  </p>
                   <div className="acct-entry">
                     <input
-                      type="text"
+                      type={wantsPassword ? "password" : "text"}
                       value={entry}
                       autoFocus
+                      autoComplete="off"
                       placeholder={promptLabel(login.prompt)}
                       onChange={(e) => setEntry(e.target.value)}
                       onKeyDown={(e) => {
@@ -1487,9 +1671,19 @@ export function Account({ ctx }: { ctx: PageCtx }) {
                       发送
                     </button>
                   </div>
+                  {!wantsPassword && login.kind === "code" && (
+                    <p className="acct-hint">
+                      验证码发到已登录的 Telegram App 或短信；两者都收不到时，建议改用二维码登录。
+                      <button className="link" onClick={async () => { await cancelLogin(); await startLogin("qr"); }}>
+                        改用二维码
+                      </button>
+                    </p>
+                  )}
                 </div>
               )}
-              {login.kind === "qr" && login.prompt && <p className="acct-prompt">{login.prompt}</p>}
+              {login.prompt && !needsInput && !/已提交/.test(login.prompt) && (
+                <p className="acct-prompt">{login.prompt}</p>
+              )}
               <div className="acct-live-actions">
                 <button className="btn danger" onClick={cancelLogin}>
                   <Square size={12} /> 取消登录

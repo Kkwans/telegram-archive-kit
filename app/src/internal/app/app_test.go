@@ -624,7 +624,7 @@ func TestReadLoginStreamCapturesPromptWithoutNewline(t *testing.T) {
 		readLoginStream(pr, sess)
 		close(done)
 	}()
-	if _, err := io.WriteString(pw, "WARN: warning\nEnter phone number: "); err != nil {
+	if _, err := io.WriteString(pw, "WARN: warning"+string(rune(10))+"Enter phone number: "); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -636,17 +636,24 @@ func TestReadLoginStreamCapturesPromptWithoutNewline(t *testing.T) {
 	}
 	sess.mu.Lock()
 	sess.inputAt = time.Now()
+	sess.lastInput = "+8613800000000"
 	sess.mu.Unlock()
-	if _, err := io.WriteString(pw, "+8613800000000\n"); err != nil {
+	if _, err := io.WriteString(pw, "+8613800000000"+string(rune(10))); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := io.WriteString(pw, "? Enter 2FA Password: "); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for sess.snapshot().Prompt != "? Enter 2FA Password:" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := sess.snapshot().Prompt; got != "? Enter 2FA Password:" {
+		t.Fatalf("2FA prompt must stay visible, got %q", got)
 	}
 	_ = pw.Close()
 	<-done
-	st := sess.snapshot()
-	if st.Prompt != "输入已提交，等待 Telegram 响应" {
-		t.Fatalf("input echo must not become prompt: %q", st.Prompt)
-	}
-	for _, line := range st.Screen {
+	for _, line := range sess.snapshot().Screen {
 		if strings.Contains(line, "8613800000000") {
 			t.Fatal("phone number must never be mirrored to the screen")
 		}

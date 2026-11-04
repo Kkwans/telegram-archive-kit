@@ -11,10 +11,13 @@ never downloads Wails.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import os
 import pathlib
+import re
 import subprocess
 import sys
+import zipfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
 src = root / "app" / "src"
@@ -80,11 +83,46 @@ def build_target(name: str) -> pathlib.Path:
     return t["out"]
 
 
+def project_version() -> str:
+    text = (src / "internal" / "model" / "model.go").read_text(encoding="utf-8")
+    match = re.search(r'Version\s*=\s*"([^"]+)"', text)
+    return match.group(1) if match else "0.0"
+
+
+def package_zip(outputs: list[pathlib.Path]) -> pathlib.Path:
+    version = project_version()
+    dist = root / "dist"
+    dist.mkdir(exist_ok=True)
+    zpath = dist / f"TelegramArchiveKit_v{version}_windows-x64.zip"
+    docs = [
+        root / "README.md",
+        root / "CHANGELOG.md",
+        root / "LICENSE",
+        root / "docs" / "USAGE.md",
+        root / "docs" / "TROUBLESHOOTING.md",
+        root / "docs" / "DATA_FORMAT.md",
+        root / "docs" / "THIRD_PARTY.md",
+    ]
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+        for out in outputs:
+            z.write(out, out.name)
+        for doc in docs:
+            if doc.exists():
+                z.write(doc, doc.name)
+    digest = hashlib.sha256(zpath.read_bytes()).hexdigest()
+    print(f"ZIP: {zpath}")
+    print(f"SHA-256: {digest}")
+    return zpath
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--target", choices=("console", "desktop", "all"), default="all")
     p.add_argument("--skip-frontend", action="store_true", help="reuse frontend/dist")
+    p.add_argument("--zip", action="store_true", help="package both clients and docs into dist/")
     args = p.parse_args()
+    if args.zip and args.target != "all":
+        raise SystemExit("--zip requires --target all")
 
     if args.target in ("console", "all"):
         build_tui()
@@ -103,6 +141,8 @@ def main() -> None:
 
     for out in outputs:
         print("Build completed:", out)
+    if args.zip:
+        package_zip(outputs)
 
 
 if __name__ == "__main__":
