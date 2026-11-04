@@ -345,6 +345,9 @@ func (b *Bridge) startPicker(kind, title, purpose string) {
 		} else {
 			paths, err = showFileDialog(b.owner(), fileDialogOptions{Title: title, Folder: true})
 		}
+		if err != nil {
+			log.Printf("picker %s failed: %v", kind, err)
+		}
 		result := &PickedDialog{Kind: kind, Purpose: purpose, Paths: paths}
 		if len(paths) > 0 && kind == "folder" {
 			result.Folder = paths[0]
