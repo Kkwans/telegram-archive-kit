@@ -72,6 +72,9 @@ func librarySourceChats(root string) []string {
 
 // copyChatFromLibrary merges one chat into the destination library. It never deletes source data.
 func (dst *App) copyChatFromLibrary(srcRoot, srcSlug string) (WorkspaceMeta, error) {
+	if err := dst.guardWritable(); err != nil {
+		return WorkspaceMeta{}, err
+	}
 	src := appAtLibrary(dst, srcRoot)
 	srcMeta, err := src.readWorkspaceMeta(srcSlug)
 	if err != nil {

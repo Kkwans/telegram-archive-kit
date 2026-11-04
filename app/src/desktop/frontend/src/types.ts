@@ -137,11 +137,25 @@ export interface SessionCheck {
   code: number;
 }
 
+export interface PendingInput {
+  seq: number;
+  paths?: string[];
+  folders?: string[];
+  source?: string;
+}
+
+export interface Notice {
+  seq: number;
+  text?: string;
+}
+
 export interface DesktopState {
   chats: ChatRow[];
   download?: DownloadState;
   operation?: OperationState;
   done?: DoneState;
   login?: LoginState;
+  pending?: PendingInput;
+  notice?: Notice;
   running: boolean;
 }

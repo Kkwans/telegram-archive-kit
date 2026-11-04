@@ -8,7 +8,9 @@ import (
 	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
+	static "telegramarchivekit/assets"
 	takapp "telegramarchivekit/internal/app"
 	"telegramarchivekit/internal/model"
 )
@@ -32,7 +34,12 @@ func main() {
 		log.Fatal(err)
 	}
 	facade.SetLoginLauncher(newConPTYLauncher())
+	if err := facade.AcquireLibraryLock(); err != nil {
+		log.Printf("library lock: %v", err)
+	}
+	defer facade.ReleaseLibraryLock()
 	bridge := NewBridge(facade)
+	bridge.QueueArgs(os.Args[1:])
 
 	windowsOpts := application.WindowsOptions{
 		DisableQuitOnLastWindowClosed: true,
@@ -51,23 +58,22 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.kkwans.telegramarchivekit",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				if w := application.Get().Window.Current(); w != nil {
-					w.Show()
-					w.Focus()
-				}
+				bridge.QueueArgs(data.Args)
+				bridge.showWindow()
 			},
 		},
 		Windows: windowsOpts,
 	})
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:      "main",
-		Title:     "TelegramArchiveKit",
-		Width:     1280,
-		Height:    820,
-		MinWidth:  1040,
-		MinHeight: 680,
-		Frameless: true,
+		Name:           "main",
+		Title:          "TelegramArchiveKit",
+		Width:          1280,
+		Height:         820,
+		MinWidth:       1040,
+		MinHeight:      680,
+		Frameless:      true,
+		EnableFileDrop: true,
 		// Mica only works with a translucent background on Windows 11 22621+.
 		// The frontend detects data-mica="off" and falls back to a solid surface.
 		BackgroundType:   application.BackgroundTypeTranslucent,
@@ -80,6 +86,43 @@ func main() {
 	})
 	win.Show()
 	bridge.Attach(win)
+
+	win.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
+		files := e.Context().DroppedFiles()
+		if len(files) > 0 {
+			bridge.QueuePaths(files)
+			bridge.showWindow()
+		}
+	})
+
+	menu := application.NewMenu()
+	menu.Add("显示主窗口").OnClick(func(*application.Context) { bridge.showWindow() })
+	menu.Add("同步当前聊天").OnClick(func(*application.Context) {
+		if _, err := bridge.syncCurrent(); err != nil {
+			bridge.QueueNotice("同步失败：" + err.Error())
+		}
+	})
+	menu.Add("打开归档库").OnClick(func(*application.Context) {
+		if err := facade.OpenLibrary(""); err != nil {
+			bridge.QueueNotice("打开归档库失败：" + err.Error())
+		}
+	})
+	menu.Add("打开日志目录").OnClick(func(*application.Context) {
+		if err := facade.RevealLogs(); err != nil {
+			bridge.QueueNotice("打开日志目录失败：" + err.Error())
+		}
+	})
+	menu.AddSeparator()
+	menu.Add("退出").OnClick(func(*application.Context) { bridge.quit() })
+
+	tray := app.SystemTray.New()
+	if icon, err := static.UI.ReadFile("ui/favicon.ico"); err == nil {
+		tray.SetIcon(icon)
+	}
+	tray.SetTooltip("Telegram Archive Kit")
+	tray.SetMenu(menu)
+	tray.OnClick(func() { bridge.showWindow() })
+	tray.Show()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

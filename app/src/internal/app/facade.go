@@ -42,6 +42,7 @@ type Facade struct {
 	login   *loginSession
 
 	loginLaunch loginLauncher
+	libLock     *sessionLock
 }
 
 // DesktopState is polled by the window; it intentionally excludes Bootstrap
@@ -62,6 +63,53 @@ func OpenFacade() (*Facade, error) {
 		return nil, err
 	}
 	return &Facade{a: a}, nil
+}
+
+// AcquireLibraryLock marks this process as the writer for the current library.
+// It is held for the whole desktop session; the console client checks it.
+func (f *Facade) AcquireLibraryLock() error {
+	lock, err := acquireSessionLock(f.a.Settings.LibraryRoot)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	old := f.libLock
+	f.libLock = lock
+	f.mu.Unlock()
+	old.release()
+	return nil
+}
+
+func (f *Facade) LoginActive() bool {
+	f.mu.Lock()
+	s := f.login
+	f.mu.Unlock()
+	if s == nil {
+		return false
+	}
+	st := s.snapshot().State
+	return st == "starting" || st == "waiting"
+}
+
+// Shutdown stops any in-flight work and releases the library mutex.
+func (f *Facade) Shutdown() {
+	f.Cancel()
+	f.mu.Lock()
+	s := f.login
+	f.mu.Unlock()
+	if s != nil {
+		s.cancel()
+		_ = killAllTdl()
+	}
+	f.ReleaseLibraryLock()
+}
+
+func (f *Facade) ReleaseLibraryLock() {
+	f.mu.Lock()
+	lock := f.libLock
+	f.libLock = nil
+	f.mu.Unlock()
+	lock.release()
 }
 
 func (f *Facade) SetEmitter(fn func(event string, data any)) {
@@ -248,6 +296,24 @@ func (f *Facade) Cancel() bool {
 	}
 	op.cancel()
 	return true
+}
+
+// SyncCurrentChat starts the one-click flow for the last selected chat; the
+// tray uses it without opening the window first.
+func (f *Facade) SyncCurrentChat() (string, error) {
+	list := f.a.listWorkspaces()
+	if len(list) == 0 {
+		return "", errors.New("还没有聊天，请先导入 result.json")
+	}
+	slug := selectedSlug(f.a.selectedWorkspace(list))
+	if !fileExists(f.a.sourcePath(slug)) {
+		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+	}
+	_, err := f.StartOneClick(slug)
+	if err != nil {
+		return "", err
+	}
+	return slug, nil
 }
 
 func (f *Facade) Running() bool {

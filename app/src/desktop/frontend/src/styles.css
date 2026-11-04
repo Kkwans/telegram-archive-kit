@@ -348,3 +348,23 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(160, 175, 2
   .acct-login { grid-template-columns: 1fr; }
   .acct-pick { grid-template-columns: 1fr; }
 }
+
+/* ============================== Modal ============================== */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: rgba(15, 22, 40, 0.38); backdrop-filter: blur(3px); padding: 24px;
+}
+.modal {
+  width: min(520px, 100%); max-height: calc(100vh - 48px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px; padding: 20px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
+  box-shadow: 0 24px 60px rgba(15, 22, 40, 0.28);
+}
+.modal h2 { margin: 0; font-size: 16px; font-weight: 680; }
+.modal-sub { margin: 0; font-size: 12.5px; color: var(--muted); }
+.drop-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; padding: 10px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface-2); }
+.drop-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); word-break: break-all; }
+.drop-item svg { flex: 0 0 auto; color: var(--faint); }
+.modal .field select { height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); padding: 0 8px; font: inherit; font-size: 12.5px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal .btn { align-self: flex-start; }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Database,
+  FileJson,
+  FolderInput,
   FolderOpen,
   HardDrive,
   LayoutDashboard,
@@ -16,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState } from "./types";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput } from "./types";
 import { Account, Chats, Diagnostics, Library, Overview, SettingsPage, type PageCtx } from "./pages";
 
 type Theme = "light" | "dark";
@@ -44,8 +46,13 @@ export default function App() {
   const [history, setHistory] = useState<{ now: number; avg: number }[]>([]);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toastMsg, setToastMsg] = useState<{ text: string; err: boolean } | null>(null);
+  const [pending, setPending] = useState<PendingInput | null>(null);
+  const [dropMode, setDropMode] = useState("copy");
+  const [dropBusy, setDropBusy] = useState(false);
   const lastSample = useRef(0);
   const toastTimer = useRef(0);
+  const lastNotice = useRef(0);
+  const lastPending = useRef(0);
 
   const toast = (text: string, err = false) => {
     setToastMsg({ text, err });
@@ -58,17 +65,28 @@ export default function App() {
     localStorage.setItem("tak-theme", theme);
   }, [theme]);
 
+  const consume = (st: DesktopState) => {
+    setChats(st.chats ?? []);
+    setSelected((prev) => prev || st.chats?.find((c) => c.current)?.slug || st.chats?.[0]?.slug || "");
+    setDl(st.download ?? null);
+    setOp(st.operation ?? null);
+    setDone(st.done ?? null);
+    setLogin(st.login ?? null);
+    setRunning(st.running);
+    if (st.notice && st.notice.seq !== lastNotice.current) {
+      lastNotice.current = st.notice.seq;
+      if (st.notice.text) toast(st.notice.text, true);
+      call("ackNotice", { seq: st.notice.seq }).catch(() => undefined);
+    }
+    if (st.pending && st.pending.seq !== lastPending.current) {
+      lastPending.current = st.pending.seq;
+      setPending(st.pending);
+    }
+  };
+
   const refresh = () => {
     call<DesktopState>("state")
-      .then((st) => {
-        setChats(st.chats ?? []);
-        setSelected((prev) => prev || st.chats?.find((c) => c.current)?.slug || st.chats?.[0]?.slug || "");
-        setDl(st.download ?? null);
-        setOp(st.operation ?? null);
-        setDone(st.done ?? null);
-        setLogin(st.login ?? null);
-        setRunning(st.running);
-      })
+      .then(consume)
       .catch(() => undefined);
     call<Bootstrap>("bootstrap").then(setBoot).catch(() => undefined);
   };
@@ -80,13 +98,7 @@ export default function App() {
       try {
         const st = await call<DesktopState>("state");
         if (!alive) return;
-        setChats(st.chats ?? []);
-        setSelected((prev) => prev || st.chats?.find((c) => c.current)?.slug || st.chats?.[0]?.slug || "");
-        setDl(st.download ?? null);
-        setOp(st.operation ?? null);
-        setDone(st.done ?? null);
-        setLogin(st.login ?? null);
-        setRunning(st.running);
+        consume(st);
         if (st.download) {
           const now = Date.now();
           if (now - lastSample.current > 900) {
@@ -127,6 +139,51 @@ export default function App() {
   );
 
   const current = chats.find((c) => c.slug === selected) || null;
+
+  const closePending = () => {
+    if (pending) call("ackPending", { seq: pending.seq }).catch(() => undefined);
+    setPending(null);
+  };
+
+  const importDroppedJSON = async () => {
+    if (!pending?.paths?.length) return;
+    setDropBusy(true);
+    try {
+      await call("importJSON", { paths: pending.paths });
+      await call<Bootstrap>("bootstrap").then(setBoot).catch(() => undefined);
+      refresh();
+      toast(`已导入 ${pending.paths.length} 个 result.json`);
+      closePending();
+      setPage("chats");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setDropBusy(false);
+    }
+  };
+
+  const importDroppedOfficial = async () => {
+    if (!pending?.folders?.length) return;
+    setDropBusy(true);
+    let ok = 0;
+    try {
+      for (const folder of pending.folders) {
+        try {
+          await call("importOfficial", { folder, mode: dropMode });
+          ok++;
+        } catch (e) {
+          toast((e as Error).message, true);
+        }
+      }
+      await call<Bootstrap>("bootstrap").then(setBoot).catch(() => undefined);
+      refresh();
+      if (ok > 0) toast(`已导入 ${ok} 个官方导出`);
+      closePending();
+      setPage("chats");
+    } finally {
+      setDropBusy(false);
+    }
+  };
 
   return (
     <div className="app">
@@ -254,6 +311,52 @@ export default function App() {
         <span className="spacer" />
         <span>Telegram Archive Kit {boot?.version ?? "1.2"} · 桌面客户端</span>
       </footer>
+
+      {pending && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="drop-title">
+            <h2 id="drop-title">收到待导入内容</h2>
+            <p className="modal-sub">来自{pending.source || "拖放"}，确认后才会写入档案库。</p>
+            <div className="drop-list">
+              {(pending.paths ?? []).map((p) => (
+                <span key={p} className="drop-item">
+                  <FileJson size={13} /> {p}
+                </span>
+              ))}
+              {(pending.folders ?? []).map((p) => (
+                <span key={p} className="drop-item">
+                  <FolderInput size={13} /> {p}
+                </span>
+              ))}
+            </div>
+            {(pending.paths?.length ?? 0) > 0 && (
+              <button className="btn primary" disabled={dropBusy} onClick={importDroppedJSON}>
+                导入 {pending.paths?.length} 个 result.json
+              </button>
+            )}
+            {(pending.folders?.length ?? 0) > 0 && (
+              <>
+                <div className="field">
+                  <label>官方导出导入方式</label>
+                  <select value={dropMode} onChange={(e) => setDropMode(e.target.value)}>
+                    <option value="copy">复制到档案库（推荐）</option>
+                    <option value="reference">仅引用源目录（不复制媒体）</option>
+                    <option value="move">移动并整理源目录</option>
+                  </select>
+                </div>
+                <button className="btn primary" disabled={dropBusy} onClick={importDroppedOfficial}>
+                  导入 {pending.folders?.length} 个官方导出
+                </button>
+              </>
+            )}
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={closePending}>
+                忽略
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toastMsg && (
         <div className={`toast ${toastMsg.err ? "err" : ""}`} role="alert" onClick={() => setToastMsg(null)} title="点击关闭">

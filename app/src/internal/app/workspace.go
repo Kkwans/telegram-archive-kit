@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	static "telegramarchivekit/assets"
@@ -119,9 +120,31 @@ func (a *App) loadSettings() error {
 	return nil
 }
 
+var settingsMu sync.Mutex
+
 func (a *App) saveSettings() error {
-	b, _ := json.MarshalIndent(a.Settings, "", "  ")
-	return os.WriteFile(a.ConfigPath, b, 0644)
+	if err := a.guardWritable(); err != nil {
+		return err
+	}
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	b, err := json.MarshalIndent(a.Settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := a.ConfigPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+	var renamed error
+	for attempt := 0; attempt < 3; attempt++ {
+		if renamed = os.Rename(tmp, a.ConfigPath); renamed == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(attempt+1) * 80 * time.Millisecond)
+	}
+	_ = os.Remove(tmp)
+	return renamed
 }
 
 func recommendedLibraryRoot() string {
@@ -333,6 +356,9 @@ func (a *App) importResultJSON(src string) (WorkspaceMeta, bool, error) {
 // looked like a 20-40 second freeze. v9 can register/merge source data first and build
 // exactly once after synchronization.
 func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bool, error) {
+	if err := a.guardWritable(); err != nil {
+		return WorkspaceMeta{}, false, err
+	}
 	if err := a.ensureLibraryDirs(); err != nil {
 		return WorkspaceMeta{}, false, err
 	}
@@ -538,6 +564,9 @@ func (a *App) buildWorkspaceModeWithProgress(slug string, rebuildLibrary bool, p
 }
 
 func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string, rebuildLibrary bool, progress func(OperationProgress)) (*Archive, error) {
+	if err := a.guardWritable(); err != nil {
+		return nil, err
+	}
 	stage := func(n int, message, detail string) error {
 		if e := ctx.Err(); e != nil {
 			return e
@@ -809,6 +838,9 @@ func (a *App) verifyWorkspace(slug string) (*Archive, error) {
 func (a *App) deleteWorkspace(slug string) error {
 	if slug == "" {
 		return nil
+	}
+	if err := a.guardWritable(); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(a.workspaceDir(slug)); err != nil {
 		return err

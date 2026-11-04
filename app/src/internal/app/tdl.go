@@ -469,6 +469,9 @@ func adaptiveTransferProfile(concurrent, threads, stallLevel int, enabled bool) 
 }
 
 func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass int, globalEngineRestarts *int, ui downloadUI) error {
+	if err := a.guardWritable(); err != nil {
+		return err
+	}
 	exe, err := a.ensureTdlInstalled(nil)
 	if err != nil {
 		return err

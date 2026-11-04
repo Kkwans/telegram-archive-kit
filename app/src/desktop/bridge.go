@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -17,6 +20,34 @@ import (
 type Bridge struct {
 	facade *takapp.Facade
 	window *application.WebviewWindow
+
+	mu      sync.Mutex
+	pending *PendingInput
+	notice  *Notice
+	seq     int64
+}
+
+// Notice is a one-shot message (for example a failed tray action) that the
+// frontend polls and acknowledges.
+type Notice struct {
+	Seq  int64  `json:"seq"`
+	Text string `json:"text,omitempty"`
+}
+
+// PendingInput carries files or folders that arrived through the second
+// instance, a shell drop or the command line. The frontend acknowledges it.
+type PendingInput struct {
+	Seq     int64    `json:"seq"`
+	Paths   []string `json:"paths,omitempty"`
+	Folders []string `json:"folders,omitempty"`
+	Source  string   `json:"source,omitempty"`
+}
+
+// stateReply flattens DesktopState and adds the pending drop.
+type stateReply struct {
+	takapp.DesktopState
+	Pending *PendingInput `json:"pending,omitempty"`
+	Notice  *Notice       `json:"notice,omitempty"`
 }
 
 func NewBridge(f *takapp.Facade) *Bridge { return &Bridge{facade: f} }
@@ -81,6 +112,7 @@ type apiParams struct {
 	ID       string              `json:"id"`
 	Text     string              `json:"text"`
 	Timeout  int                 `json:"timeout"`
+	Seq      int64               `json:"seq"`
 }
 
 func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
@@ -96,7 +128,13 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "listChats":
 		return b.facade.ListChats(), nil
 	case "state":
-		return b.facade.State(), nil
+		return b.stateReply(), nil
+	case "ackPending":
+		b.ackPending(p.Seq)
+		return nil, nil
+	case "ackNotice":
+		b.ackNotice(p.Seq)
+		return nil, nil
 	case "startOneClick":
 		id, err := b.facade.StartOneClick(p.Slug)
 		if err != nil {
@@ -193,13 +231,136 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		}
 		return nil, nil
 	case "windowClose":
-		if b.window != nil {
-			b.window.Close()
-		}
+		b.closeWindow()
 		return nil, nil
+	case "quitApp":
+		b.quit()
+		return nil, nil
+	case "syncCurrent":
+		return b.syncCurrent()
 	default:
 		return nil, errors.New("未知请求: " + method)
 	}
+}
+
+func (b *Bridge) stateReply() stateReply {
+	st := b.facade.State()
+	out := stateReply{DesktopState: st}
+	b.mu.Lock()
+	out.Pending = b.pending
+	out.Notice = b.notice
+	b.mu.Unlock()
+	b.updateTaskbar(st)
+	return out
+}
+
+func (b *Bridge) QueueArgs(args []string) {
+	b.queue(args, "启动参数")
+}
+
+func (b *Bridge) QueuePaths(paths []string) {
+	b.queue(paths, "拖放")
+}
+
+func (b *Bridge) queue(raw []string, source string) {
+	var files, dirs []string
+	for _, p := range raw {
+		p = strings.TrimSpace(strings.Trim(p, `"`))
+		if p == "" || strings.HasPrefix(p, "--") {
+			continue
+		}
+		st, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if st.IsDir() {
+			dirs = append(dirs, p)
+		} else if strings.EqualFold(filepath.Ext(p), ".json") {
+			files = append(files, p)
+		}
+	}
+	if len(files) == 0 && len(dirs) == 0 {
+		return
+	}
+	b.mu.Lock()
+	b.seq++
+	b.pending = &PendingInput{Seq: b.seq, Paths: files, Folders: dirs, Source: source}
+	b.mu.Unlock()
+}
+
+func (b *Bridge) QueueNotice(text string) {
+	b.mu.Lock()
+	b.seq++
+	b.notice = &Notice{Seq: b.seq, Text: text}
+	b.mu.Unlock()
+}
+
+func (b *Bridge) ackNotice(seq int64) {
+	b.mu.Lock()
+	if b.notice != nil && b.notice.Seq == seq {
+		b.notice = nil
+	}
+	b.mu.Unlock()
+}
+
+func (b *Bridge) ackPending(seq int64) {
+	b.mu.Lock()
+	if b.pending != nil && b.pending.Seq == seq {
+		b.pending = nil
+	}
+	b.mu.Unlock()
+}
+
+func (b *Bridge) showWindow() {
+	if b.window == nil {
+		return
+	}
+	b.window.Show()
+	b.window.Focus()
+}
+
+func (b *Bridge) closeWindow() {
+	if b.window == nil {
+		return
+	}
+	running := b.facade.Running()
+	login := b.facade.LoginActive()
+	if !running && !login {
+		b.window.Hide()
+		return
+	}
+	what := "下载任务"
+	if login && !running {
+		what = "登录会话"
+	}
+	dlg := application.Get().Dialog.Question().
+		SetTitle("Telegram Archive Kit").
+		SetMessage("仍有" + what + "在进行。关闭窗口后任务会继续，可从托盘图标恢复。").
+		AttachToWindow(b.window)
+	hide := dlg.AddButton("隐藏到托盘")
+	hide.SetAsDefault().OnClick(func() { b.window.Hide() })
+	quit := dlg.AddButton("停止并退出")
+	quit.OnClick(func() { b.quit() })
+	dlg.SetCancelButton(hide)
+	dlg.Show()
+}
+
+func (b *Bridge) quit() {
+	b.facade.Shutdown()
+	if b.window != nil {
+		b.window.Hide()
+	}
+	application.Get().Quit()
+}
+
+func (b *Bridge) syncCurrent() (map[string]string, error) {
+	slug, err := b.facade.SyncCurrentChat()
+	if err != nil {
+		b.QueueNotice("同步失败：" + err.Error())
+		return nil, err
+	}
+	b.showWindow()
+	return map[string]string{"slug": slug}, nil
 }
 
 func (b *Bridge) pickJSON() ([]string, error) {

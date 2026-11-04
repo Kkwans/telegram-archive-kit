@@ -249,18 +249,33 @@ func (f *Facade) SwitchLibrary(root string) error {
 	if strings.TrimSpace(root) == "" {
 		return errors.New("缺少档案库目录")
 	}
+	lock, err := acquireSessionLock(root)
+	if err != nil {
+		return err
+	}
 	old := f.a.Settings.LibraryRoot
 	f.a.rememberLibrary(old)
 	f.a.Settings.LibraryRoot = root
 	f.a.rememberLibrary(root)
 	if err := f.a.ensureLibraryDirs(); err != nil {
 		f.a.Settings.LibraryRoot = old
+		lock.release()
 		return err
 	}
 	if err := f.a.saveSettings(); err != nil {
+		lock.release()
 		return err
 	}
-	return f.a.buildLibrary()
+	if err := f.a.buildLibrary(); err != nil {
+		lock.release()
+		return err
+	}
+	f.mu.Lock()
+	oldLock := f.libLock
+	f.libLock = lock
+	f.mu.Unlock()
+	oldLock.release()
+	return nil
 }
 
 func (f *Facade) MergeLibrary(srcRoot string) (int, int, error) {
