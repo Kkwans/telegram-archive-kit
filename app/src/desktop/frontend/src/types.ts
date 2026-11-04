@@ -8,6 +8,7 @@ export interface Bootstrap {
   chats: number;
   current: string;
   configPath: string;
+  history?: string[];
 }
 
 export interface ChatRow {

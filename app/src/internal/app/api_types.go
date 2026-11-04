@@ -2,15 +2,16 @@ package app
 
 // BootstrapDTO is the full state the desktop window needs on first paint.
 type BootstrapDTO struct {
-	Version     string `json:"version"`
-	LibraryRoot string `json:"libraryRoot"`
-	Tdl         string `json:"tdl"`
-	TdlRunning  bool   `json:"tdlRunning"`
-	HasSession  bool   `json:"hasSession"`
-	FFmpeg      string `json:"ffmpeg"`
-	Chats       int    `json:"chats"`
-	Current     string `json:"current"`
-	ConfigPath  string `json:"configPath"`
+	Version     string   `json:"version"`
+	LibraryRoot string   `json:"libraryRoot"`
+	Tdl         string   `json:"tdl"`
+	TdlRunning  bool     `json:"tdlRunning"`
+	HasSession  bool     `json:"hasSession"`
+	FFmpeg      string   `json:"ffmpeg"`
+	Chats       int      `json:"chats"`
+	Current     string   `json:"current"`
+	ConfigPath  string   `json:"configPath"`
+	History     []string `json:"history,omitempty"`
 }
 
 // ChatDTO is one row in the desktop chat list.

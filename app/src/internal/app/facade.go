@@ -129,6 +129,7 @@ func (f *Facade) Bootstrap() BootstrapDTO {
 		Chats:       len(list),
 		Current:     current,
 		ConfigPath:  f.a.ConfigPath,
+		History:     append([]string(nil), f.a.Settings.LibraryHistory...),
 	}
 }
 
