@@ -126,7 +126,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **TAK itself**: a single Go 1.23+ binary with **zero third-party dependencies** and a Windows console TUI.
+- **TAK itself**: a single Go binary. The console edition keeps Go 1.23+ and **zero third-party dependencies**; the desktop client is a separate Wails v3 + React 19 module sharing the same archive engine.
 - **tdl**: invoked as an external subprocess at runtime — never bundled or modified; session data lives in `%USERPROFILE%\.tdl`.
 - **Beautifier theme**: TAK bundles the complete [telegram-export-beautifier](https://github.com/Kkwans/telegram-export-beautifier) theme (upstream commit `608ac73`) — shipped with the binary, fully offline, nothing is fetched at runtime.
 - **Config file**: `%APPDATA%\TelegramArchiveKit\config.json`.
@@ -158,7 +158,7 @@ Full data-safety rules (exact behaviour of merge, extract and delete) are descri
 ## 🛠 Building from Source
 
 ```bash
-# Requirements: Go 1.23+ and Python 3 (for the build script)
+# Requirements: Go 1.26+ (desktop module), Node.js 20+/npm (frontend), Python 3 (build script)
 git clone https://github.com/Kkwans/telegram-archive-kit.git
 cd telegram-archive-kit
 

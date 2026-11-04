@@ -13,6 +13,7 @@ import {
   KeyRound,
   LocateFixed,
   Maximize2,
+  MessagesSquare,
   Music,
   Play,
   QrCode,
@@ -125,13 +126,11 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
     <>
       <div className="page-head">
         <div>
-          <h1>{current?.name ?? "概览"}</h1>
+          <h1>下载中心</h1>
           <p>
             {current
-              ? `${current.messages.toLocaleString()} 条消息 · ${current.media.toLocaleString()} 个媒体 · ${
-                  current.missing > 0 ? `缺失 ${current.missing}` : "完整"
-                }`
-              : "选择左侧聊天开始"}
+              ? `当前聊天：${current.name} · ${current.messages.toLocaleString()} 条消息 · ${current.missing > 0 ? `缺失 ${current.missing}` : "媒体完整"}`
+              : "先在左侧选择聊天，或到档案库导入 result.json"}
           </p>
         </div>
         <div className="actions">
@@ -342,21 +341,6 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
 }
 
 /* ============================== Chats ============================== */
-interface OfficialMeta {
-  name: string;
-  root: string;
-  mode: string;
-  messageCount: number;
-  mediaMessages: number;
-  mediaFiles: number;
-  firstId?: string;
-  lastId?: string;
-}
-interface OfficialPreview {
-  meta: OfficialMeta;
-  matchSlug?: string;
-  chats: ChatRow[];
-}
 interface Stats {
   messages: number;
   media: number;
@@ -370,71 +354,39 @@ interface Stats {
 }
 
 export function Chats({ ctx }: { ctx: PageCtx }) {
-  const { chats, selected, setSelected, refresh, toast, pickFiles, pickFolder } = ctx;
-  const [official, setOfficial] = useState<OfficialPreview | null>(null);
-  const [target, setTarget] = useState("");
-  const [mode, setMode] = useState("reference");
+  const { chats, selected, refresh, toast, go, pickFolder } = ctx;
   const [stats, setStats] = useState<Stats | null>(null);
+  const [busy, setBusy] = useState("");
 
   const current = chats.find((c) => c.slug === selected) || null;
-
-  const importJSON = async () => {
-    try {
-      const paths = await pickFiles("import-json");
-      if (!paths || paths.length === 0) return;
-      const list = await call<ChatRow[]>("importJSON", { paths });
-      toast(`已导入 ${list.length} 个聊天`);
-      refresh();
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-
-  const analyzeOfficial = async () => {
-    try {
-      const folder = await pickFolder("official-folder", "选择 Telegram Desktop 导出的 ChatExport 文件夹");
-      if (!folder) return;
-      const preview = await call<OfficialPreview>("analyzeOfficial", { folder });
-      setOfficial(preview);
-      setTarget(preview.matchSlug || "");
-      setMode("reference");
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-
-  const confirmOfficial = async () => {
-    if (!official) return;
-    try {
-      await call("importOfficial", { folder: official.meta.root, slug: target, mode });
-      toast("官方导出已登记");
-      setOfficial(null);
-      refresh();
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
+  useEffect(() => setStats(null), [selected]);
 
   const verify = async () => {
     if (!current) return;
+    setBusy("verify");
     try {
       const s = await call<Stats>("verifyChat", { slug: current.slug });
       setStats(s);
       toast("完整性核对完成");
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setBusy("");
     }
   };
 
   const remove = async () => {
     if (!current) return;
     if (!window.confirm(`删除本地归档「${current.name}」？\n\n只删除档案库副本，Telegram 云端不受影响，且无法从 TAK 撤销。`)) return;
+    setBusy("delete");
     try {
       await call("deleteChat", { slug: current.slug });
       toast("已删除本地归档");
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setBusy("");
     }
   };
 
@@ -450,179 +402,125 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     }
   };
 
-  const refreshAll = async () => {
+  const sync = async () => {
+    if (!current) return;
     try {
-      const res = await call<{ rebuilt: number; skipped: number }>("refreshAllWeb");
-      toast(`已重建 ${res.rebuilt} 个聊天网页，跳过 ${res.skipped} 个`);
+      await call("startOneClick", { slug: current.slug });
+      toast("已开始同步");
       refresh();
+      go("overview");
     } catch (e) {
       toast((e as Error).message, true);
     }
   };
 
+  const rebuild = async () => {
+    if (!current) return;
+    setBusy("rebuild");
+    try {
+      await call("refreshWeb", { slug: current.slug });
+      toast("网页已重建");
+      refresh();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  if (!current) {
+    return (
+      <div className="empty-state">
+        <MessagesSquare size={30} />
+        <h2>还没有可查看的聊天</h2>
+        <p>导入 Telegram Desktop 导出的 result.json，或继承已有的 ChatExport，然后就能在这里浏览媒体。</p>
+        <button className="btn primary" onClick={() => go("library")}>
+          前往档案库导入
+        </button>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>聊天资料库</h1>
-          <p>{chats.length} 个聊天 · 每个聊天一个独立工作区</p>
+          <h1>{current.name}</h1>
+          <p title={current.dir}>
+            {current.type || "未知类型"} · ID {current.id || "--"} · {current.dir}
+          </p>
         </div>
         <div className="actions">
-          <button className="btn ghost" onClick={refreshAll}>
-            <RefreshCw size={13} /> 重建全部网页
+          <button className="btn ghost" onClick={() => call("openLibrary", { slug: current.slug })}>
+            <FolderOpen size={13} /> 打开归档库
           </button>
-          <button className="btn ghost" onClick={analyzeOfficial}>
-            <FolderOpen size={13} /> 继承官方 ChatExport
+          <button className="btn ghost" disabled={busy === "rebuild"} onClick={rebuild}>
+            <RefreshCw size={13} /> {busy === "rebuild" ? "重建中…" : "重建网页"}
           </button>
-          <button className="btn primary" onClick={importJSON}>
-            <Download size={13} /> 导入 result.json
+          <button className="btn primary" onClick={sync}>
+            <Play size={13} /> 一键同步
           </button>
         </div>
       </div>
 
-      {official && (
-        <div className="banner">
-          <h4>官方导出：{official.meta.name}</h4>
-          <p>
-            {official.meta.messageCount} 条消息 · {official.meta.mediaFiles} 个媒体文件 · 目录 {official.meta.root}
-          </p>
-          <div className="row">
-            <select value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">创建为新聊天</option>
-              {official.chats.map((c) => (
-                <option key={c.slug} value={c.slug}>
-                  合并到：{c.name}
-                </option>
-              ))}
-            </select>
-            <label className="opt">
-              <input type="radio" checked={mode === "reference"} onChange={() => setMode("reference")} /> 引用原目录
-            </label>
-            <label className="opt">
-              <input type="radio" checked={mode === "copy"} onChange={() => setMode("copy")} /> 复制
-            </label>
-            <label className="opt">
-              <input type="radio" checked={mode === "managed"} onChange={() => setMode("managed")} /> 纳管
-            </label>
-            <button className="btn sm primary" onClick={confirmOfficial}>
-              确认导入
-            </button>
-            <button className="btn sm ghost" onClick={() => setOfficial(null)}>
-              取消
-            </button>
-          </div>
+      <section className="kpis">
+        <div className="kpi">
+          <span>消息</span>
+          <b>{current.messages.toLocaleString()}</b>
         </div>
-      )}
+        <div className="kpi">
+          <span>媒体</span>
+          <b>{current.media.toLocaleString()}</b>
+        </div>
+        <div className="kpi">
+          <span>缺失</span>
+          <b className={current.missing > 0 ? "warn" : ""}>{current.missing.toLocaleString()}</b>
+        </div>
+        <div className="kpi">
+          <span>网页 / 官方导出</span>
+          <b>
+            {current.pages}
+            <small>/ {current.official}</small>
+          </b>
+        </div>
+      </section>
 
       <section className="panel">
         <div className="panel-head">
-          <h3>聊天</h3>
-          <span className="meta">{chats.length} 个</span>
+          <h3>聊天操作</h3>
+          <span className="meta">最近更新 {current.updatedAt || "--"}</span>
         </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>聊天</th>
-              <th className="num">消息</th>
-              <th className="num">媒体</th>
-              <th className="num">缺失</th>
-              <th className="num hide-sm">页面</th>
-              <th>最近更新</th>
-            </tr>
-          </thead>
-          <tbody>
-            {chats.map((c) => (
-              <tr
-                key={c.slug}
-                tabIndex={0}
-                aria-selected={c.slug === selected}
-                onClick={() => {
-                  setSelected(c.slug);
-                  setStats(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setSelected(c.slug);
-                    setStats(null);
-                  }
-                }}
-                style={{ cursor: "pointer", background: c.slug === selected ? "var(--accent-soft)" : undefined }}
-              >
-                <td>{c.name}</td>
-                <td className="num">{c.messages.toLocaleString()}</td>
-                <td className="num">{c.media.toLocaleString()}</td>
-                <td className="num">{c.missing > 0 ? <span className="stalled">{c.missing}</span> : "0"}</td>
-                <td className="num hide-sm">{c.pages}</td>
-                <td className="muted">{c.updatedAt ? c.updatedAt.slice(0, 10) : "--"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="chat-actions">
+          <button className="btn sm" disabled={busy === "verify"} onClick={verify}>
+            <ShieldCheck size={12} /> {busy === "verify" ? "核对中…" : "核对完整性"}
+          </button>
+          <button className="btn sm ghost" onClick={() => call("revealChat", { slug: current.slug })}>
+            <FolderOpen size={12} /> 打开目录
+          </button>
+          <button className="btn sm ghost" onClick={exportChat}>
+            <ArrowDownToLine size={12} /> 导出到另一库
+          </button>
+          <span className="spacer" />
+          <button className="btn sm danger" disabled={busy === "delete"} onClick={remove}>
+            <Trash2 size={12} /> 删除本地归档
+          </button>
+        </div>
+        {stats && (
+          <div className="banner" style={{ margin: "0 16px 16px" }}>
+            <h4>完整性核对</h4>
+            <p>
+              {stats.messages.toLocaleString()} 条消息 · {stats.media.toLocaleString()} 个媒体（图片 {stats.images} · 视频 {stats.videos} · 音频{" "}
+              {stats.audio} · 文件 {stats.files}）
+              {stats.missing > 0 ? ` · 缺失 ${stats.missing}` : " · 无缺失"}
+              {stats.missingImages + stats.missingVideos > 0
+                ? ` · 待补封面：图片 ${stats.missingImages} / 视频 ${stats.missingVideos}`
+                : ""}
+            </p>
+          </div>
+        )}
       </section>
 
-      {current && (
-        <section className="panel">
-          <div className="panel-head">
-            <h3>{current.name}</h3>
-            <span className="meta">{current.dir}</span>
-          </div>
-          <div className="kv">
-            <dt>类型 / ID</dt>
-            <dd>
-              {current.type || "未知"} · {current.id || "--"}
-            </dd>
-            <dt>消息 / 媒体</dt>
-            <dd>
-              {current.messages.toLocaleString()} 条 · {current.media.toLocaleString()} 个
-            </dd>
-            <dt>完整性</dt>
-            <dd className={current.missing > 0 ? "warn" : ""}>
-              {current.missing > 0 ? `缺失 ${current.missing} 个媒体` : "完整"}
-            </dd>
-            <dt>官方导出</dt>
-            <dd>{current.official} 个</dd>
-          </div>
-          <div className="actions-row" style={{ padding: "0 16px 16px" }}>
-            <button className="btn sm primary" onClick={() => call("startOneClick", { slug: current.slug }).then(refresh).catch((e) => toast(e.message, true))}>
-              <Play size={12} /> 一键同步
-            </button>
-            <button className="btn sm" onClick={verify}>
-              核对完整性
-            </button>
-            <button className="btn sm" onClick={() => call("refreshWeb", { slug: current.slug }).then(refresh).catch((e) => toast(e.message, true))}>
-              只重建网页
-            </button>
-            <button className="btn sm ghost" onClick={() => call("openLibrary", { slug: current.slug })}>
-              打开归档库
-            </button>
-            <button className="btn sm ghost" onClick={() => call("revealChat", { slug: current.slug })}>
-              打开目录
-            </button>
-            <button className="btn sm ghost" onClick={exportChat}>
-              导出到另一库
-            </button>
-            <button className="btn sm danger" onClick={remove}>
-              <Trash2 size={12} /> 删除本地归档
-            </button>
-          </div>
-          {stats && (
-            <div className="banner" style={{ margin: "0 16px 16px" }}>
-              <h4>完整性核对</h4>
-              <p>
-                {stats.messages.toLocaleString()} 条消息 · {stats.media.toLocaleString()} 个媒体（图片 {stats.images} · 视频{" "}
-                {stats.videos} · 音频 {stats.audio} · 文件 {stats.files}）
-                {stats.missing > 0 ? ` · 缺失 ${stats.missing}` : " · 无缺失"}
-                {stats.missingImages + stats.missingVideos > 0
-                  ? ` · 待补封面：图片 ${stats.missingImages} / 视频 ${stats.missingVideos}`
-                  : ""}
-              </p>
-            </div>
-          )}
-        </section>
-      )}
-
-      {current && <MediaGallery ctx={ctx} chat={current} />}
+      <MediaGallery ctx={ctx} chat={current} />
     </>
   );
 }
@@ -1022,17 +920,37 @@ function AudioViewer({
 }
 
 /* ============================= Library ============================= */
+interface OfficialMeta {
+  name: string;
+  messageCount: number;
+  mediaFiles: number;
+  root: string;
+  matchedSlug?: string;
+}
+interface OfficialPreview {
+  meta: OfficialMeta;
+  matchSlug?: string;
+  chats: ChatRow[];
+}
+
 export function Library({ ctx }: { ctx: PageCtx }) {
-  const { boot, chats, refresh, toast, pickFolder } = ctx;
+  const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go } = ctx;
   const history = boot?.history ?? [];
+  const [official, setOfficial] = useState<OfficialPreview | null>(null);
+  const [target, setTarget] = useState("");
+  const [mode, setMode] = useState("reference");
+  const [busy, setBusy] = useState("");
 
   const switchTo = async (root: string) => {
+    setBusy("switch");
     try {
       await call("switchLibrary", { root });
       toast("已切换档案库");
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setBusy("");
     }
   };
 
@@ -1057,12 +975,71 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const importJSON = async () => {
+    try {
+      const paths = await pickFiles("import-json");
+      if (!paths || paths.length === 0) return;
+      setBusy("import");
+      const list = await call<ChatRow[]>("importJSON", { paths });
+      toast(`已导入 ${list.length} 个聊天`);
+      refresh();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const analyzeOfficial = async () => {
+    try {
+      const folder = await pickFolder("official-folder", "选择 Telegram Desktop 导出的 ChatExport 文件夹");
+      if (!folder) return;
+      setBusy("analyze");
+      const preview = await call<OfficialPreview>("analyzeOfficial", { folder });
+      setOfficial(preview);
+      setTarget(preview.matchSlug || "");
+      setMode("reference");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const confirmOfficial = async () => {
+    if (!official) return;
+    setBusy("official");
+    try {
+      await call("importOfficial", { folder: official.meta.root, slug: target, mode });
+      toast("官方导出已登记");
+      setOfficial(null);
+      refresh();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const refreshAll = async () => {
+    setBusy("refresh");
+    try {
+      const res = await call<{ rebuilt: number; skipped: number }>("refreshAllWeb");
+      toast(`已重建 ${res.rebuilt} 个聊天网页，跳过 ${res.skipped} 个`);
+      refresh();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <>
       <div className="page-head">
         <div>
           <h1>档案库</h1>
-          <p>数据与程序版本分离；切换、合并都不会删除原目录</p>
+          <p>导入、更新与库管理都在这里；切换或合并都不会删除原目录</p>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={() => boot && call("openPath", { path: boot.libraryRoot })}>
@@ -1071,11 +1048,117 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           <button className="btn ghost" onClick={merge}>
             合并另一个档案库
           </button>
-          <button className="btn primary" onClick={pickAndSwitch}>
+          <button className="btn ghost" disabled={busy === "switch"} onClick={pickAndSwitch}>
             切换 / 新建档案库
+          </button>
+          <button className="btn primary" disabled={busy === "import"} onClick={importJSON}>
+            <Download size={13} /> {busy === "import" ? "导入中…" : "导入 result.json"}
           </button>
         </div>
       </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>导入与更新</h3>
+          <span className="meta">result.json 或 Telegram Desktop 的 ChatExport</span>
+        </div>
+        <div className="chat-actions">
+          <button className="btn sm" disabled={busy === "analyze"} onClick={analyzeOfficial}>
+            <FolderOpen size={12} /> 继承官方 ChatExport
+          </button>
+          <button className="btn sm ghost" disabled={busy === "refresh"} onClick={refreshAll}>
+            <RefreshCw size={12} /> 重建全部网页
+          </button>
+        </div>
+        {official && (
+          <div className="banner" style={{ margin: "0 16px 16px" }}>
+            <h4>官方导出：{official.meta.name}</h4>
+            <p>
+              {official.meta.messageCount} 条消息 · {official.meta.mediaFiles} 个媒体文件 · 目录 {official.meta.root}
+            </p>
+            <div className="row">
+              <select value={target} onChange={(e) => setTarget(e.target.value)}>
+                <option value="">创建为新聊天</option>
+                {official.chats.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    合并到：{c.name}
+                  </option>
+                ))}
+              </select>
+              <label className="opt">
+                <input type="radio" checked={mode === "reference"} onChange={() => setMode("reference")} /> 引用原目录
+              </label>
+              <label className="opt">
+                <input type="radio" checked={mode === "copy"} onChange={() => setMode("copy")} /> 复制
+              </label>
+              <label className="opt">
+                <input type="radio" checked={mode === "managed"} onChange={() => setMode("managed")} /> 纳管
+              </label>
+              <button className="btn sm primary" disabled={busy === "official"} onClick={confirmOfficial}>
+                确认导入
+              </button>
+              <button className="btn sm ghost" onClick={() => setOfficial(null)}>
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>聊天管理</h3>
+          <span className="meta">{chats.length} 个 · 点击行进入聊天</span>
+        </div>
+        {chats.length === 0 ? (
+          <div className="state-box">
+            <p>还没有聊天。导入 result.json 后会出现在这里。</p>
+          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>聊天</th>
+                <th className="num">消息</th>
+                <th className="num">媒体</th>
+                <th className="num">缺失</th>
+                <th className="num hide-sm">页面</th>
+                <th>最近更新</th>
+                <th> </th>
+              </tr>
+            </thead>
+            <tbody>
+              {chats.map((c) => (
+                <tr
+                  key={c.slug}
+                  tabIndex={0}
+                  aria-selected={c.slug === selected}
+                  onClick={() => {
+                    setSelected(c.slug);
+                    go("chats");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelected(c.slug);
+                      go("chats");
+                    }
+                  }}
+                  style={{ cursor: "pointer", background: c.slug === selected ? "var(--accent-soft)" : undefined }}
+                >
+                  <td>{c.name}</td>
+                  <td className="num">{c.messages.toLocaleString()}</td>
+                  <td className="num">{c.media.toLocaleString()}</td>
+                  <td className="num">{c.missing > 0 ? <span className="stalled">{c.missing}</span> : "0"}</td>
+                  <td className="num hide-sm">{c.pages}</td>
+                  <td className="muted">{c.updatedAt ? c.updatedAt.slice(0, 10) : "--"}</td>
+                  <td className="muted">打开 ›</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <section className="panel">
         <div className="panel-head">
@@ -1087,11 +1170,6 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           <dd>{boot?.libraryRoot || "未配置"}</dd>
           <dt>配置文件</dt>
           <dd>{boot?.configPath || "--"}</dd>
-          <dt>磁盘</dt>
-          <dd>
-            <HardDrive size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
-            剩余空间见诊断页
-          </dd>
         </div>
       </section>
 
@@ -1113,10 +1191,6 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           </div>
         )}
       </section>
-
-      <p className="muted">
-        迁移档案库（复制到新位置并保留旧目录）会在桌面壳完善阶段（P4）接入进度条；当前请使用终端版「档案库位置 → 复制当前档案库到新位置并切换」。
-      </p>
     </>
   );
 }

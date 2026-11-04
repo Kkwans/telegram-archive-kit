@@ -30,6 +30,8 @@
 - **React 19 / React DOM**（<https://react.dev>，MIT）：界面组件。
 - **Vite**（<https://vite.dev>，MIT）与 **TypeScript**（<https://www.typescriptlang.org>，Apache-2.0）：前端构建与类型检查。
 - **Lucide**（<https://lucide.dev>，ISC）：图标。
+- **yet-another-react-lightbox**（<https://yet-another-react-lightbox.com>，MIT）：图片查看器的缩放、缩略图、全屏与键盘导航。
+- **Vidstack**（<https://vidstack.io>，MIT）：视频/音频播放器的控制条、播放列表、倍速、画中画与全屏。
 - **Microsoft Edge WebView2**：由 Windows 系统提供的运行时（Win11 自带；Win10 需单独安装），TAK 不打包其二进制。
 - **Windows Pseudo Console（ConPTY）**：Windows 10 1809+ 系统 API，用于在应用内承载 tdl 的交互式登录；通过 Go 标准库 `syscall` 直接调用，无第三方代码。
 

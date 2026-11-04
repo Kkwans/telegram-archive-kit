@@ -26,7 +26,7 @@ type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
 
 const NAV = [
-  { key: "overview", label: "概览", icon: LayoutDashboard },
+  { key: "overview", label: "下载", icon: LayoutDashboard },
   { key: "chats", label: "聊天", icon: MessagesSquare },
   { key: "library", label: "档案库", icon: Database },
   { key: "account", label: "账号", icon: UserRound },
@@ -193,8 +193,8 @@ export default function App() {
   }
   const commands = useMemo<Command[]>(() => {
     const nav: Command[] = [
-      { id: "nav-overview", label: "前往：概览", hint: "总览", run: () => setPage("overview") },
-      { id: "nav-chats", label: "前往：聊天资料库", hint: "聊天", run: () => setPage("chats") },
+      { id: "nav-overview", label: "前往：下载中心", hint: "下载", run: () => setPage("overview") },
+      { id: "nav-chats", label: "前往：当前聊天", hint: "聊天", run: () => setPage("chats") },
       { id: "nav-library", label: "前往：档案库", hint: "档案库", run: () => setPage("library") },
       { id: "nav-account", label: "前往：账号", hint: "登录", run: () => setPage("account") },
       { id: "nav-settings", label: "前往：设置", hint: "设置", run: () => setPage("settings") },
@@ -206,7 +206,7 @@ export default function App() {
       hint: `${c.messages.toLocaleString()} 条消息`,
       run: () => {
         setSelected(c.slug);
-        setPage("overview");
+        setPage("chats");
       },
     }));
     const actions: Command[] = [];
@@ -313,7 +313,7 @@ export default function App() {
             </svg>
           </span>
           <span className="brand-name">Telegram Archive Kit</span>
-          <span className="brand-ver">{boot?.version ?? "1.2"}</span>
+          <span className="brand-ver">{boot?.version ?? "2.0"}</span>
         </div>
         {boot && (
           <span className="libchip" title={boot.libraryRoot}>
@@ -369,6 +369,9 @@ export default function App() {
           <div className="side-head">
             <h2>聊天</h2>
             <span className="side-count">{chats.length} 个</span>
+            <button className="side-manage" onClick={() => setPage("library")} title="导入与管理聊天">
+              管理
+            </button>
           </div>
           <div className="chat-list">
             {chats.length === 0 && (
@@ -384,7 +387,7 @@ export default function App() {
                 className={`chat-item ${c.slug === selected ? "on" : ""}`}
                 onClick={() => {
                   setSelected(c.slug);
-                  setPage("overview");
+                  setPage("chats");
                 }}
                 title={`${c.name} · ${c.dir}`}
               >
@@ -431,7 +434,7 @@ export default function App() {
         </span>
         <span>{boot?.hasSession ? "会话已保存" : "未登录 Telegram"}</span>
         <span className="spacer" />
-        <span>Telegram Archive Kit {boot?.version ?? "1.2"} · 桌面客户端</span>
+        <span>Telegram Archive Kit {boot?.version ?? "2.0"} · 桌面客户端</span>
       </footer>
 
       {palette && (
