@@ -157,6 +157,49 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.facade.ListChats(), nil
 	case "chatMedia":
 		return b.facade.ChatMedia(p.Slug)
+	case "startImportJSON":
+		id, err := b.facade.StartImportJSON(p.Paths)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
+	case "startImportOfficial":
+		id, err := b.facade.StartImportOfficial(p.Folder, p.Slug, p.Mode)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
+	case "startExportChat":
+		id, err := b.facade.StartExportChat(p.Slug, p.Dst)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
+	case "startRefreshWeb":
+		id, err := b.facade.StartRefreshWeb(p.Slug)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
+	case "startRefreshAllWeb":
+		id, err := b.facade.StartRefreshAllWeb()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
+	case "startMergeLibrary":
+		id, err := b.facade.StartMergeLibrary(p.Root)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
+	case "tasks":
+		return b.facade.Tasks(), nil
+	case "homeStats":
+		return b.facade.HomeStats(), nil
+	case "clearTasks":
+		b.facade.ClearFinishedTasks()
+		return nil, nil
 	case "revealMedia":
 		return nil, b.facade.RevealMedia(p.Slug, p.Path)
 	case "openMedia":

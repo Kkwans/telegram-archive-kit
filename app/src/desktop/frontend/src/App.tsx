@@ -5,7 +5,9 @@ import {
   FolderInput,
   FolderOpen,
   HardDrive,
+  House,
   LayoutDashboard,
+  ListTodo,
   MessageSquare,
   MessagesSquare,
   Minus,
@@ -19,13 +21,16 @@ import {
   X,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput } from "./types";
-import { Account, Chats, Diagnostics, Library, Overview, SettingsPage, type PageCtx } from "./pages";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo } from "./types";
+import { Account, Chats, Diagnostics, Home, Library, Overview, SettingsPage, type PageCtx } from "./pages";
+import { TaskCenter } from "./TaskCenter";
+import { Select } from "./Select";
 
 type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
 
 const NAV = [
+  { key: "home", label: "首页", icon: House },
   { key: "overview", label: "下载", icon: LayoutDashboard },
   { key: "chats", label: "聊天", icon: MessagesSquare },
   { key: "library", label: "档案库", icon: Database },
@@ -38,7 +43,7 @@ export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [chats, setChats] = useState<ChatRow[]>([]);
   const [selected, setSelected] = useState("");
-  const [page, setPage] = useState("overview");
+  const [page, setPage] = useState("home");
   const [dl, setDl] = useState<DownloadState | null>(null);
   const [op, setOp] = useState<OperationState | null>(null);
   const [running, setRunning] = useState(false);
@@ -53,17 +58,21 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActive, setPaletteActive] = useState(0);
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [taskOpen, setTaskOpen] = useState(false);
   const lastSample = useRef(0);
   const toastTimer = useRef(0);
   const lastNotice = useRef(0);
   const lastPending = useRef(0);
   const lastDialog = useRef(0);
+  const seenTasks = useRef(new Map<string, string>());
+  const tasksReady = useRef(false);
   const pickerWaiters = useRef(new Map<string, { resolve: (paths: string[]) => void; reject: (e: Error) => void }>());
 
   const toast = (text: string, err = false) => {
     setToastMsg({ text, err });
     window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToastMsg(null), 6000);
+    toastTimer.current = window.setTimeout(() => setToastMsg(null), 3000);
   };
 
   useEffect(() => {
@@ -93,6 +102,7 @@ export default function App() {
     setOp(st.operation ?? null);
     setDone(st.done ?? null);
     setLogin(st.login ?? null);
+    setTasks(st.tasks ?? []);
     setRunning(st.running);
     if (st.notice && st.notice.seq !== lastNotice.current) {
       lastNotice.current = st.notice.seq;
@@ -179,9 +189,29 @@ export default function App() {
       go: setPage,
       pickFiles,
       pickFolder,
+      tasks,
+      openTasks: () => setTaskOpen(true),
     }),
-    [boot, chats, selected, dl, op, done, login, running, history]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks]
   );
+
+  useEffect(() => {
+    if (!tasksReady.current) {
+      tasks.forEach((t) => seenTasks.current.set(t.id, t.state));
+      tasksReady.current = true;
+      return;
+    }
+    let completed = false;
+    tasks.forEach((t) => {
+      const prev = seenTasks.current.get(t.id);
+      seenTasks.current.set(t.id, t.state);
+      if (prev === "running" && t.state !== "running") {
+        completed = true;
+        toast(t.state === "done" ? `任务完成：${t.title}` : `任务失败：${t.title}${t.error ? " · " + t.error : ""}`, t.state !== "done");
+      }
+    });
+    if (completed) refresh();
+  }, [tasks]);
 
   const current = chats.find((c) => c.slug === selected) || null;
 
@@ -189,21 +219,24 @@ export default function App() {
     id: string;
     label: string;
     hint?: string;
+    section: string;
     run: () => void;
   }
   const commands = useMemo<Command[]>(() => {
     const nav: Command[] = [
-      { id: "nav-overview", label: "前往：下载中心", hint: "下载", run: () => setPage("overview") },
-      { id: "nav-chats", label: "前往：当前聊天", hint: "聊天", run: () => setPage("chats") },
-      { id: "nav-library", label: "前往：档案库", hint: "档案库", run: () => setPage("library") },
-      { id: "nav-account", label: "前往：账号", hint: "登录", run: () => setPage("account") },
-      { id: "nav-settings", label: "前往：设置", hint: "设置", run: () => setPage("settings") },
-      { id: "nav-diagnostics", label: "前往：诊断与日志", hint: "诊断", run: () => setPage("diagnostics") },
+      { id: "nav-home", label: "前往：首页", hint: "总览", section: "页面", run: () => setPage("home") },
+      { id: "nav-overview", label: "前往：下载中心", hint: "下载", section: "页面", run: () => setPage("overview") },
+      { id: "nav-chats", label: "前往：当前聊天", hint: "聊天", section: "页面", run: () => setPage("chats") },
+      { id: "nav-library", label: "前往：档案库", hint: "档案库", section: "页面", run: () => setPage("library") },
+      { id: "nav-account", label: "前往：账号", hint: "登录", section: "页面", run: () => setPage("account") },
+      { id: "nav-settings", label: "前往：设置", hint: "设置", section: "页面", run: () => setPage("settings") },
+      { id: "nav-diagnostics", label: "前往：诊断与日志", hint: "诊断", section: "页面", run: () => setPage("diagnostics") },
     ];
     const chatsCmds: Command[] = chats.map((c) => ({
       id: `chat-${c.slug}`,
       label: `打开聊天：${c.name}`,
       hint: `${c.messages.toLocaleString()} 条消息`,
+      section: "聊天",
       run: () => {
         setSelected(c.slug);
         setPage("chats");
@@ -215,6 +248,7 @@ export default function App() {
         id: "act-sync",
         label: "一键同步当前聊天",
         hint: "下载缺失媒体并重建网页",
+        section: "操作",
         run: () => {
           call("startOneClick", { slug: selected }).catch((e: Error) => toast(e.message, true));
           setPage("overview");
@@ -224,19 +258,21 @@ export default function App() {
         id: "act-open",
         label: "打开当前聊天的归档库网页",
         hint: "浏览器",
+        section: "操作",
         run: () => call("openLibrary", { slug: selected }).catch((e: Error) => toast(e.message, true)),
       });
       actions.push({
         id: "act-dir",
         label: "打开当前聊天目录",
         hint: "资源管理器",
+        section: "操作",
         run: () => call("revealChat", { slug: selected }).catch((e: Error) => toast(e.message, true)),
       });
     }
     actions.push(
-      { id: "act-theme", label: theme === "light" ? "切换到深色外观" : "切换到浅色外观", hint: "外观", run: () => setTheme(theme === "light" ? "dark" : "light") },
-      { id: "act-refresh", label: "重新读取状态", hint: "刷新", run: refresh },
-      { id: "act-logs", label: "打开日志目录", hint: "诊断", run: () => call("revealLogs").catch((e: Error) => toast(e.message, true)) }
+      { id: "act-theme", label: theme === "light" ? "切换到深色外观" : "切换到浅色外观", hint: "外观", section: "操作", run: () => setTheme(theme === "light" ? "dark" : "light") },
+      { id: "act-refresh", label: "重新读取状态", hint: "刷新", section: "操作", run: refresh },
+      { id: "act-logs", label: "打开日志目录", hint: "诊断", section: "操作", run: () => call("revealLogs").catch((e: Error) => toast(e.message, true)) }
     );
     return [...nav, ...actions, ...chatsCmds];
   }, [chats, selected, theme]);
@@ -307,11 +343,7 @@ export default function App() {
     <div className="app">
       <header className="titlebar">
         <div className="brand">
-          <span className="brand-mark">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m21 3-9.4 18-1.7-7.1L3 12.2z" />
-            </svg>
-          </span>
+          <img className="brand-mark" src="./app-icon.png" alt="Telegram Archive Kit" />
           <span className="brand-name">Telegram Archive Kit</span>
           <span className="brand-ver">{boot?.version ?? "2.0"}</span>
         </div>
@@ -325,6 +357,11 @@ export default function App() {
         <button className="cmdk" title="命令面板 (Ctrl+K)" aria-label="打开命令面板" onClick={() => setPalette(true)}>
           <Search size={12} />
           Ctrl K
+        </button>
+        <button className="taskbtn" title="任务中心" aria-label="打开任务中心" onClick={() => setTaskOpen(true)}>
+          <ListTodo size={13} />
+          任务
+          {tasks.filter((t) => t.state === "running").length > 0 && <b>{tasks.filter((t) => t.state === "running").length}</b>}
         </button>
         <span className="pill" title={boot?.tdl || "未安装 tdl"}>
           <i className={`dot ${boot?.tdl ? (boot.tdlRunning ? "warn" : "") : "off"}`} />
@@ -417,6 +454,7 @@ export default function App() {
 
         <main className="main">
           <div className="scroll">
+            {page === "home" && <Home ctx={ctx} />}
             {page === "overview" && <Overview ctx={ctx} />}
             {page === "chats" && <Chats ctx={ctx} />}
             {page === "library" && <Library ctx={ctx} />}
@@ -436,6 +474,18 @@ export default function App() {
         <span className="spacer" />
         <span>Telegram Archive Kit {boot?.version ?? "2.0"} · 桌面客户端</span>
       </footer>
+
+      {taskOpen && (
+        <TaskCenter
+          tasks={tasks}
+          onClose={() => setTaskOpen(false)}
+          onClear={() => {
+            call("clearTasks")
+              .then(() => setTasks((list) => list.filter((t) => t.state === "running")))
+              .catch(() => undefined);
+          }}
+        />
+      )}
 
       {palette && (
         <div
@@ -468,17 +518,19 @@ export default function App() {
             <div className="palette-list" role="listbox" aria-label="命令">
               {filteredCommands.length === 0 && <div className="palette-empty">没有匹配的命令</div>}
               {filteredCommands.map((c, i) => (
-                <button
-                  key={c.id}
-                  role="option"
-                  aria-selected={i === paletteActive}
-                  className={i === paletteActive ? "on" : ""}
-                  onMouseEnter={() => setPaletteActive(i)}
-                  onClick={() => runCommand(c)}
-                >
-                  <span>{c.label}</span>
-                  {c.hint && <span className="hint">{c.hint}</span>}
-                </button>
+                <div key={c.id} className="palette-item-wrap">
+                  {(i === 0 || filteredCommands[i - 1].section !== c.section) && <h4 className="palette-section">{c.section}</h4>}
+                  <button
+                    role="option"
+                    aria-selected={i === paletteActive}
+                    className={i === paletteActive ? "on" : ""}
+                    onMouseEnter={() => setPaletteActive(i)}
+                    onClick={() => runCommand(c)}
+                  >
+                    <span>{c.label}</span>
+                    {c.hint && <span className="hint">{c.hint}</span>}
+                  </button>
+                </div>
               ))}
             </div>
             <div className="palette-foot">↑↓ 选择 · Enter 执行 · Esc 关闭</div>
@@ -512,11 +564,16 @@ export default function App() {
               <>
                 <div className="field">
                   <label>官方导出导入方式</label>
-                  <select value={dropMode} onChange={(e) => setDropMode(e.target.value)}>
-                    <option value="copy">复制到档案库（推荐）</option>
-                    <option value="reference">仅引用源目录（不复制媒体）</option>
-                    <option value="move">移动并整理源目录</option>
-                  </select>
+                  <Select
+                    ariaLabel="官方导出导入方式"
+                    value={dropMode}
+                    onChange={setDropMode}
+                    options={[
+                      { value: "copy", label: "复制到档案库（推荐）" },
+                      { value: "reference", label: "仅引用源目录（不复制媒体）" },
+                      { value: "move", label: "移动并整理源目录" },
+                    ]}
+                  />
                 </div>
                 <button className="btn primary" disabled={dropBusy} onClick={importDroppedOfficial}>
                   导入 {pending.folders?.length} 个官方导出

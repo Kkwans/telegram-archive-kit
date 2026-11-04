@@ -43,6 +43,10 @@ type Facade struct {
 
 	loginLaunch loginLauncher
 	libLock     *sessionLock
+
+	taskMu  sync.Mutex
+	taskSeq int64
+	tasks   []*backgroundTask
 }
 
 // DesktopState is polled by the window; it intentionally excludes Bootstrap
@@ -53,6 +57,7 @@ type DesktopState struct {
 	Operation *OperationDTO     `json:"operation,omitempty"`
 	Done      *DoneDTO          `json:"done,omitempty"`
 	Login     *LoginStateDTO    `json:"login,omitempty"`
+	Tasks     []TaskDTO         `json:"tasks"`
 	Running   bool              `json:"running"`
 }
 
@@ -167,6 +172,7 @@ func (f *Facade) State() DesktopState {
 		st.Login = &ls
 	}
 	st.Chats = f.ListChats()
+	st.Tasks = f.Tasks()
 	return st
 }
 

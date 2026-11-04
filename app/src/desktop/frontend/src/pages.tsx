@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  ArrowRight,
+  ChartPie,
   CheckCircle2,
+  Clock,
+  Database,
   Download,
   FolderOpen,
   HardDrive,
@@ -10,18 +14,21 @@ import {
   ExternalLink,
   Film,
   FileText,
+  Images,
   KeyRound,
   LocateFixed,
   Maximize2,
   MessagesSquare,
   Music,
   Play,
+  Sparkles,
   QrCode,
   RefreshCw,
   ShieldCheck,
   Square,
   Trash2,
   UserRound,
+  Video,
   Wifi,
   WifiOff,
   X,
@@ -34,22 +41,21 @@ import Fullscreen from "yet-another-react-lightbox/plugins/fullscreen";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/thumbnails.css";
 import "yet-another-react-lightbox/plugins/counter.css";
-import { MediaPlayer, MediaProvider } from "@vidstack/react";
-import { DefaultAudioLayout, DefaultVideoLayout, defaultLayoutIcons } from "@vidstack/react/player/layouts/default";
-import "@vidstack/react/player/styles/default/theme.css";
-import "@vidstack/react/player/styles/default/layouts/video.css";
-import "@vidstack/react/player/styles/default/layouts/audio.css";
+import Artplayer from "artplayer";
 import { call } from "./rpc";
+import { Select } from "./Select";
 import type {
   Bootstrap,
   ChatRow,
   DoneState,
   DownloadState,
+  HomeStats,
   LoginState,
   MediaItem,
   OperationState,
   SessionCheck,
   TdlInfo,
+  TaskInfo,
 } from "./types";
 import { bytes, duration, rate } from "./format";
 
@@ -69,6 +75,8 @@ export interface PageCtx {
   go: (page: string) => void;
   pickFiles: (purpose: string) => Promise<string[]>;
   pickFolder: (purpose: string, title: string) => Promise<string>;
+  tasks: TaskInfo[];
+  openTasks: () => void;
 }
 
 const kindLabel = (kind: string): string =>
@@ -81,6 +89,280 @@ function polyPoints(values: number[]): string {
   return values
     .map((v, i) => `${(i * step).toFixed(1)},${(70 - Math.min(1, v / max) * 62).toFixed(1)}`)
     .join(" ");
+}
+
+/* ============================== Home ============================== */
+const MEDIA_KINDS = [
+  { key: "images", label: "图片", color: "#2f6bff" },
+  { key: "videos", label: "视频", color: "#7c5cff" },
+  { key: "audio", label: "音频", color: "#12a26a" },
+  { key: "files", label: "文件", color: "#c98a00" },
+] as const;
+
+export function Home({ ctx }: { ctx: PageCtx }) {
+  const { boot, chats, selected, setSelected, refresh, toast, go, tasks, openTasks } = ctx;
+  const [stats, setStats] = useState<HomeStats | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    call<HomeStats>("homeStats")
+      .then(setStats)
+      .catch((e: Error) => toast(e.message, true))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const totalMedia = stats ? stats.images + stats.videos + stats.audio + stats.files : 0;
+  let acc = 0;
+  const stops = MEDIA_KINDS.map((k) => {
+    const value = stats ? stats[k.key] : 0;
+    const start = totalMedia > 0 ? (acc / totalMedia) * 360 : 0;
+    acc += value;
+    const end = totalMedia > 0 ? (acc / totalMedia) * 360 : 0;
+    return `${k.color} ${start}deg ${end}deg`;
+  }).join(", ");
+  const usedPercent =
+    stats && stats.diskTotal > 0
+      ? Math.min(100, Math.max(0, Math.round(((stats.diskTotal - stats.diskFree) * 100) / stats.diskTotal)))
+      : 0;
+  const topChats = useMemo(() => [...chats].sort((a, b) => b.media - a.media).slice(0, 5), [chats]);
+  const maxMedia = Math.max(1, ...topChats.map((c) => c.media));
+  const recentChats = useMemo(
+    () => [...chats].sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "")).slice(0, 5),
+    [chats]
+  );
+  const recentTasks = tasks.slice(0, 5);
+  const current = chats.find((c) => c.slug === selected) || null;
+
+  const startSync = async () => {
+    if (!selected) {
+      go("chats");
+      return;
+    }
+    try {
+      await call("startOneClick", { slug: selected });
+      toast("已开始同步当前聊天");
+      go("overview");
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+
+  return (
+    <>
+      <section className="home-hero">
+        <div className="home-hero-main">
+          <span className="home-eyebrow">
+            <Sparkles size={12} /> TELEGRAM ARCHIVE KIT
+          </span>
+          <h1>你的离线档案库，一眼掌握</h1>
+          <p>
+            {chats.length} 个聊天 · {(stats?.messages ?? 0).toLocaleString()} 条消息 · {bytes(stats?.mediaBytes ?? 0)} 媒体已归档
+            {stats && stats.missing > 0 ? ` · ${stats.missing} 个缺失` : ""}
+          </p>
+          <div className="home-cta">
+            <button className="btn primary" onClick={startSync}>
+              <Play size={13} /> {current ? `同步「${current.name}」` : "开始同步"}
+            </button>
+            <button className="btn" onClick={() => go("library")}>
+              <Download size={13} /> 导入 result.json
+            </button>
+            <button className="btn ghost" onClick={() => boot && call("openLibrary", {}).catch((e: Error) => toast(e.message, true))}>
+              <FolderOpen size={13} /> 打开归档库
+            </button>
+            <button className="btn ghost" onClick={() => go("account")}>
+              <UserRound size={13} /> 账号与登录
+            </button>
+          </div>
+        </div>
+        <div className="home-hero-side">
+          <div
+            className="donut"
+            style={{ background: totalMedia > 0 ? `conic-gradient(${stops})` : "var(--surface-3)" }}
+            role="img"
+            aria-label="媒体构成"
+          >
+            <div className="donut-hole">
+              <b>{stats?.media ?? 0}</b>
+              <span>本地媒体</span>
+            </div>
+          </div>
+          <div className="donut-legend">
+            {MEDIA_KINDS.map((k) => (
+              <div key={k.key}>
+                <i style={{ background: k.color }} />
+                <span>{k.label}</span>
+                <b>{(stats?.[k.key] ?? 0).toLocaleString()}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="kpis home-kpis">
+        <div className="kpi">
+          <span>聊天</span>
+          <b>{chats.length}</b>
+          <small>个档案</small>
+        </div>
+        <div className="kpi">
+          <span>消息</span>
+          <b>{(stats?.messages ?? 0).toLocaleString()}</b>
+        </div>
+        <div className="kpi">
+          <span>本地媒体</span>
+          <b>{(stats?.media ?? 0).toLocaleString()}</b>
+        </div>
+        <div className="kpi">
+          <span>缺失媒体</span>
+          <b className={stats && stats.missing > 0 ? "warn" : ""}>{stats?.missing ?? 0}</b>
+        </div>
+      </section>
+
+      <div className="home-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <h3>
+              <ChartPie size={14} /> 媒体构成
+            </h3>
+            <span className="meta">{loading ? "正在统计…" : `共 ${totalMedia.toLocaleString()} 个`}</span>
+          </div>
+          <div className="kind-list">
+            {MEDIA_KINDS.map((k) => {
+              const value = stats?.[k.key] ?? 0;
+              const pct = totalMedia > 0 ? Math.round((value * 100) / totalMedia) : 0;
+              return (
+                <div className="kind-row" key={k.key}>
+                  <i style={{ background: k.color }} />
+                  <span>{k.label}</span>
+                  <div className="kind-bar">
+                    <b style={{ width: `${pct}%`, background: k.color }} />
+                  </div>
+                  <strong>{value.toLocaleString()}</strong>
+                  <em>{pct}%</em>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h3>
+              <HardDrive size={14} /> 档案库存储
+            </h3>
+            <span className="meta">{boot?.libraryRoot || "未配置"}</span>
+          </div>
+          <div className="storage-body">
+            <div className="storage-bar">
+              <b style={{ width: `${usedPercent}%` }} />
+            </div>
+            <div className="storage-labels">
+              <span>磁盘已用 {usedPercent}%</span>
+              <span>剩余 {bytes(stats?.diskFree ?? 0)}</span>
+            </div>
+            <div className="storage-facts">
+              <div>
+                <span>媒体体积</span>
+                <b>{bytes(stats?.mediaBytes ?? 0)}</b>
+              </div>
+              <div>
+                <span>网页</span>
+                <b>{stats?.pages ?? 0} 页</b>
+              </div>
+              <div>
+                <span>官方导出</span>
+                <b>{stats?.official ?? 0} 个</b>
+              </div>
+            </div>
+            <div className="chat-rank">
+              <h4>媒体最多的聊天</h4>
+              {topChats.map((c) => (
+                <button
+                  key={c.slug}
+                  className="rank-row"
+                  onClick={() => {
+                    setSelected(c.slug);
+                    go("chats");
+                  }}
+                >
+                  <span>{c.name}</span>
+                  <i>
+                    <b style={{ width: `${Math.round((c.media / maxMedia) * 100)}%` }} />
+                  </i>
+                  <strong>{c.media.toLocaleString()}</strong>
+                </button>
+              ))}
+              {topChats.length === 0 && <p className="muted">还没有聊天。</p>}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div className="home-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <h3>
+              <Clock size={14} /> 最近聊天
+            </h3>
+            <button className="btn sm ghost" onClick={() => go("chats")}>
+              查看全部 <ArrowRight size={11} />
+            </button>
+          </div>
+          {recentChats.length === 0 ? (
+            <div className="chart-empty">还没有聊天，先到档案库导入 result.json。</div>
+          ) : (
+            <div className="recent-chats">
+              {recentChats.map((c) => (
+                <button
+                  key={c.slug}
+                  onClick={() => {
+                    setSelected(c.slug);
+                    go("chats");
+                  }}
+                >
+                  <span className="avatar">{c.name.slice(0, 1)}</span>
+                  <span className="rc-main">
+                    <b>{c.name}</b>
+                    <span>
+                      {c.messages.toLocaleString()} 条 · {c.media.toLocaleString()} 媒体
+                      {c.missing > 0 ? ` · 缺失 ${c.missing}` : ""}
+                    </span>
+                  </span>
+                  <span className="rc-time">{c.updatedAt?.slice(0, 10) || "--"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h3>
+              <Database size={14} /> 最近任务
+            </h3>
+            <button className="btn sm ghost" onClick={openTasks}>
+              任务中心 <ArrowRight size={11} />
+            </button>
+          </div>
+          {recentTasks.length === 0 ? (
+            <div className="chart-empty">还没有后台任务。导入、导出、合并与重建会显示在这里。</div>
+          ) : (
+            <div className="home-tasks">
+              {recentTasks.map((t) => (
+                <div key={t.id} className={`home-task ${t.state}`}>
+                  {t.state === "running" ? <RefreshCw size={13} className="spin" /> : t.state === "done" ? <CheckCircle2 size={13} color="var(--ok)" /> : <X size={13} color="var(--danger)" />}
+                  <span>{t.title}</span>
+                  <em>{t.state === "running" ? `${t.percent}%` : t.state === "done" ? "完成" : "失败"}</em>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </>
+  );
 }
 
 /* ============================ Overview ============================ */
@@ -395,8 +677,8 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     try {
       const dst = await pickFolder("export-target", "选择目标档案库目录（可新建空目录）");
       if (!dst) return;
-      await call("exportChat", { slug: current.slug, dst });
-      toast("已复制到目标档案库");
+      await call("startExportChat", { slug: current.slug, dst });
+      toast("导出任务已加入任务中心");
     } catch (e) {
       toast((e as Error).message, true);
     }
@@ -416,15 +698,11 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
   const rebuild = async () => {
     if (!current) return;
-    setBusy("rebuild");
     try {
-      await call("refreshWeb", { slug: current.slug });
-      toast("网页已重建");
-      refresh();
+      await call("startRefreshWeb", { slug: current.slug });
+      toast("重建任务已加入任务中心");
     } catch (e) {
       toast((e as Error).message, true);
-    } finally {
-      setBusy("");
     }
   };
 
@@ -539,23 +817,6 @@ const mediaURL = (slug: string, rel: string) =>
 const thumbURL = (slug: string, rel?: string) =>
   rel ? mediaURL(slug, rel) : "";
 
-const VIDEO_MIME: Record<string, string> = {
-  mp4: "video/mp4",
-  m4v: "video/mp4",
-  mov: "video/quicktime",
-  mkv: "video/x-matroska",
-  webm: "video/webm",
-  avi: "video/x-msvideo",
-};
-const AUDIO_MIME: Record<string, string> = {
-  mp3: "audio/mpeg",
-  m4a: "audio/mp4",
-  ogg: "audio/ogg",
-  opus: "audio/ogg",
-  flac: "audio/flac",
-  wav: "audio/wav",
-  aac: "audio/aac",
-};
 const fileExt = (name: string) => (name.split(".").pop() ?? "").toLowerCase();
 
 function mediaIcon(kind: string) {
@@ -780,7 +1041,7 @@ function ImageViewer({
         plugins={[Zoom, Thumbnails, Counter, Fullscreen]}
         on={{ view: ({ index: n }) => onIndex(n) }}
         animation={{ fade: 200, swipe: 220 }}
-        zoom={{ maxZoomPixelRatio: 4, scrollToZoom: true }}
+        zoom={{ maxZoomPixelRatio: 4, scrollToZoom: true, wheelZoomDistanceFactor: 400, zoomInMultiplier: 1.25 }}
         thumbnails={{ width: 84, height: 60, gap: 6, borderRadius: 6 }}
         carousel={{ finite: false }}
       />
@@ -794,6 +1055,33 @@ function ImageViewer({
       </div>
     </>
   );
+}
+
+function ArtVideo({ src, poster, title }: { src: string; poster?: string; title: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!box.current) return;
+    const player = new Artplayer({
+      container: box.current,
+      url: src,
+      poster,
+      volume: 0.8,
+      autoplay: true,
+      pip: true,
+      setting: true,
+      playbackRate: true,
+      aspectRatio: true,
+      fullscreen: true,
+      fullscreenWeb: false,
+      miniProgressBar: true,
+      autoSize: false,
+      theme: "#2f6bff",
+      lang: "zh-cn",
+      moreVideoAttr: { playsInline: true } as never,
+    });
+    return () => player.destroy(false);
+  }, [src, poster, title]);
+  return <div ref={box} className="art-player" />;
 }
 
 function VideoViewer({
@@ -814,8 +1102,8 @@ function VideoViewer({
   onOpen: (item: MediaItem) => void;
 }) {
   const item = videos[index];
-  const mime = VIDEO_MIME[fileExt(item.name)] ?? "video/mp4";
-  const src = { src: mediaURL(chat.slug, item.rel), type: mime } as never;
+  const src = mediaURL(chat.slug, item.rel);
+  const poster = item.thumb ? thumbURL(chat.slug, item.thumb) : "";
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -829,6 +1117,7 @@ function VideoViewer({
 
   return (
     <div className="media-modal" role="dialog" aria-modal="true" aria-label={`视频：${item.name}`}>
+      {poster && <div className="video-ambient" style={{ backgroundImage: `url(${poster})` }} aria-hidden="true" />}
       <header className="media-modal-head">
         <span className="media-modal-name" title={item.name}>
           {item.name}
@@ -847,18 +1136,8 @@ function VideoViewer({
           <X size={14} />
         </button>
       </header>
-      <div className="media-modal-main">
-        <MediaPlayer
-          key={item.rel}
-          src={src}
-          title={item.name}
-          autoPlay
-          playsInline
-          className="tak-player"
-        >
-          <MediaProvider />
-          <DefaultVideoLayout icons={defaultLayoutIcons} />
-        </MediaPlayer>
+      <div className="media-modal-main video">
+        <ArtVideo key={item.rel} src={src} poster={poster || undefined} title={item.name} />
       </div>
       <div className="media-strip">
         {videos.map((v, i) => (
@@ -888,7 +1167,6 @@ function AudioViewer({
   onClose: () => void;
   onReveal: (item: MediaItem) => void;
 }) {
-  const mime = AUDIO_MIME[fileExt(item.name)] ?? "audio/mpeg";
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -910,10 +1188,7 @@ function AudioViewer({
         <div className="audio-art">
           <Music size={44} />
         </div>
-        <MediaPlayer key={item.rel} src={{ src: mediaURL(chat.slug, item.rel), type: mime } as never} autoPlay className="tak-audio">
-          <MediaProvider />
-          <DefaultAudioLayout icons={defaultLayoutIcons} />
-        </MediaPlayer>
+        <audio src={mediaURL(chat.slug, item.rel)} controls autoPlay className="audio-native" />
       </div>
     </div>
   );
@@ -967,8 +1242,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     try {
       const root = await pickFolder("merge-library", "选择要合并进来的档案库");
       if (!root) return;
-      const res = await call<{ merged: number; total: number }>("mergeLibrary", { root });
-      toast(`合并完成：${res.merged}/${res.total} 个聊天`);
+      await call("startMergeLibrary", { root });
+      toast("合并任务已加入任务中心");
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
@@ -979,14 +1254,11 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     try {
       const paths = await pickFiles("import-json");
       if (!paths || paths.length === 0) return;
-      setBusy("import");
-      const list = await call<ChatRow[]>("importJSON", { paths });
-      toast(`已导入 ${list.length} 个聊天`);
+      await call("startImportJSON", { paths });
+      toast("导入任务已加入任务中心");
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
-    } finally {
-      setBusy("");
     }
   };
 
@@ -1008,29 +1280,22 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
   const confirmOfficial = async () => {
     if (!official) return;
-    setBusy("official");
     try {
-      await call("importOfficial", { folder: official.meta.root, slug: target, mode });
-      toast("官方导出已登记");
+      await call("startImportOfficial", { folder: official.meta.root, slug: target, mode });
+      toast("官方导出任务已加入任务中心");
       setOfficial(null);
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
-    } finally {
-      setBusy("");
     }
   };
 
   const refreshAll = async () => {
-    setBusy("refresh");
     try {
-      const res = await call<{ rebuilt: number; skipped: number }>("refreshAllWeb");
-      toast(`已重建 ${res.rebuilt} 个聊天网页，跳过 ${res.skipped} 个`);
-      refresh();
+      await call("startRefreshAllWeb");
+      toast("重建任务已加入任务中心");
     } catch (e) {
       toast((e as Error).message, true);
-    } finally {
-      setBusy("");
     }
   };
 
@@ -1077,14 +1342,12 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               {official.meta.messageCount} 条消息 · {official.meta.mediaFiles} 个媒体文件 · 目录 {official.meta.root}
             </p>
             <div className="row">
-              <select value={target} onChange={(e) => setTarget(e.target.value)}>
-                <option value="">创建为新聊天</option>
-                {official.chats.map((c) => (
-                  <option key={c.slug} value={c.slug}>
-                    合并到：{c.name}
-                  </option>
-                ))}
-              </select>
+              <Select
+                ariaLabel="官方导出导入目标"
+                value={target}
+                onChange={setTarget}
+                options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}
+              />
               <label className="opt">
                 <input type="radio" checked={mode === "reference"} onChange={() => setMode("reference")} /> 引用原目录
               </label>
@@ -1217,6 +1480,7 @@ interface SettingsForm {
 export function SettingsPage({ ctx }: { ctx: PageCtx }) {
   const { toast } = ctx;
   const [form, setForm] = useState<SettingsForm | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = () =>
     call<SettingsForm>("getSettings")
@@ -1232,12 +1496,15 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
     setForm((f) => (f ? { ...f, [key]: value } : f));
 
   const save = async () => {
+    setSaving(true);
     try {
       const next = await call<SettingsForm>("setSettings", { settings: form });
       setForm(next);
       toast("设置已保存");
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1252,8 +1519,8 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <button className="btn ghost" onClick={load}>
             重新读取
           </button>
-          <button className="btn primary" onClick={save}>
-            保存设置
+          <button className="btn primary" onClick={save} disabled={saving}>
+            {saving ? "正在保存…" : "保存设置"}
           </button>
         </div>
       </div>
@@ -1292,12 +1559,17 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           </div>
           <div className="field">
             <label>重试传输策略</label>
-            <select value={form.transferAdjustment} onChange={(e) => set("transferAdjustment", e.target.value)}>
-              <option value="increase">逐步增加线程（推荐）</option>
-              <option value="increase-both">线程和并发一起增加（试验）</option>
-              <option value="decrease">逐步降低线程</option>
-              <option value="keep">保持原配置</option>
-            </select>
+            <Select
+                ariaLabel="重试传输策略"
+                value={form.transferAdjustment}
+                onChange={(v) => set("transferAdjustment", v)}
+                options={[
+                  { value: "increase", label: "逐步增加线程（推荐）" },
+                  { value: "increase-both", label: "线程和并发一起增加（试验）" },
+                  { value: "decrease", label: "逐步降低线程" },
+                  { value: "keep", label: "保持原配置" },
+                ]}
+              />
           </div>
           <div className="field">
             <label>代理</label>
@@ -1740,6 +2012,11 @@ export function Account({ ctx }: { ctx: PageCtx }) {
               {CHECK_LABEL[check.state] ?? check.state}
             </b>
             <span>{check.message}</span>
+            {check.state === "unauthorized" && (
+              <span className="warn">
+                本地存在会话文件，但 Telegram 已拒绝该会话（可能在其他设备退出登录、切换了账号，或 namespace 不匹配）。重新扫码登录会覆盖为有效会话。
+              </span>
+            )}
             {check.detail && (
               <details>
                 <summary>查看输出</summary>

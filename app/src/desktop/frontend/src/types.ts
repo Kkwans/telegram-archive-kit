@@ -155,6 +155,35 @@ export interface PendingInput {
   source?: string;
 }
 
+export interface HomeStats {
+  chats: number;
+  messages: number;
+  media: number;
+  missing: number;
+  pages: number;
+  official: number;
+  images: number;
+  videos: number;
+  audio: number;
+  files: number;
+  mediaBytes: number;
+  diskFree: number;
+  diskTotal: number;
+  libraryBytes: number;
+}
+
+export interface TaskInfo {
+  id: string;
+  kind: string;
+  title: string;
+  detail?: string;
+  state: "running" | "done" | "failed";
+  percent: number;
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+}
+
 export interface PickedDialog {
   seq: number;
   kind: string;
@@ -178,5 +207,6 @@ export interface DesktopState {
   pending?: PendingInput;
   notice?: Notice;
   dialog?: PickedDialog;
+  tasks: TaskInfo[];
   running: boolean;
 }
