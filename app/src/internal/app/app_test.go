@@ -7,6 +7,7 @@ import (
 	"image"
 	imagecolor "image/color"
 	"image/jpeg"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -602,5 +603,52 @@ func TestV95ViewerHasMergeSwitch(t *testing.T) {
 	}
 	if !strings.Contains(string(pre), "classList.toggle('joined'") {
 		t.Fatal("prelude must disable joined class in unmerged mode")
+	}
+}
+
+func TestVisualizeTerminalLineKeepsQrBlocks(t *testing.T) {
+	line := "\x1b[47m  \x1b[0m\x1b[40m  \x1b[0m▄"
+	if got := visualizeTerminalLine(line); got != "██  ▄" {
+		t.Fatalf("qr mirror = %q, want %q", got, "██  ▄")
+	}
+	if isQr := isBlockLine("  ▄▄▄  "); !isQr {
+		t.Fatal("half-block line must be treated as QR content")
+	}
+}
+
+func TestReadLoginStreamCapturesPromptWithoutNewline(t *testing.T) {
+	sess := &loginSession{id: "test", kind: "code", state: "waiting"}
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		readLoginStream(pr, sess)
+		close(done)
+	}()
+	if _, err := io.WriteString(pw, "WARN: warning\nEnter phone number: "); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for sess.snapshot().Prompt != "Enter phone number:" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := sess.snapshot().Prompt; got != "Enter phone number:" {
+		t.Fatalf("prompt = %q, want partial line", got)
+	}
+	sess.mu.Lock()
+	sess.inputAt = time.Now()
+	sess.mu.Unlock()
+	if _, err := io.WriteString(pw, "+8613800000000\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	<-done
+	st := sess.snapshot()
+	if st.Prompt != "输入已提交，等待 Telegram 响应" {
+		t.Fatalf("input echo must not become prompt: %q", st.Prompt)
+	}
+	for _, line := range st.Screen {
+		if strings.Contains(line, "8613800000000") {
+			t.Fatal("phone number must never be mirrored to the screen")
+		}
 	}
 }

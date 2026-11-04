@@ -5,13 +5,28 @@ import {
   Download,
   FolderOpen,
   HardDrive,
+  KeyRound,
   Play,
+  QrCode,
   RefreshCw,
+  ShieldCheck,
   Square,
   Trash2,
+  UserRound,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DoneState, DownloadState, OperationState } from "./types";
+import type {
+  Bootstrap,
+  ChatRow,
+  DoneState,
+  DownloadState,
+  LoginState,
+  OperationState,
+  SessionCheck,
+  TdlInfo,
+} from "./types";
 import { bytes, duration, rate } from "./format";
 
 export interface PageCtx {
@@ -22,6 +37,7 @@ export interface PageCtx {
   dl: DownloadState | null;
   op: OperationState | null;
   done: DoneState | null;
+  login: LoginState | null;
   running: boolean;
   history: { now: number; avg: number }[];
   refresh: () => void;
@@ -911,3 +927,317 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
     </>
   );
 }
+
+/* ============================= Account ============================= */
+function isQrLine(line: string): boolean {
+  const t = line.replace(/\s+$/, "");
+  if (t.length < 15) return false;
+  let blocks = 0;
+  for (const ch of t) {
+    if (ch === "█" || ch === "▀" || ch === "▄") blocks++;
+    else if (ch !== " ") return false;
+  }
+  return blocks > 0;
+}
+
+// tdl keeps repainting the QR; only the last contiguous block run is current.
+function extractQr(screen: string[]): string[] {
+  let end = -1;
+  for (let i = screen.length - 1; i >= 0; i--) {
+    if (isQrLine(screen[i])) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return [];
+  let start = end;
+  while (start > 0 && isQrLine(screen[start - 1])) start--;
+  return screen.slice(start, end + 1);
+}
+
+const LOGIN_STATE_LABEL: Record<string, string> = {
+  starting: "正在启动",
+  waiting: "等待确认",
+  success: "登录成功",
+  failed: "登录失败",
+  cancelled: "已取消",
+  missing: "会话已结束",
+};
+
+const CHECK_LABEL: Record<string, string> = {
+  ready: "连接正常",
+  unauthorized: "授权不可用",
+  network: "网络检查失败",
+  timeout: "连接检查超时",
+  "check-failed": "chat ls 检查失败",
+  "no-tdl": "tdl 未安装",
+  busy: "暂时无法检查",
+};
+
+function promptLabel(prompt?: string): string {
+  const p = (prompt ?? "").toLowerCase();
+  if (p.includes("phone")) return "请输入手机号（含国家码，例如 +8613800000000）";
+  if (p.includes("code")) return "请输入 Telegram 发来的验证码";
+  if (p.includes("password")) return "请输入两步验证密码";
+  return "按终端提示输入内容后发送";
+}
+
+export function Account({ ctx }: { ctx: PageCtx }) {
+  const { boot, login, running, refresh, toast } = ctx;
+  const [info, setInfo] = useState<TdlInfo | null>(null);
+  const [check, setCheck] = useState<SessionCheck | null>(null);
+  const [busy, setBusy] = useState("");
+  const [entry, setEntry] = useState("");
+  const [showRaw, setShowRaw] = useState(false);
+
+  const loadInfo = () =>
+    call<TdlInfo>("tdlInfo")
+      .then(setInfo)
+      .catch((e: Error) => toast(e.message, true));
+  useEffect(() => {
+    loadInfo();
+  }, []);
+  useEffect(() => {
+    if (login?.state === "success") {
+      loadInfo();
+      refresh();
+    }
+  }, [login?.state]);
+
+  const active = !!login && (login.state === "starting" || login.state === "waiting");
+  const screen = login?.screen ?? [];
+  const qr = extractQr(screen);
+  const tdlMissing = !info?.exe;
+
+  const startLogin = async (kind: "qr" | "code") => {
+    if (running) {
+      toast("有下载任务进行中，完成或取消后再登录", true);
+      return;
+    }
+    setBusy("login");
+    setEntry("");
+    setShowRaw(false);
+    try {
+      const st = await call<LoginState>("startLogin", { kind });
+      if (st.state === "failed") toast(st.message || "登录启动失败", true);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const cancelLogin = async () => {
+    if (!login) return;
+    try {
+      await call("loginCancel", { id: login.id });
+      toast("已取消登录");
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+
+  const sendEntry = async () => {
+    if (!login || !entry.trim()) return;
+    try {
+      await call("loginInput", { id: login.id, text: entry.trim() });
+      setEntry("");
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+
+  const checkSession = async () => {
+    setBusy("check");
+    setCheck(null);
+    try {
+      const st = await call<SessionCheck>("sessionCheck", { timeout: 45 });
+      setCheck(st);
+      loadInfo();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const installTdl = async () => {
+    setBusy("install");
+    try {
+      const next = await call<TdlInfo>("installTdl");
+      setInfo(next);
+      refresh();
+      toast("tdl 已安装");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const killTdl = async () => {
+    setBusy("kill");
+    try {
+      await call("killTdl");
+      loadInfo();
+      toast("已结束 tdl 进程");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const sessionState = info?.hasSession ? "已发现本地会话" : "未发现本地会话";
+  const checkTone =
+    check && (check.state === "ready" ? "ok" : check.state === "unauthorized" ? "danger" : check.state === "busy" ? "" : "warn");
+
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1>账号</h1>
+          <p>在本机完成 Telegram 登录；会话文件只保存在 tdl 全局目录</p>
+        </div>
+        <div className="actions">
+          <button className="btn ghost" onClick={() => call("openTdlDir")}>
+            <FolderOpen size={13} /> 打开会话目录
+          </button>
+          <button className="btn primary" onClick={loadInfo}>
+            <RefreshCw size={13} /> 刷新状态
+          </button>
+        </div>
+      </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>tdl 与本地会话</h3>
+          <span className="meta">
+            <span className={`dot ${info?.hasSession ? "" : "off"}`} /> {sessionState}
+          </span>
+        </div>
+        <dl className="kv">
+          <dt>tdl 程序</dt>
+          <dd>{info?.exe || "未安装"}</dd>
+          <dt>版本</dt>
+          <dd>{info?.version || "未知"}</dd>
+          <dt>Namespace</dt>
+          <dd>{info?.namespace || "-"}</dd>
+          <dt>会话目录</dt>
+          <dd>{info?.sessionDir || "-"}</dd>
+          <dt>本地登录</dt>
+          <dd className={info?.hasSession ? "" : "warn"}>{sessionState}</dd>
+          <dt>进程状态</dt>
+          <dd className={info?.running ? "warn" : ""}>{info?.running ? "tdl.exe 正在运行" : "未运行"}</dd>
+        </dl>
+        <div className="acct-actions">
+          {tdlMissing && (
+            <button className="btn primary" disabled={busy === "install"} onClick={installTdl}>
+              {busy === "install" ? "正在从 GitHub 安装 tdl…" : "安装 tdl"}
+            </button>
+          )}
+          <button className="btn" disabled={busy === "check"} onClick={checkSession}>
+            <Wifi size={13} /> {busy === "check" ? "正在检查连接（最长 45 秒）…" : "检查连接 / 授权"}
+          </button>
+          {info?.running && (
+            <button className="btn danger" disabled={busy === "kill"} onClick={killTdl}>
+              <WifiOff size={13} /> 结束 tdl 进程
+            </button>
+          )}
+        </div>
+        {check && (
+          <div className={`check-result ${checkTone}`}>
+            <b>
+              {checkTone === "ok" ? <ShieldCheck size={14} /> : checkTone === "danger" ? <WifiOff size={14} /> : <Wifi size={14} />}
+              {CHECK_LABEL[check.state] ?? check.state}
+            </b>
+            <span>{check.message}</span>
+            {check.detail && (
+              <details>
+                <summary>查看输出</summary>
+                <pre>{check.detail}</pre>
+              </details>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>Telegram 登录</h3>
+          <span className="meta">{active && login ? `${loginKindLabel(login.kind)} · ${LOGIN_STATE_LABEL[login.state] ?? login.state}` : "扫码或验证码"}</span>
+        </div>
+
+        {!active ? (
+          <div className="acct-login">
+            <div className="acct-pick">
+              <button className="acct-choice" disabled={busy === "login" || tdlMissing || running} onClick={() => startLogin("qr")}>
+                <QrCode size={22} />
+                <b>二维码登录</b>
+                <span>用手机 Telegram 扫描应用内二维码；最快捷</span>
+              </button>
+              <button className="acct-choice" disabled={busy === "login" || tdlMissing || running} onClick={() => startLogin("code")}>
+                <KeyRound size={22} />
+                <b>手机号验证码登录</b>
+                <span>扫码不方便时，输入手机号和 Telegram 验证码</span>
+              </button>
+            </div>
+            <div className="acct-note">
+              <UserRound size={14} />
+              <div>
+                <p>已有会话无需重复登录；只有首次使用、授权明确失效或切换账号时才需要。</p>
+                <p>登录过程完全在本机进行，验证码不会写入配置或日志。</p>
+                {running && <p className="warn">当前有下载任务进行中，完成或取消后才能登录。</p>}
+                {tdlMissing && <p className="warn">尚未安装 tdl，请先在上方安装。</p>}
+                {login && <p className={login.state === "success" ? "ok" : login.state === "failed" ? "danger" : ""}>上次登录：{LOGIN_STATE_LABEL[login.state] ?? login.state}{login.message ? ` · ${login.message}` : ""}</p>}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="acct-login live">
+            <div className="acct-stage">
+              {login.kind === "qr" && qr.length === 0 && <p className="acct-prompt warn">正在等待二维码…</p>}
+              {login.kind === "qr" && qr.length > 0 && (
+                <div className="qr-wrap" aria-label="登录二维码">
+                  <pre className="qr-text">{qr.join("\n")}</pre>
+                </div>
+              )}
+              {login.kind === "code" && (
+                <div className="acct-code">
+                  <p>{login.prompt || "按终端提示输入手机号或验证码"}</p>
+                  <div className="acct-entry">
+                    <input
+                      type="text"
+                      value={entry}
+                      autoFocus
+                      placeholder={promptLabel(login.prompt)}
+                      onChange={(e) => setEntry(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") sendEntry();
+                      }}
+                    />
+                    <button className="btn primary" disabled={!entry.trim()} onClick={sendEntry}>
+                      发送
+                    </button>
+                  </div>
+                </div>
+              )}
+              {login.kind === "qr" && login.prompt && <p className="acct-prompt">{login.prompt}</p>}
+              <div className="acct-live-actions">
+                <button className="btn danger" onClick={cancelLogin}>
+                  <Square size={12} /> 取消登录
+                </button>
+                <button className="btn ghost" onClick={() => setShowRaw((v) => !v)}>
+                  {showRaw ? "隐藏原始输出" : "原始输出"}
+                </button>
+              </div>
+              {showRaw && <pre className="logview">{screen.join("\n")}</pre>}
+            </div>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
+const loginKindLabel = (kind: string) => (kind === "code" ? "手机号验证码" : "二维码");

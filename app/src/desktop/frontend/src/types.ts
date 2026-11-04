@@ -111,10 +111,37 @@ export interface Reply {
   error?: string;
 }
 
+export interface LoginState {
+  id: string;
+  kind: string;
+  state: "starting" | "waiting" | "success" | "failed" | "cancelled" | "missing";
+  screen: string[];
+  prompt?: string;
+  message?: string;
+  seq: number;
+}
+
+export interface TdlInfo {
+  exe: string;
+  version: string;
+  sessionDir: string;
+  hasSession: boolean;
+  running: boolean;
+  namespace: string;
+}
+
+export interface SessionCheck {
+  state: string;
+  message: string;
+  detail?: string;
+  code: number;
+}
+
 export interface DesktopState {
   chats: ChatRow[];
   download?: DownloadState;
   operation?: OperationState;
   done?: DoneState;
+  login?: LoginState;
   running: boolean;
 }

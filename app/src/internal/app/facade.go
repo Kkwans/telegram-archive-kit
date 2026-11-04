@@ -39,6 +39,9 @@ type Facade struct {
 	done    DoneDTO
 	hasDone bool
 	running bool
+	login   *loginSession
+
+	loginLaunch loginLauncher
 }
 
 // DesktopState is polled by the window; it intentionally excludes Bootstrap
@@ -48,6 +51,7 @@ type DesktopState struct {
 	Download  *DownloadSnapshot `json:"download,omitempty"`
 	Operation *OperationDTO     `json:"operation,omitempty"`
 	Done      *DoneDTO          `json:"done,omitempty"`
+	Login     *LoginStateDTO    `json:"login,omitempty"`
 	Running   bool              `json:"running"`
 }
 
@@ -110,6 +114,10 @@ func (f *Facade) State() DesktopState {
 		st.Done = &done
 	}
 	f.mu.Unlock()
+	if f.login != nil {
+		ls := f.login.snapshot()
+		st.Login = &ls
+	}
 	st.Chats = f.ListChats()
 	return st
 }

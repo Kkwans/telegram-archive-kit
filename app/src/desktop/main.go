@@ -31,6 +31,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	facade.SetLoginLauncher(newConPTYLauncher())
 	bridge := NewBridge(facade)
 
 	windowsOpts := application.WindowsOptions{

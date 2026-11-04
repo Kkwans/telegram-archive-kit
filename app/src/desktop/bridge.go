@@ -77,6 +77,10 @@ type apiParams struct {
 	Initial  string              `json:"initial"`
 	Paths    []string            `json:"paths"`
 	Settings *takapp.SettingsDTO `json:"settings"`
+	Kind     string              `json:"kind"`
+	ID       string              `json:"id"`
+	Text     string              `json:"text"`
+	Timeout  int                 `json:"timeout"`
 }
 
 func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
@@ -156,6 +160,27 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.facade.ListLogs(), nil
 	case "readLog":
 		return b.facade.ReadLog(p.Name)
+
+	case "tdlInfo":
+		return b.facade.TdlInfo(), nil
+	case "sessionCheck":
+		return b.facade.SessionCheck(p.Timeout), nil
+	case "installTdl":
+		return b.facade.InstallTdl()
+	case "killTdl":
+		killed, err := b.facade.KillTdl()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]bool{"killed": killed}, nil
+	case "openTdlDir":
+		return nil, b.facade.OpenTdlDir()
+	case "startLogin":
+		return b.facade.StartLogin(p.Kind)
+	case "loginInput":
+		return nil, b.facade.LoginInput(p.ID, p.Text)
+	case "loginCancel":
+		return map[string]bool{"cancelled": b.facade.LoginCancel(p.ID)}, nil
 
 	case "windowMinimize":
 		if b.window != nil {

@@ -136,6 +136,7 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(160, 175, 2
 /* ---------- main ---------- */
 .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 14px; }
+.scroll > * { flex: 0 0 auto; }
 .page-head { display: flex; align-items: flex-start; gap: 14px; }
 .page-head h1 { margin: 0; font-size: 20px; font-weight: 680; letter-spacing: -0.01em; }
 .page-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
@@ -295,3 +296,55 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(160, 175, 2
 .actions-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .muted { color: var(--muted); font-size: 12px; }
 .danger-text { color: var(--danger); }
+
+/* ============================= Account ============================= */
+.acct-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 16px 14px; }
+.check-result { margin: 0 16px 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.check-result b { display: flex; align-items: center; gap: 7px; font-size: 12.5px; }
+.check-result.ok b { color: var(--ok); }
+.check-result.warn b { color: var(--warn); }
+.check-result.danger b { color: var(--danger); }
+.check-result > span { color: var(--muted); }
+.check-result details summary { cursor: pointer; color: var(--faint); font-size: 11.5px; margin-top: 4px; }
+.check-result pre { margin: 6px 0 0; max-height: 200px; overflow: auto; background: var(--surface-3); padding: 8px; border-radius: 6px; font: 11px/1.6 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+
+.acct-login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 16px; padding: 16px; }
+.acct-login.live { grid-template-columns: 1fr; }
+.acct-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.acct-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--text);
+  cursor: pointer; text-align: left; transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.acct-choice:hover:not([disabled]) { border-color: rgba(47, 107, 255, 0.45); background: var(--accent-soft); transform: translateY(-1px); }
+.acct-choice b { font-size: 13px; font-weight: 650; }
+.acct-choice span { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+.acct-choice[disabled] { opacity: 0.5; cursor: not-allowed; }
+.acct-choice svg { color: var(--accent); }
+.acct-note { display: flex; gap: 9px; align-items: flex-start; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 12px; line-height: 1.65; background: var(--surface-2); }
+.acct-note svg { flex: 0 0 auto; margin-top: 2px; color: var(--faint); }
+.acct-note p { margin: 0 0 6px; }
+.acct-note p:last-child { margin-bottom: 0; }
+.acct-note .warn { color: var(--warn); }
+.acct-note .ok { color: var(--ok); }
+.acct-note .danger { color: var(--danger); }
+.acct-stage { display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.qr-wrap { background: #0a0c11; border-radius: 12px; padding: 12px; display: flex; justify-content: center; max-width: 100%; overflow: auto; }
+.qr-text { margin: 0; color: #eef2ff; font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 9px; line-height: 9px; white-space: pre; }
+.acct-prompt { margin: 0; font-size: 12px; color: var(--muted); text-align: center; }
+.acct-prompt.warn { color: var(--warn); }
+.acct-live-actions { display: flex; gap: 8px; }
+.acct-code { width: min(420px, 100%); display: flex; flex-direction: column; gap: 10px; }
+.acct-code p { margin: 0; font-size: 12.5px; color: var(--muted); text-align: center; }
+.acct-entry { display: flex; gap: 8px; }
+.acct-entry input {
+  flex: 1; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2);
+  color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; min-width: 0;
+}
+.acct-entry input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.acct-entry .btn { height: 34px; }
+
+@media (max-width: 900px) {
+  .acct-login { grid-template-columns: 1fr; }
+  .acct-pick { grid-template-columns: 1fr; }
+}

@@ -12,11 +12,12 @@ import {
   Square,
   Stethoscope,
   Sun,
+  UserRound,
   X,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, OperationState } from "./types";
-import { Chats, Diagnostics, Library, Overview, SettingsPage, type PageCtx } from "./pages";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState } from "./types";
+import { Account, Chats, Diagnostics, Library, Overview, SettingsPage, type PageCtx } from "./pages";
 
 type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
@@ -25,6 +26,7 @@ const NAV = [
   { key: "overview", label: "概览", icon: LayoutDashboard },
   { key: "chats", label: "聊天", icon: MessagesSquare },
   { key: "library", label: "档案库", icon: Database },
+  { key: "account", label: "账号", icon: UserRound },
   { key: "settings", label: "设置", icon: Settings },
   { key: "diagnostics", label: "诊断", icon: Stethoscope },
 ];
@@ -38,6 +40,7 @@ export default function App() {
   const [op, setOp] = useState<OperationState | null>(null);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState<DoneState | null>(null);
+  const [login, setLogin] = useState<LoginState | null>(null);
   const [history, setHistory] = useState<{ now: number; avg: number }[]>([]);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toastMsg, setToastMsg] = useState<{ text: string; err: boolean } | null>(null);
@@ -63,6 +66,7 @@ export default function App() {
         setDl(st.download ?? null);
         setOp(st.operation ?? null);
         setDone(st.done ?? null);
+        setLogin(st.login ?? null);
         setRunning(st.running);
       })
       .catch(() => undefined);
@@ -81,6 +85,7 @@ export default function App() {
         setDl(st.download ?? null);
         setOp(st.operation ?? null);
         setDone(st.done ?? null);
+        setLogin(st.login ?? null);
         setRunning(st.running);
         if (st.download) {
           const now = Date.now();
@@ -111,13 +116,14 @@ export default function App() {
       dl,
       op,
       done,
+      login,
       running,
       history,
       refresh,
       toast,
       go: setPage,
     }),
-    [boot, chats, selected, dl, op, done, running, history]
+    [boot, chats, selected, dl, op, done, login, running, history]
   );
 
   const current = chats.find((c) => c.slug === selected) || null;
@@ -145,9 +151,9 @@ export default function App() {
           <i className={`dot ${boot?.tdl ? (boot.tdlRunning ? "warn" : "") : "off"}`} />
           {boot?.tdl ? (boot.tdlRunning ? "tdl 运行中" : "tdl 已连接") : "tdl 未安装"}
         </span>
-        <span className="pill" title={boot?.hasSession ? "已发现本地 tdl 会话" : "尚未登录 Telegram"}>
+        <span className="pill" title={boot?.hasSession ? "仅表示本机存在会话文件；实际连接状态请在「账号」页检查" : "尚未登录 Telegram"}>
           <i className={`dot ${boot?.hasSession ? "" : "off"}`} />
-          {boot?.hasSession ? "已登录" : "未登录"}
+          {boot?.hasSession ? "有会话文件" : "未登录"}
         </span>
         <div className="seg" role="group" aria-label="外观">
           <button className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")} title="浅色">
@@ -232,6 +238,7 @@ export default function App() {
             {page === "overview" && <Overview ctx={ctx} />}
             {page === "chats" && <Chats ctx={ctx} />}
             {page === "library" && <Library ctx={ctx} />}
+            {page === "account" && <Account ctx={ctx} />}
             {page === "settings" && <SettingsPage ctx={ctx} />}
             {page === "diagnostics" && <Diagnostics ctx={ctx} />}
           </div>
