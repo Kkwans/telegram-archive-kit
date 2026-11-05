@@ -119,6 +119,18 @@ func (a *App) loadSettings() error {
 	if s.TransferAdjustment != "increase" && s.TransferAdjustment != "increase-both" && s.TransferAdjustment != "decrease" && s.TransferAdjustment != "keep" {
 		s.TransferAdjustment = "increase"
 	}
+	if s.VideoSeekSeconds <= 0 {
+		s.VideoSeekSeconds = d.VideoSeekSeconds
+	}
+	if s.VideoLongPressRate < 1 {
+		s.VideoLongPressRate = d.VideoLongPressRate
+	}
+	if s.VideoMaxVolume <= 0 {
+		s.VideoMaxVolume = d.VideoMaxVolume
+	}
+	if s.SpeedWindowSeconds <= 0 {
+		s.SpeedWindowSeconds = d.SpeedWindowSeconds
+	}
 	if s.SchemaVersion == 0 {
 		s.SchemaVersion = d.SchemaVersion
 	}

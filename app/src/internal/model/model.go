@@ -179,6 +179,10 @@ type Settings struct {
 	AdaptiveConcurrency    bool     `json:"adaptive_concurrency"`
 	StalledFileRetries     int      `json:"stalled_file_retries"`
 	TransferAdjustment     string   `json:"transfer_adjustment"`
+	VideoSeekSeconds       int      `json:"video_seek_seconds,omitempty"`
+	VideoLongPressRate     float64  `json:"video_long_press_rate,omitempty"`
+	VideoMaxVolume         int      `json:"video_max_volume,omitempty"`
+	SpeedWindowSeconds     int      `json:"speed_window_seconds,omitempty"`
 }
 
 func DefaultSettings() Settings {
@@ -197,5 +201,9 @@ func DefaultSettings() Settings {
 		AdaptiveConcurrency: false,
 		StalledFileRetries:  3,
 		TransferAdjustment:  "increase",
+		VideoSeekSeconds:    5,
+		VideoLongPressRate:  4,
+		VideoMaxVolume:      200,
+		SpeedWindowSeconds:  180,
 	}
 }

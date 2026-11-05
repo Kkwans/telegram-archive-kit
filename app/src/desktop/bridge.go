@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -20,14 +23,22 @@ import (
 // same-origin HTTP endpoint inside the WebView2 window: no port, no CORS, no
 // generated bindings and no WebView message channel to keep alive.
 type Bridge struct {
-	facade *takapp.Facade
-	window *application.WebviewWindow
+	facade  *takapp.Facade
+	window  *application.WebviewWindow
+	profile *ProfileService
 
 	mu      sync.Mutex
 	pending *PendingInput
 	notice  *Notice
 	dialog  *PickedDialog
 	seq     int64
+}
+
+// SessionCheckReply adds the live Telegram profile to the existing check result.
+type SessionCheckReply struct {
+	takapp.SessionCheckDTO
+	Profile *AccountProfile `json:"profile,omitempty"`
+	Source  string          `json:"source,omitempty"`
 }
 
 // PickedDialog is the asynchronous result of a native file/folder picker.
@@ -64,7 +75,55 @@ type stateReply struct {
 	Dialog  *PickedDialog `json:"dialog,omitempty"`
 }
 
-func NewBridge(f *takapp.Facade) *Bridge { return &Bridge{facade: f} }
+func NewBridge(f *takapp.Facade) *Bridge {
+	return &Bridge{facade: f, profile: NewProfileService(f.ConfigDir())}
+}
+
+// sessionCheck queries Telegram directly with the existing tdl auth key. That
+// is much faster than `tdl chat ls` and yields the real account identity.
+func (b *Bridge) sessionCheck(timeout int) SessionCheckReply {
+	info := b.facade.AccountInfo()
+	cached := b.profile.Cached(info.Namespace)
+	if b.facade.Running() {
+		msg := "下载任务正在运行，Telegram 授权有效"
+		if cached != nil {
+			msg = fmt.Sprintf("%s（上次验证：%s）", msg, time.UnixMilli(cached.CheckedAt).Format("15:04"))
+		}
+		return SessionCheckReply{
+			SessionCheckDTO: takapp.SessionCheckDTO{State: "ready", Message: msg, Code: 0},
+			Profile:         cached, Source: "inferred",
+		}
+	}
+	if !info.HasSessionFile {
+		return SessionCheckReply{SessionCheckDTO: takapp.SessionCheckDTO{
+			State: "unauthorized", Message: "当前 namespace 没有本地会话，请先登录", Code: -1,
+		}}
+	}
+	if timeout <= 0 || timeout > 20 {
+		timeout = 12
+	}
+	settings := b.facade.GetSettings()
+	profile, err := b.profile.Fetch(context.Background(), info.Namespace, settings.Proxy, time.Duration(timeout)*time.Second)
+	if err == nil {
+		return SessionCheckReply{
+			SessionCheckDTO: takapp.SessionCheckDTO{State: "ready", Message: "Telegram 连接正常，账号资料已更新", Code: 0},
+			Profile:         &profile, Source: "live",
+		}
+	}
+	state, message := classifyProfileError(err)
+	if state == "busy" && info.Running {
+		state = "busy"
+		message = "tdl 正在运行（下载或登录中），完成后再检查"
+	}
+	out := SessionCheckReply{
+		SessionCheckDTO: takapp.SessionCheckDTO{State: state, Message: message, Detail: err.Error(), Code: 1},
+		Source:          "cache",
+	}
+	if cached != nil {
+		out.Profile = cached
+	}
+	return out
+}
 
 func (b *Bridge) Attach(w *application.WebviewWindow) { b.window = w }
 
@@ -201,6 +260,8 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return map[string]string{"taskId": id}, nil
 	case "tasks":
 		return b.facade.Tasks(), nil
+	case "taskDetail":
+		return b.facade.TaskDetail(p.ID)
 	case "homeStats":
 		return b.facade.HomeStats(), nil
 	case "clearTasks":
@@ -291,10 +352,17 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.facade.TdlInfo(), nil
 	case "accountInfo":
 		return b.facade.AccountInfo(), nil
+	case "accountProfile":
+		return b.profile.Cached(b.facade.AccountInfo().Namespace), nil
 	case "logoutTdl":
-		return nil, b.facade.LogoutTdl()
+		ns := b.facade.AccountInfo().Namespace
+		if err := b.facade.LogoutTdl(); err != nil {
+			return nil, err
+		}
+		b.profile.Clear(ns)
+		return nil, nil
 	case "sessionCheck":
-		return b.facade.SessionCheck(p.Timeout), nil
+		return b.sessionCheck(p.Timeout), nil
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":

@@ -449,7 +449,9 @@ func (f *Facade) LoginInput(id, text string) error {
 	if in == nil {
 		return fmt.Errorf("当前登录方式不需要输入")
 	}
-	_, err := io.WriteString(in, strings.TrimSpace(text)+"\n")
+	// ConPTY runs tdl in raw terminal mode: Enter is CR, not LF. Writing LF
+	// leaves the prompt waiting forever, which looked like "code never arrives".
+	_, err := io.WriteString(in, strings.TrimSpace(text)+"\r")
 	return err
 }
 

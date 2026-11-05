@@ -20,7 +20,9 @@ var ErrOperationRunning = errors.New("已有任务正在进行，请等待完成
 type desktopOp struct {
 	id     string
 	slug   string
+	chat   string
 	cancel context.CancelFunc
+	task   *backgroundTask
 }
 
 // Facade is the desktop client's only door into the engine. It owns the App
@@ -44,9 +46,10 @@ type Facade struct {
 	loginLaunch loginLauncher
 	libLock     *sessionLock
 
-	taskMu  sync.Mutex
-	taskSeq int64
-	tasks   []*backgroundTask
+	taskMu          sync.Mutex
+	taskSeq         int64
+	tasks           []*backgroundTask
+	lastTaskPersist time.Time
 }
 
 // DesktopState is polled by the window; it intentionally excludes Bootstrap
@@ -126,30 +129,68 @@ func (f *Facade) SetEmitter(fn func(event string, data any)) {
 }
 
 func (f *Facade) send(event string, data any) {
+	var finished *backgroundTask
+	var finishErr error
+	persist := false
 	f.mu.Lock()
 	switch event {
 	case "tak:download":
 		if s, ok := data.(DownloadSnapshot); ok {
 			f.latest = s
 			f.hasDl = true
+			if f.op != nil && f.op.task != nil {
+				f.op.task.updateDownload(s)
+				if time.Since(f.lastTaskPersist) >= 10*time.Second {
+					f.lastTaskPersist = time.Now()
+					persist = true
+				}
+			}
 		}
 	case "tak:operation":
 		if o, ok := data.(OperationDTO); ok {
 			f.opState = o
 			f.hasOp = true
+			if f.op != nil && f.op.task != nil {
+				pct := -1
+				if o.Total > 0 {
+					pct = int(o.Current * 100 / o.Total)
+				}
+				f.op.task.update(pct, o.Stage)
+			}
 		}
 	case "tak:done":
 		if d, ok := data.(DoneDTO); ok {
 			f.done = d
 			f.hasDone = true
 			f.running = false
+			if f.op != nil && f.op.task != nil {
+				finished = f.op.task
+				if !d.OK {
+					finishErr = errors.New(fallbackText(d.Error, d.Stage, "同步失败"))
+				}
+			}
 		}
 	}
 	fn := f.emit
 	f.mu.Unlock()
+	if finished != nil {
+		finished.finish(finishErr)
+		f.saveTasks()
+	} else if persist {
+		f.saveTasks()
+	}
 	if fn != nil {
 		fn(event, data)
 	}
+}
+
+func fallbackText(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // State is the polling endpoint for the desktop window.
@@ -179,6 +220,8 @@ func (f *Facade) State() DesktopState {
 }
 
 func (f *Facade) Ping() string { return "pong" }
+
+func (f *Facade) ConfigDir() string { return f.a.ConfigDir }
 
 func (f *Facade) Bootstrap() BootstrapDTO {
 	list := f.a.listWorkspaces()
@@ -246,7 +289,9 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	f.seq++
 	opID := fmt.Sprintf("op-%d-%d", time.Now().UnixNano(), f.seq)
 	ctx, cancel := context.WithCancel(context.Background())
-	op := &desktopOp{id: opID, slug: slug, cancel: cancel}
+	task := f.createTask("sync", "同步聊天："+meta.Chat.Name, meta.Chat.Name)
+	task.setSlug(slug)
+	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}
 	f.op = op
 	f.running = true
 	f.hasDl = false
@@ -266,6 +311,10 @@ func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceM
 			f.op = nil
 		}
 		f.mu.Unlock()
+		if op.task != nil {
+			op.task.finish(errors.New("同步任务意外结束"))
+			f.saveTasks()
+		}
 	}()
 
 	rep := &eventReporter{opID: op.id, emit: f.send}

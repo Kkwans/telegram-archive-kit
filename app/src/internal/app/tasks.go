@@ -13,26 +13,55 @@ import (
 
 // TaskDTO is one background operation shown in the desktop task center.
 type TaskDTO struct {
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	Title      string `json:"title"`
-	Chat       string `json:"chat,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	State      string `json:"state"` // running|done|failed
-	Percent    int    `json:"percent"`
-	StartedAt  int64  `json:"startedAt"`
-	FinishedAt int64  `json:"finishedAt,omitempty"`
-	Error      string `json:"error,omitempty"`
+	ID         string  `json:"id"`
+	Kind       string  `json:"kind"`
+	Title      string  `json:"title"`
+	Chat       string  `json:"chat,omitempty"`
+	Slug       string  `json:"slug,omitempty"`
+	Detail     string  `json:"detail,omitempty"`
+	State      string  `json:"state"` // running|done|failed
+	Percent    int     `json:"percent"`
+	AvgSpeed   float64 `json:"avgSpeed,omitempty"`
+	PeakSpeed  float64 `json:"peakSpeed,omitempty"`
+	Bytes      int64   `json:"bytes,omitempty"`
+	Done       int     `json:"done,omitempty"`
+	Total      int     `json:"total,omitempty"`
+	ElapsedMs  int64   `json:"elapsedMs,omitempty"`
+	StartedAt  int64   `json:"startedAt"`
+	FinishedAt int64   `json:"finishedAt,omitempty"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// SpeedPoint is one persisted sample of a download task's speed curve.
+type SpeedPoint struct {
+	At  int64   `json:"at"`
+	Now float64 `json:"now"`
+	Avg float64 `json:"avg"`
+}
+
+// TaskDetailDTO adds the full speed series; it is only fetched on demand so
+// the 600ms state poll stays small.
+type TaskDetailDTO struct {
+	TaskDTO
+	Series []SpeedPoint `json:"series,omitempty"`
 }
 
 type backgroundTask struct {
-	mu  sync.Mutex
-	dto TaskDTO
+	mu           sync.Mutex
+	dto          TaskDTO
+	series       []SpeedPoint
+	lastSampleAt time.Time
 }
 
 func (t *backgroundTask) setChat(chat string) {
 	t.mu.Lock()
 	t.dto.Chat = chat
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setSlug(slug string) {
+	t.mu.Lock()
+	t.dto.Slug = slug
 	t.mu.Unlock()
 }
 
@@ -50,16 +79,68 @@ func (t *backgroundTask) update(percent int, detail string) {
 	t.mu.Unlock()
 }
 
+// updateDownload stores summary stats and samples the curve at most every
+// 1.5 seconds, keeping the persisted history compact.
+func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s.Percent >= 0 {
+		t.dto.Percent = int(s.Percent + 0.5)
+		if t.dto.Percent > 100 {
+			t.dto.Percent = 100
+		}
+	}
+	if s.State != "" {
+		t.dto.Detail = s.State
+		if s.Total > 0 {
+			t.dto.Detail = fmt.Sprintf("%s · %d/%d 个媒体", s.State, s.Done, s.Total)
+		}
+	}
+	t.dto.AvgSpeed = s.SpeedAvg
+	if s.SpeedPeak > t.dto.PeakSpeed {
+		t.dto.PeakSpeed = s.SpeedPeak
+	}
+	if s.SpeedNow > t.dto.PeakSpeed {
+		t.dto.PeakSpeed = s.SpeedNow
+	}
+	t.dto.Bytes = s.Bytes
+	t.dto.Done = s.Done
+	t.dto.Total = s.Total
+	if s.ElapsedMs > 0 {
+		t.dto.ElapsedMs = s.ElapsedMs
+	}
+	now := time.Now()
+	if len(t.series) == 0 || now.Sub(t.lastSampleAt) >= 1500*time.Millisecond {
+		t.lastSampleAt = now
+		t.series = append(t.series, SpeedPoint{At: now.UnixMilli(), Now: s.SpeedNow, Avg: s.SpeedAvg})
+		if len(t.series) > 360 {
+			t.series = t.series[len(t.series)-360:]
+		}
+	}
+}
+
 func (t *backgroundTask) snapshot() TaskDTO {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.dto
 }
 
+func (t *backgroundTask) detail() TaskDetailDTO {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return TaskDetailDTO{TaskDTO: t.dto, Series: append([]SpeedPoint{}, t.series...)}
+}
+
 func (t *backgroundTask) finish(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.dto.State != "running" {
+		return
+	}
 	t.dto.FinishedAt = time.Now().UnixMilli()
+	if t.dto.ElapsedMs == 0 {
+		t.dto.ElapsedMs = t.dto.FinishedAt - t.dto.StartedAt
+	}
 	if err != nil {
 		t.dto.State = "failed"
 		t.dto.Error = err.Error()
@@ -69,12 +150,15 @@ func (t *backgroundTask) finish(err error) {
 	t.dto.Percent = 100
 }
 
-func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error) string {
+// createTask registers a running task without starting a goroutine. One-click
+// sync uses it so downloads show up in the same persisted history as imports
+// and exports.
+func (f *Facade) createTask(kind, title, chat string) *backgroundTask {
 	f.taskMu.Lock()
 	f.taskSeq++
 	id := fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), f.taskSeq)
 	task := &backgroundTask{dto: TaskDTO{
-		ID: id, Kind: kind, Title: title, State: "running",
+		ID: id, Kind: kind, Title: title, Chat: chat, State: "running",
 		StartedAt: time.Now().UnixMilli(),
 	}}
 	f.tasks = append([]*backgroundTask{task}, f.tasks...)
@@ -82,8 +166,12 @@ func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error)
 		f.tasks = f.tasks[:50]
 	}
 	f.taskMu.Unlock()
-
 	f.saveTasks()
+	return task
+}
+
+func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error) string {
+	task := f.createTask(kind, title, "")
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -94,7 +182,7 @@ func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error)
 		task.finish(fn(task))
 		f.saveTasks()
 	}()
-	return id
+	return task.snapshot().ID
 }
 
 func (f *Facade) Tasks() []TaskDTO {
@@ -105,6 +193,27 @@ func (f *Facade) Tasks() []TaskDTO {
 		out = append(out, t.snapshot())
 	}
 	return out
+}
+
+func (f *Facade) taskDetails() []TaskDetailDTO {
+	f.taskMu.Lock()
+	defer f.taskMu.Unlock()
+	out := make([]TaskDetailDTO, 0, len(f.tasks))
+	for _, t := range f.tasks {
+		out = append(out, t.detail())
+	}
+	return out
+}
+
+func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
+	f.taskMu.Lock()
+	defer f.taskMu.Unlock()
+	for _, t := range f.tasks {
+		if d := t.detail(); d.ID == id {
+			return d, nil
+		}
+	}
+	return TaskDetailDTO{}, fmt.Errorf("任务不存在")
 }
 
 func (f *Facade) ClearFinishedTasks() {
@@ -132,7 +241,7 @@ func (f *Facade) saveTasks() {
 	if path == "" {
 		return
 	}
-	tasks := f.Tasks()
+	tasks := f.taskDetails()
 	b, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		return
@@ -149,12 +258,13 @@ func (f *Facade) loadTasks() {
 	if err != nil {
 		return
 	}
-	var stored []TaskDTO
+	var stored []TaskDetailDTO
 	if json.Unmarshal(b, &stored) != nil {
 		return
 	}
 	f.taskMu.Lock()
-	for _, dto := range stored {
+	for _, detail := range stored {
+		dto := detail.TaskDTO
 		if dto.State == "running" {
 			dto.State = "failed"
 			dto.Error = "应用上次退出时任务未完成"
@@ -162,7 +272,7 @@ func (f *Facade) loadTasks() {
 				dto.FinishedAt = dto.StartedAt
 			}
 		}
-		f.tasks = append(f.tasks, &backgroundTask{dto: dto})
+		f.tasks = append(f.tasks, &backgroundTask{dto: dto, series: detail.Series})
 	}
 	f.taskMu.Unlock()
 }

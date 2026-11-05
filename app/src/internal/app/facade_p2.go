@@ -45,21 +45,25 @@ type StatsDTO struct {
 }
 
 type SettingsDTO struct {
-	LibraryRoot         string `json:"libraryRoot"`
-	Concurrent          int    `json:"concurrent"`
-	Threads             int    `json:"threads"`
-	Proxy               string `json:"proxy"`
-	NetworkRetryMinutes int    `json:"networkRetryMinutes"`
-	UnknownRetryCount   int    `json:"unknownRetryCount"`
-	GenerateThumbnails  bool   `json:"generateThumbnails"`
-	StallTimeoutSeconds int    `json:"stallTimeoutSeconds"`
-	StalledFileRetries  int    `json:"stalledFileRetries"`
-	TransferAdjustment  string `json:"transferAdjustment"`
-	ReconnectTimeout    string `json:"reconnectTimeout"`
-	MaxRepairPasses     int    `json:"maxRepairPasses"`
-	OpenAfterBuild      bool   `json:"openAfterBuild"`
-	TdlNamespace        string `json:"tdlNamespace"`
-	Version             string `json:"version"`
+	LibraryRoot         string  `json:"libraryRoot"`
+	Concurrent          int     `json:"concurrent"`
+	Threads             int     `json:"threads"`
+	Proxy               string  `json:"proxy"`
+	NetworkRetryMinutes int     `json:"networkRetryMinutes"`
+	UnknownRetryCount   int     `json:"unknownRetryCount"`
+	GenerateThumbnails  bool    `json:"generateThumbnails"`
+	StallTimeoutSeconds int     `json:"stallTimeoutSeconds"`
+	StalledFileRetries  int     `json:"stalledFileRetries"`
+	TransferAdjustment  string  `json:"transferAdjustment"`
+	ReconnectTimeout    string  `json:"reconnectTimeout"`
+	MaxRepairPasses     int     `json:"maxRepairPasses"`
+	OpenAfterBuild      bool    `json:"openAfterBuild"`
+	TdlNamespace        string  `json:"tdlNamespace"`
+	VideoSeekSeconds    int     `json:"videoSeekSeconds"`
+	VideoLongPressRate  float64 `json:"videoLongPressRate"`
+	VideoMaxVolume      int     `json:"videoMaxVolume"`
+	SpeedWindowSeconds  int     `json:"speedWindowSeconds"`
+	Version             string  `json:"version"`
 }
 
 type DiagRow struct {
@@ -315,7 +319,10 @@ func (f *Facade) GetSettings() SettingsDTO {
 		GenerateThumbnails: s.GenerateThumbnails, StallTimeoutSeconds: s.StallTimeoutSeconds,
 		StalledFileRetries: s.StalledFileRetries, TransferAdjustment: s.TransferAdjustment,
 		ReconnectTimeout: s.ReconnectTimeout, MaxRepairPasses: s.MaxRepairPasses,
-		OpenAfterBuild: s.OpenAfterBuild, TdlNamespace: s.TdlNamespace, Version: version,
+		OpenAfterBuild: s.OpenAfterBuild, TdlNamespace: s.TdlNamespace,
+		VideoSeekSeconds: s.VideoSeekSeconds, VideoLongPressRate: s.VideoLongPressRate,
+		VideoMaxVolume: s.VideoMaxVolume, SpeedWindowSeconds: s.SpeedWindowSeconds,
+		Version: version,
 	}
 }
 
@@ -343,6 +350,18 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 	default:
 		return f.GetSettings(), errors.New("未知的重试传输策略")
 	}
+	if dto.VideoSeekSeconds < 1 || dto.VideoSeekSeconds > 60 {
+		return f.GetSettings(), errors.New("视频快进步长需在 1–60 秒之间")
+	}
+	if dto.VideoLongPressRate < 1.1 || dto.VideoLongPressRate > 10 {
+		return f.GetSettings(), errors.New("长按倍速需在 1.1–10.0 之间")
+	}
+	if dto.VideoMaxVolume < 100 || dto.VideoMaxVolume > 300 {
+		return f.GetSettings(), errors.New("音量上限需在 100–300% 之间")
+	}
+	if dto.SpeedWindowSeconds < 60 || dto.SpeedWindowSeconds > 900 {
+		return f.GetSettings(), errors.New("速度曲线时间窗需在 60–900 秒之间")
+	}
 	s := f.a.Settings
 	s.Concurrent = dto.Concurrent
 	s.Threads = dto.Threads
@@ -360,6 +379,10 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 		s.MaxRepairPasses = dto.MaxRepairPasses
 	}
 	s.OpenAfterBuild = dto.OpenAfterBuild
+	s.VideoSeekSeconds = dto.VideoSeekSeconds
+	s.VideoLongPressRate = dto.VideoLongPressRate
+	s.VideoMaxVolume = dto.VideoMaxVolume
+	s.SpeedWindowSeconds = dto.SpeedWindowSeconds
 	if strings.TrimSpace(dto.TdlNamespace) != "" {
 		s.TdlNamespace = strings.TrimSpace(dto.TdlNamespace)
 	}
@@ -371,12 +394,24 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 }
 
 func (f *Facade) Diagnostics() []DiagRow {
+	list := f.a.listWorkspaces()
+	mediaTotal, missingTotal := 0, 0
+	for _, m := range list {
+		mediaTotal += m.MediaCount
+		missingTotal += m.MissingCount
+	}
+	missingState := "ok"
+	if missingTotal > 0 {
+		missingState = "warn"
+	}
 	rows := []DiagRow{
 		{Label: "版本", Value: version, State: "ok"},
 		{Label: "程序目录", Value: f.a.ExeDir, State: "ok"},
 		{Label: "配置文件", Value: f.a.ConfigPath, State: "ok"},
 		{Label: "档案库", Value: f.a.Settings.LibraryRoot, State: "ok"},
-		{Label: "聊天数量", Value: fmt.Sprint(len(f.a.listWorkspaces())), State: "ok"},
+		{Label: "聊天数量", Value: fmt.Sprint(len(list)), State: "ok"},
+		{Label: "媒体总数", Value: fmt.Sprint(mediaTotal), State: "ok"},
+		{Label: "缺失媒体", Value: fmt.Sprint(missingTotal), State: missingState},
 	}
 	if p := f.a.resolveTdl(); p != "" {
 		rows = append(rows, DiagRow{Label: "tdl", Value: p, State: "ok"})
