@@ -1353,7 +1353,7 @@ const ArtVideo = forwardRef<VideoApi, {
       autoplay: true,
       pip: true,
       setting: true,
-      playbackRate: true,
+      playbackRate: false,
       aspectRatio: true,
       screenshot: true,
       fullscreen: true,
@@ -1416,7 +1416,14 @@ const ArtVideo = forwardRef<VideoApi, {
       position: "right",
       html: player.icons.playbackRate.cloneNode(true) as HTMLElement,
       tooltip: "播放速度",
-      click: () => { player.setting.show = true; },
+      selector: PLAY_RATES.map((v) => ({ html: v === 1 ? "正常" : `${v}×`, value: String(v), default: v === 1 })),
+      onSelect(selector) {
+        const value = Number(selector.value);
+        rateRef.current = value;
+        boostRef.current = false;
+        player.playbackRate = value;
+        syncPreciseRange(player, value);
+      },
     });
     player.on("video:ratechange", () => {
       if (!boostRef.current) rateRef.current = player.playbackRate;
