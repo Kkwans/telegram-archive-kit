@@ -26,12 +26,18 @@ type TdlInfoDTO struct {
 }
 
 func (f *Facade) TdlInfo() TdlInfoDTO {
+	running := isTdlRunning()
+	exe := f.a.resolveTdl()
+	version := ""
+	if exe != "" {
+		version = f.a.tdlVersion()
+	}
 	return TdlInfoDTO{
-		Exe:        f.a.resolveTdl(),
-		Version:    f.a.tdlVersion(),
+		Exe:        exe,
+		Version:    version,
 		SessionDir: tdlDataDir(),
 		HasSession: hasTdlSessionData(),
-		Running:    isTdlRunning(),
+		Running:    running,
 		Namespace:  f.a.Settings.TdlNamespace,
 	}
 }

@@ -181,29 +181,37 @@ type Settings struct {
 	TransferAdjustment     string   `json:"transfer_adjustment"`
 	VideoSeekSeconds       int      `json:"video_seek_seconds,omitempty"`
 	VideoLongPressRate     float64  `json:"video_long_press_rate,omitempty"`
+	VideoLongPressDelayMS  int      `json:"video_long_press_delay_ms,omitempty"`
 	VideoMaxVolume         int      `json:"video_max_volume,omitempty"`
+	VideoVolumeStep        int      `json:"video_volume_step,omitempty"`
+	VideoFrameAspect       string   `json:"video_frame_aspect,omitempty"`
 	SpeedWindowSeconds     int      `json:"speed_window_seconds,omitempty"`
+	ViewerBackdrop         string   `json:"viewer_backdrop,omitempty"`
 }
 
 func DefaultSettings() Settings {
 	return Settings{
-		SchemaVersion:       985,
-		TdlNamespace:        DefaultNamespace,
-		Concurrent:          2,
-		Threads:             4,
-		ReconnectTimeout:    "60s",
-		MaxRepairPasses:     3,
-		OpenAfterBuild:      true,
-		NetworkRetryMinutes: 30,
-		UnknownRetryCount:   2,
-		GenerateThumbnails:  true,
-		StallTimeoutSeconds: 60,
-		AdaptiveConcurrency: false,
-		StalledFileRetries:  3,
-		TransferAdjustment:  "increase",
-		VideoSeekSeconds:    5,
-		VideoLongPressRate:  4,
-		VideoMaxVolume:      200,
-		SpeedWindowSeconds:  180,
+		SchemaVersion:         985,
+		TdlNamespace:          DefaultNamespace,
+		Concurrent:            2,
+		Threads:               4,
+		ReconnectTimeout:      "60s",
+		MaxRepairPasses:       3,
+		OpenAfterBuild:        true,
+		NetworkRetryMinutes:   30,
+		UnknownRetryCount:     2,
+		GenerateThumbnails:    true,
+		StallTimeoutSeconds:   60,
+		AdaptiveConcurrency:   false,
+		StalledFileRetries:    3,
+		TransferAdjustment:    "increase",
+		VideoSeekSeconds:      5,
+		VideoLongPressRate:    4,
+		VideoLongPressDelayMS: 300,
+		VideoMaxVolume:        200,
+		VideoVolumeStep:       10,
+		VideoFrameAspect:      "original",
+		SpeedWindowSeconds:    180,
+		ViewerBackdrop:        "ambient",
 	}
 }

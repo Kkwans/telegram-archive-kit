@@ -45,25 +45,29 @@ type StatsDTO struct {
 }
 
 type SettingsDTO struct {
-	LibraryRoot         string  `json:"libraryRoot"`
-	Concurrent          int     `json:"concurrent"`
-	Threads             int     `json:"threads"`
-	Proxy               string  `json:"proxy"`
-	NetworkRetryMinutes int     `json:"networkRetryMinutes"`
-	UnknownRetryCount   int     `json:"unknownRetryCount"`
-	GenerateThumbnails  bool    `json:"generateThumbnails"`
-	StallTimeoutSeconds int     `json:"stallTimeoutSeconds"`
-	StalledFileRetries  int     `json:"stalledFileRetries"`
-	TransferAdjustment  string  `json:"transferAdjustment"`
-	ReconnectTimeout    string  `json:"reconnectTimeout"`
-	MaxRepairPasses     int     `json:"maxRepairPasses"`
-	OpenAfterBuild      bool    `json:"openAfterBuild"`
-	TdlNamespace        string  `json:"tdlNamespace"`
-	VideoSeekSeconds    int     `json:"videoSeekSeconds"`
-	VideoLongPressRate  float64 `json:"videoLongPressRate"`
-	VideoMaxVolume      int     `json:"videoMaxVolume"`
-	SpeedWindowSeconds  int     `json:"speedWindowSeconds"`
-	Version             string  `json:"version"`
+	LibraryRoot           string  `json:"libraryRoot"`
+	Concurrent            int     `json:"concurrent"`
+	Threads               int     `json:"threads"`
+	Proxy                 string  `json:"proxy"`
+	NetworkRetryMinutes   int     `json:"networkRetryMinutes"`
+	UnknownRetryCount     int     `json:"unknownRetryCount"`
+	GenerateThumbnails    bool    `json:"generateThumbnails"`
+	StallTimeoutSeconds   int     `json:"stallTimeoutSeconds"`
+	StalledFileRetries    int     `json:"stalledFileRetries"`
+	TransferAdjustment    string  `json:"transferAdjustment"`
+	ReconnectTimeout      string  `json:"reconnectTimeout"`
+	MaxRepairPasses       int     `json:"maxRepairPasses"`
+	OpenAfterBuild        bool    `json:"openAfterBuild"`
+	TdlNamespace          string  `json:"tdlNamespace"`
+	VideoSeekSeconds      int     `json:"videoSeekSeconds"`
+	VideoLongPressRate    float64 `json:"videoLongPressRate"`
+	VideoLongPressDelayMS int     `json:"videoLongPressDelayMs"`
+	VideoMaxVolume        int     `json:"videoMaxVolume"`
+	VideoVolumeStep       int     `json:"videoVolumeStep"`
+	VideoFrameAspect      string  `json:"videoFrameAspect"`
+	SpeedWindowSeconds    int     `json:"speedWindowSeconds"`
+	ViewerBackdrop        string  `json:"viewerBackdrop"`
+	Version               string  `json:"version"`
 }
 
 type DiagRow struct {
@@ -320,9 +324,10 @@ func (f *Facade) GetSettings() SettingsDTO {
 		StalledFileRetries: s.StalledFileRetries, TransferAdjustment: s.TransferAdjustment,
 		ReconnectTimeout: s.ReconnectTimeout, MaxRepairPasses: s.MaxRepairPasses,
 		OpenAfterBuild: s.OpenAfterBuild, TdlNamespace: s.TdlNamespace,
-		VideoSeekSeconds: s.VideoSeekSeconds, VideoLongPressRate: s.VideoLongPressRate,
-		VideoMaxVolume: s.VideoMaxVolume, SpeedWindowSeconds: s.SpeedWindowSeconds,
-		Version: version,
+		VideoSeekSeconds: s.VideoSeekSeconds, VideoLongPressRate: s.VideoLongPressRate, VideoLongPressDelayMS: s.VideoLongPressDelayMS,
+		VideoMaxVolume: s.VideoMaxVolume, VideoVolumeStep: s.VideoVolumeStep, VideoFrameAspect: s.VideoFrameAspect, SpeedWindowSeconds: s.SpeedWindowSeconds,
+		ViewerBackdrop: s.ViewerBackdrop,
+		Version:        version,
 	}
 }
 
@@ -356,11 +361,27 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 	if dto.VideoLongPressRate < 1.1 || dto.VideoLongPressRate > 10 {
 		return f.GetSettings(), errors.New("长按倍速需在 1.1–10.0 之间")
 	}
+	if dto.VideoLongPressDelayMS < 150 || dto.VideoLongPressDelayMS > 1000 {
+		return f.GetSettings(), errors.New("长按触发时间需在 150–1000 毫秒之间")
+	}
 	if dto.VideoMaxVolume < 100 || dto.VideoMaxVolume > 300 {
 		return f.GetSettings(), errors.New("音量上限需在 100–300% 之间")
 	}
+	if dto.VideoVolumeStep < 1 || dto.VideoVolumeStep > 50 {
+		return f.GetSettings(), errors.New("音量步进需在 1–50% 之间")
+	}
+	switch dto.VideoFrameAspect {
+	case "original", "16:9", "4:3":
+	default:
+		return f.GetSettings(), errors.New("未知的视频容器比例")
+	}
 	if dto.SpeedWindowSeconds < 60 || dto.SpeedWindowSeconds > 900 {
 		return f.GetSettings(), errors.New("速度曲线时间窗需在 60–900 秒之间")
+	}
+	switch dto.ViewerBackdrop {
+	case "ambient", "frosted", "solid":
+	default:
+		return f.GetSettings(), errors.New("未知的查看器背景模式")
 	}
 	s := f.a.Settings
 	s.Concurrent = dto.Concurrent
@@ -381,8 +402,12 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 	s.OpenAfterBuild = dto.OpenAfterBuild
 	s.VideoSeekSeconds = dto.VideoSeekSeconds
 	s.VideoLongPressRate = dto.VideoLongPressRate
+	s.VideoLongPressDelayMS = dto.VideoLongPressDelayMS
 	s.VideoMaxVolume = dto.VideoMaxVolume
+	s.VideoVolumeStep = dto.VideoVolumeStep
+	s.VideoFrameAspect = dto.VideoFrameAspect
 	s.SpeedWindowSeconds = dto.SpeedWindowSeconds
+	s.ViewerBackdrop = dto.ViewerBackdrop
 	if strings.TrimSpace(dto.TdlNamespace) != "" {
 		s.TdlNamespace = strings.TrimSpace(dto.TdlNamespace)
 	}

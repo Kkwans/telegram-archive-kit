@@ -195,6 +195,10 @@ type apiParams struct {
 	ID       string              `json:"id"`
 	Text     string              `json:"text"`
 	Timeout  int                 `json:"timeout"`
+	Width    int                 `json:"width"`
+	Height   int                 `json:"height"`
+	X        int                 `json:"x"`
+	Y        int                 `json:"y"`
 	Seq      int64               `json:"seq"`
 	Purpose  string              `json:"purpose"`
 }
@@ -380,6 +384,16 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "loginCancel":
 		return map[string]bool{"cancelled": b.facade.LoginCancel(p.ID)}, nil
 
+	case "windowResize":
+		if b.window != nil {
+			if p.Width > 0 && p.Height > 0 {
+				if p.X >= 0 && p.Y >= 0 {
+					b.window.SetPosition(p.X, p.Y)
+				}
+				b.window.SetSize(p.Width, p.Height)
+			}
+		}
+		return nil, nil
 	case "windowMinimize":
 		if b.window != nil {
 			b.window.Minimise()
@@ -577,7 +591,7 @@ func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := r.URL.Query().Get("slug")
 	name := r.URL.Query().Get("f")
-	path, err := b.facade.MediaFilePath(slug, name)
+	path, err := b.facade.PlayableMediaPath(slug, name)
 	if err != nil {
 		http.NotFound(w, r)
 		return

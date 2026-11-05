@@ -170,14 +170,16 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 	}
 
+	// Keep the chat's original chronological order by default; the desktop
+	// gallery offers explicit size sorting on top of this.
 	sort.SliceStable(items, func(i, j int) bool {
 		ai, _ := strconv.ParseInt(items[i].ID, 10, 64)
 		aj, _ := strconv.ParseInt(items[j].ID, 10, 64)
 		if ai != aj {
-			return ai > aj
+			return ai < aj
 		}
 		if items[i].ModTime != items[j].ModTime {
-			return items[i].ModTime > items[j].ModTime
+			return items[i].ModTime < items[j].ModTime
 		}
 		return items[i].Name < items[j].Name
 	})

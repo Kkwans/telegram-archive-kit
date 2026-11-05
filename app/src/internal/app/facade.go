@@ -289,7 +289,7 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	f.seq++
 	opID := fmt.Sprintf("op-%d-%d", time.Now().UnixNano(), f.seq)
 	ctx, cancel := context.WithCancel(context.Background())
-	task := f.createTask("sync", "同步聊天："+meta.Chat.Name, meta.Chat.Name)
+	task := f.createTask("sync", "下载聊天："+meta.Chat.Name, meta.Chat.Name)
 	task.setSlug(slug)
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}
 	f.op = op

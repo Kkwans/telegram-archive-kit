@@ -54,14 +54,20 @@ func (a *App) hasSessionFile() bool {
 
 func (f *Facade) AccountInfo() AccountInfoDTO {
 	file := f.a.tdlSessionFile()
+	running := isTdlRunning()
+	exe := f.a.resolveTdl()
+	version := ""
+	if exe != "" {
+		version = f.a.tdlVersion()
+	}
 	info := AccountInfoDTO{
 		ExportAccount: f.exportAccountInfo(),
 		Namespace:     f.a.tdlNamespace(),
-		TdlExe:        f.a.resolveTdl(),
-		TdlVersion:    f.a.tdlVersion(),
+		TdlExe:        exe,
+		TdlVersion:    version,
 		SessionDir:    tdlDataDir(),
 		SessionFile:   file,
-		Running:       isTdlRunning(),
+		Running:       running,
 	}
 	if st, err := os.Stat(file); err == nil && !st.IsDir() {
 		info.HasSessionFile = true

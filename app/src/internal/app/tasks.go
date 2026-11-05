@@ -390,7 +390,7 @@ func (f *Facade) StartSyncAllMissing() (string, error) {
 	if len(targets) == 0 {
 		return "", fmt.Errorf("没有缺失媒体的聊天")
 	}
-	return f.startTask("sync-all", fmt.Sprintf("同步全部缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
+	return f.startTask("sync-all", fmt.Sprintf("批量下载缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
 		failures := 0
 		for i, m := range targets {
 			t.setChat(m.Chat.Name)

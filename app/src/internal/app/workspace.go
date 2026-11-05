@@ -125,11 +125,23 @@ func (a *App) loadSettings() error {
 	if s.VideoLongPressRate < 1 {
 		s.VideoLongPressRate = d.VideoLongPressRate
 	}
+	if s.VideoLongPressDelayMS <= 0 {
+		s.VideoLongPressDelayMS = d.VideoLongPressDelayMS
+	}
 	if s.VideoMaxVolume <= 0 {
 		s.VideoMaxVolume = d.VideoMaxVolume
 	}
+	if s.VideoVolumeStep <= 0 {
+		s.VideoVolumeStep = d.VideoVolumeStep
+	}
+	if s.VideoFrameAspect != "original" && s.VideoFrameAspect != "16:9" && s.VideoFrameAspect != "4:3" {
+		s.VideoFrameAspect = d.VideoFrameAspect
+	}
 	if s.SpeedWindowSeconds <= 0 {
 		s.SpeedWindowSeconds = d.SpeedWindowSeconds
+	}
+	if s.ViewerBackdrop != "ambient" && s.ViewerBackdrop != "frosted" && s.ViewerBackdrop != "solid" {
+		s.ViewerBackdrop = d.ViewerBackdrop
 	}
 	if s.SchemaVersion == 0 {
 		s.SchemaVersion = d.SchemaVersion
