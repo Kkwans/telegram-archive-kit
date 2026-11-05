@@ -1,18 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Database,
   FileJson,
   FolderInput,
   FolderOpen,
-  HardDrive,
   House,
   Settings2,
-  LayoutDashboard,
   ListTodo,
-  MessageSquare,
-  MessagesSquare,
   Minus,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Settings,
   Square,
@@ -22,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo } from "./types";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo, ViewerPrefs } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, Overview, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
 import { Select } from "./Select";
@@ -31,15 +29,27 @@ type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
 
 const NAV = [
-  { key: "home", label: "首页", icon: House },
-  { key: "overview", label: "下载", icon: LayoutDashboard },
-  { key: "chats", label: "聊天", icon: MessagesSquare },
-  { key: "library", label: "档案库", icon: Database },
-  { key: "tasks", label: "任务", icon: ListTodo },
-  { key: "account", label: "账号", icon: UserRound },
-  { key: "settings", label: "设置", icon: Settings },
-  { key: "diagnostics", label: "诊断", icon: Stethoscope },
+  { key: "home", label: "首页", desc: "档案总览与快速同步", icon: House },
+  { key: "tasks", label: "任务中心", desc: "下载、导入与重建记录", icon: ListTodo },
+  { key: "library", label: "档案管理", desc: "导入、批量管理与库切换", icon: Database },
+  { key: "account", label: "账号管理", desc: "登录、资料与授权状态", icon: UserRound },
+  { key: "diagnostics", label: "诊断工具", desc: "环境检查与日志浏览", icon: Stethoscope },
+  { key: "settings", label: "设置", desc: "下载、网络与播放器参数", icon: Settings },
 ];
+
+const initialSideWidth = () => {
+  const saved = Number(localStorage.getItem("tak-side-width") || 0);
+  return saved >= 190 && saved <= 340 ? saved : 236;
+};
+const initialCollapsed = () => localStorage.getItem("tak-side-collapsed") === "1";
+
+interface SideTip {
+  top: number;
+  title: string;
+  desc?: string;
+  lines?: string[];
+  warn?: string;
+}
 
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
@@ -61,6 +71,11 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActive, setPaletteActive] = useState(0);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [prefs, setPrefs] = useState<ViewerPrefs>({ seekSeconds: 5, longPressRate: 4, maxVolume: 200, speedWindowSeconds: 180 });
+  const [taskFocus, setTaskFocus] = useState<string | null>(null);
+  const [sideWidth, setSideWidth] = useState(initialSideWidth);
+  const [sideCollapsed, setSideCollapsed] = useState(initialCollapsed);
+  const [sideTip, setSideTip] = useState<SideTip | null>(null);
   const lastSample = useRef(0);
   const toastTimer = useRef(0);
   const lastNotice = useRef(0);
@@ -80,6 +95,17 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("tak-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("tak-side-width", String(sideWidth));
+  }, [sideWidth]);
+  useEffect(() => {
+    if (palette || pending) setSideTip(null);
+  }, [palette, pending]);
+  useEffect(() => {
+    localStorage.setItem("tak-side-collapsed", sideCollapsed ? "1" : "0");
+    setSideTip(null);
+  }, [sideCollapsed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -147,6 +173,16 @@ export default function App() {
 
   useEffect(() => {
     call<Bootstrap>("bootstrap").then(setBoot).catch((e: Error) => toast(e.message, true));
+    call<{ videoSeekSeconds: number; videoLongPressRate: number; videoMaxVolume: number; speedWindowSeconds: number }>("getSettings")
+      .then((s) =>
+        setPrefs({
+          seekSeconds: s.videoSeekSeconds || 5,
+          longPressRate: s.videoLongPressRate || 4,
+          maxVolume: s.videoMaxVolume || 200,
+          speedWindowSeconds: s.speedWindowSeconds || 180,
+        })
+      )
+      .catch(() => undefined);
     let alive = true;
     const tick = async () => {
       try {
@@ -173,6 +209,16 @@ export default function App() {
     };
   }, []);
 
+  const go = (next: string) => {
+    setSideTip(null);
+    setPage(next);
+    if (next !== "overview") setTaskFocus(null);
+  };
+  const openDownloadTask = (task: TaskInfo) => {
+    if (task.slug) setSelected(task.slug);
+    setTaskFocus(task.id);
+    setPage("overview");
+  };
   const ctx: PageCtx = useMemo(
     () => ({
       boot,
@@ -187,13 +233,16 @@ export default function App() {
       history,
       refresh,
       toast,
-      go: setPage,
+      go,
       pickFiles,
       pickFolder,
       tasks,
       openTasks: () => setPage("tasks"),
+      prefs,
+      applyPrefs: setPrefs,
+      taskFocus,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, taskFocus]
   );
 
   useEffect(() => {
@@ -216,8 +265,6 @@ export default function App() {
     if (completed) refresh();
   }, [tasks]);
 
-  const current = chats.find((c) => c.slug === selected) || null;
-
   interface Command {
     id: string;
     label: string;
@@ -227,14 +274,12 @@ export default function App() {
   }
   const commands = useMemo<Command[]>(() => {
     const nav: Command[] = [
-      { id: "nav-home", label: "前往：首页", hint: "总览", section: "页面", run: () => setPage("home") },
-      { id: "nav-overview", label: "前往：下载中心", hint: "下载", section: "页面", run: () => setPage("overview") },
-      { id: "nav-chats", label: "前往：当前聊天", hint: "聊天", section: "页面", run: () => setPage("chats") },
-      { id: "nav-tasks", label: "前往：任务中心", hint: "任务", section: "页面", run: () => setPage("tasks") },
-      { id: "nav-library", label: "前往：档案库", hint: "档案库", section: "页面", run: () => setPage("library") },
-      { id: "nav-account", label: "前往：账号", hint: "登录", section: "页面", run: () => setPage("account") },
-      { id: "nav-settings", label: "前往：设置", hint: "设置", section: "页面", run: () => setPage("settings") },
-      { id: "nav-diagnostics", label: "前往：诊断与日志", hint: "诊断", section: "页面", run: () => setPage("diagnostics") },
+      { id: "nav-home", label: "前往：首页", hint: "总览", section: "页面", run: () => go("home") },
+      { id: "nav-tasks", label: "前往：任务中心", hint: "下载与任务", section: "页面", run: () => go("tasks") },
+      { id: "nav-library", label: "前往：档案管理", hint: "导入与管理", section: "页面", run: () => go("library") },
+      { id: "nav-account", label: "前往：账号管理", hint: "登录与授权", section: "页面", run: () => go("account") },
+      { id: "nav-settings", label: "前往：设置", hint: "参数", section: "页面", run: () => go("settings") },
+      { id: "nav-diagnostics", label: "前往：诊断工具", hint: "环境与日志", section: "页面", run: () => go("diagnostics") },
     ];
     const chatsCmds: Command[] = chats.map((c) => ({
       id: `chat-${c.slug}`,
@@ -243,7 +288,7 @@ export default function App() {
       section: "聊天",
       run: () => {
         setSelected(c.slug);
-        setPage("chats");
+        go("chats");
       },
     }));
     const actions: Command[] = [];
@@ -255,6 +300,7 @@ export default function App() {
         section: "操作",
         run: () => {
           call("startOneClick", { slug: selected }).catch((e: Error) => toast(e.message, true));
+          setTaskFocus(null);
           setPage("overview");
         },
       });
@@ -343,6 +389,47 @@ export default function App() {
     }
   };
 
+  const navActive = (key: string) =>
+    page === key || (key === "library" && page === "chats") || (key === "tasks" && page === "overview");
+
+  const showNavTip = (e: React.MouseEvent<HTMLElement>, label: string, desc: string) => {
+    if (!sideCollapsed) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setSideTip({ top: Math.max(8, Math.min(r.top - 4, window.innerHeight - 150)), title: label, desc });
+  };
+  const showChatTip = (e: React.MouseEvent<HTMLElement>, c: ChatRow) => {
+    if (!sideCollapsed) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setSideTip({
+      top: Math.max(8, Math.min(r.top - 8, window.innerHeight - 190)),
+      title: c.name,
+      desc: `${c.type || "聊天"} · ID ${c.id || "--"}`,
+      lines: [
+        `${c.messages.toLocaleString()} 条消息 · ${c.media.toLocaleString()} 个媒体`,
+        `${c.pages} 页网页 · ${c.official} 个官方导出`,
+        c.updatedAt ? `最近更新 ${c.updatedAt.slice(0, 10)}` : "尚无更新时间",
+      ],
+      warn: c.missing > 0 ? `缺失 ${c.missing} 个媒体` : undefined,
+    });
+  };
+  const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (sideCollapsed) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sideWidth;
+    const move = (ev: PointerEvent) => {
+      setSideWidth(Math.max(190, Math.min(340, startWidth + ev.clientX - startX)));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   return (
     <div className="app">
       <header className="titlebar">
@@ -362,9 +449,9 @@ export default function App() {
           <Search size={12} />
           Ctrl K
         </button>
-        <button className="taskbtn" title="任务中心" aria-label="打开任务中心" onClick={() => setPage("tasks")}>
+        <button className="taskbtn" title="任务中心" aria-label="打开任务中心" onClick={() => go("tasks")}>
           <ListTodo size={13} />
-          任务
+          任务中心
           {tasks.filter((t) => t.state === "running").length > 0 && <b>{tasks.filter((t) => t.state === "running").length}</b>}
         </button>
         <span className="pill" title={boot?.tdl || "未安装 tdl"}>
@@ -394,25 +481,46 @@ export default function App() {
         </button>
       </header>
 
-      <div className="body">
-        <aside className="side">
+      <div className={`body ${sideCollapsed ? "side-collapsed" : ""}`} style={{ gridTemplateColumns: `${sideCollapsed ? 64 : sideWidth}px minmax(0, 1fr)` }}>
+        <aside className={`side ${sideCollapsed ? "collapsed" : ""}`}>
           <nav className="nav" aria-label="主导航">
             {NAV.map((n) => {
               const Icon = n.icon;
               return (
-                <button key={n.key} className={page === n.key ? "on" : ""} onClick={() => setPage(n.key)}>
-                  <Icon size={15} />
-                  {n.label}
+                <button
+                  key={n.key}
+                  className={navActive(n.key) ? "on" : ""}
+                  onClick={() => go(n.key)}
+                  onMouseEnter={(e) => showNavTip(e, n.label, n.desc)}
+                  onMouseLeave={() => setSideTip(null)}
+                  aria-label={n.label}
+                >
+                  <Icon size={16} />
+                  <span>{n.label}</span>
                 </button>
               );
             })}
           </nav>
           <div className="side-head">
-            <span className="side-title">聊天</span>
-            <span className="side-count">{chats.length}</span>
-            <span className="spacer" />
-            <button className="side-manage" onClick={() => setPage("library")} title="导入与管理聊天" aria-label="导入与管理聊天">
-              <Settings2 size={12} />
+            {!sideCollapsed && (
+              <>
+                <span className="side-title">聊天</span>
+                <span className="side-count">{chats.length}</span>
+                <span className="spacer" />
+                <button className="side-manage" onClick={() => go("library")} title="打开档案管理" aria-label="打开档案管理">
+                  <Settings2 size={12} />
+                </button>
+              </>
+            )}
+            <button
+              className="side-collapse"
+              onClick={() => { setSideTip(null); setSideCollapsed((v) => !v); }}
+              title={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
+              aria-label={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
+              onMouseEnter={(e) => showNavTip(e, sideCollapsed ? "展开侧栏" : "折叠侧栏", "只显示图标，悬停查看详情")}
+              onMouseLeave={() => setSideTip(null)}
+            >
+              {sideCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
             </button>
           </div>
           <div className="chat-list">
@@ -420,7 +528,7 @@ export default function App() {
               <div className="side-empty">
                 还没有聊天。
                 <br />
-                到「聊天」页导入 result.json。
+                到「档案管理」导入 result.json。
               </div>
             )}
             {chats.map((c) => (
@@ -429,12 +537,14 @@ export default function App() {
                 className={`chat-item ${c.slug === selected ? "on" : ""}`}
                 onClick={() => {
                   setSelected(c.slug);
-                  setPage("chats");
+                  go("chats");
                 }}
-                title={`${c.name} · ${c.dir}`}
+                onMouseEnter={(e) => showChatTip(e, c)}
+                onMouseLeave={() => setSideTip(null)}
+                aria-label={`${c.name}，${c.messages} 条消息，${c.media} 个媒体`}
               >
                 <span className="avatar">{c.name.slice(0, 1)}</span>
-                <span>
+                <span className="chat-text">
                   <span className="chat-name">{c.name}</span>
                   <span className="chat-meta">
                     <span>{c.messages.toLocaleString()} 条</span>
@@ -445,16 +555,7 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div className="side-foot">
-            <div className="row">
-              <MessageSquare size={12} />
-              {current ? `${current.pages} 页 · ${current.official} 个官方导出` : "未选择聊天"}
-            </div>
-            <div className="row">
-              <HardDrive size={12} />
-              {boot?.ffmpeg ? "FFmpeg 已就绪" : "FFmpeg 未安装"}
-            </div>
-          </div>
+          {!sideCollapsed && <div className="side-resizer" onPointerDown={startResize} aria-hidden="true" />}
         </aside>
 
         <main className="main">
@@ -464,22 +565,29 @@ export default function App() {
             {page === "chats" && <Chats ctx={ctx} />}
             {page === "library" && <Library ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
-            {page === "tasks" && <TasksPage tasks={tasks} onRefresh={refresh} onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))} toast={toast} />}
+            {page === "tasks" && (
+              <TasksPage
+                tasks={tasks}
+                onRefresh={refresh}
+                onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))}
+                onOpenDownload={openDownloadTask}
+                toast={toast}
+              />
+            )}
             {page === "settings" && <SettingsPage ctx={ctx} />}
             {page === "diagnostics" && <Diagnostics ctx={ctx} />}
           </div>
         </main>
       </div>
 
-      <footer className="footer">
-        <span>
-          <i className={`dot ${boot?.tdl ? "" : "off"}`} />
-          {boot?.tdl ? "tdl 已就绪" : "tdl 未安装"}
-        </span>
-        <span>{boot?.hasSession ? "会话已保存" : "未登录 Telegram"}</span>
-        <span className="spacer" />
-        <span>Telegram Archive Kit {boot?.version ?? "2.0"} · 桌面客户端</span>
-      </footer>
+      {sideCollapsed && sideTip && (
+        <div className="side-tip" role="tooltip" style={{ top: sideTip.top }}>
+          <b>{sideTip.title}</b>
+          {sideTip.desc && <span>{sideTip.desc}</span>}
+          {sideTip.lines?.map((line) => <span key={line}>{line}</span>)}
+          {sideTip.warn && <em>{sideTip.warn}</em>}
+        </div>
+      )}
 
       {palette && (
         <div
@@ -490,25 +598,29 @@ export default function App() {
           }}
         >
           <div className="palette" role="dialog" aria-modal="true" aria-label="命令面板">
-            <input
-              autoFocus
-              value={paletteQuery}
-              placeholder="搜索命令、聊天或页面…"
-              aria-label="搜索命令"
-              onChange={(e) => setPaletteQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setPaletteActive((n) => Math.min(filteredCommands.length - 1, n + 1));
-                } else if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setPaletteActive((n) => Math.max(0, n - 1));
-                } else if (e.key === "Enter") {
-                  e.preventDefault();
-                  runCommand(filteredCommands[paletteActive]);
-                }
-              }}
-            />
+            <div className="palette-search">
+              <Search size={16} />
+              <input
+                autoFocus
+                value={paletteQuery}
+                placeholder="搜索命令、聊天或页面…"
+                aria-label="搜索命令"
+                onChange={(e) => setPaletteQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setPaletteActive((n) => Math.min(filteredCommands.length - 1, n + 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setPaletteActive((n) => Math.max(0, n - 1));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    runCommand(filteredCommands[paletteActive]);
+                  }
+                }}
+              />
+              <kbd>Esc</kbd>
+            </div>
             <div className="palette-list" role="listbox" aria-label="命令">
               {filteredCommands.length === 0 && <div className="palette-empty">没有匹配的命令</div>}
               {filteredCommands.map((c, i) => (
@@ -527,7 +639,10 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div className="palette-foot">↑↓ 选择 · Enter 执行 · Esc 关闭</div>
+            <div className="palette-foot">
+              <span>↑↓ 选择 · Enter 执行</span>
+              <span><kbd>Ctrl</kbd> <kbd>K</kbd> 打开 · <kbd>Esc</kbd> 关闭</span>
+            </div>
           </div>
         </div>
       )}

@@ -131,11 +131,24 @@ export interface TdlInfo {
   namespace: string;
 }
 
+export interface AccountProfile {
+  name: string;
+  firstName: string;
+  lastName: string;
+  username: string;
+  phone: string;
+  userId: number;
+  avatar?: string;
+  checkedAt: number;
+}
+
 export interface SessionCheck {
   state: string;
   message: string;
   detail?: string;
   code: number;
+  profile?: AccountProfile;
+  source?: string;
 }
 
 export interface MediaItem {
@@ -197,12 +210,36 @@ export interface TaskInfo {
   kind: string;
   title: string;
   chat?: string;
+  slug?: string;
   detail?: string;
   state: "running" | "done" | "failed";
   percent: number;
+  avgSpeed?: number;
+  peakSpeed?: number;
+  bytes?: number;
+  done?: number;
+  total?: number;
+  elapsedMs?: number;
   startedAt: number;
   finishedAt?: number;
   error?: string;
+}
+
+export interface SpeedPoint {
+  at: number;
+  now: number;
+  avg: number;
+}
+
+export interface TaskDetail extends TaskInfo {
+  series?: SpeedPoint[];
+}
+
+export interface ViewerPrefs {
+  seekSeconds: number;
+  longPressRate: number;
+  maxVolume: number;
+  speedWindowSeconds: number;
 }
 
 export interface PickedDialog {
