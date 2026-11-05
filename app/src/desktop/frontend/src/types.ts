@@ -155,7 +155,15 @@ export interface PendingInput {
   source?: string;
 }
 
+export interface ExportAccount {
+  name: string;
+  username: string;
+  userId: number;
+  sourceFile: string;
+}
+
 export interface AccountInfo {
+  exportAccount?: ExportAccount;
   namespace: string;
   tdlExe: string;
   tdlVersion: string;

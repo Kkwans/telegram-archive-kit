@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,16 +11,24 @@ import (
 
 // AccountInfoDTO describes the local tdl session without claiming that
 // Telegram still accepts it (that requires SessionCheck).
+type ExportAccountDTO struct {
+	Name       string `json:"name"`
+	Username   string `json:"username"`
+	UserID     int64  `json:"userId"`
+	SourceFile string `json:"sourceFile"`
+}
+
 type AccountInfoDTO struct {
-	Namespace       string `json:"namespace"`
-	TdlExe          string `json:"tdlExe"`
-	TdlVersion      string `json:"tdlVersion"`
-	SessionDir      string `json:"sessionDir"`
-	SessionFile     string `json:"sessionFile"`
-	SessionSize     int64  `json:"sessionSize"`
-	SessionModified int64  `json:"sessionModified"`
-	HasSessionFile  bool   `json:"hasSessionFile"`
-	Running         bool   `json:"running"`
+	ExportAccount   *ExportAccountDTO `json:"exportAccount,omitempty"`
+	Namespace       string            `json:"namespace"`
+	TdlExe          string            `json:"tdlExe"`
+	TdlVersion      string            `json:"tdlVersion"`
+	SessionDir      string            `json:"sessionDir"`
+	SessionFile     string            `json:"sessionFile"`
+	SessionSize     int64             `json:"sessionSize"`
+	SessionModified int64             `json:"sessionModified"`
+	HasSessionFile  bool              `json:"hasSessionFile"`
+	Running         bool              `json:"running"`
 }
 
 func (a *App) tdlNamespace() string {
@@ -46,12 +55,13 @@ func (a *App) hasSessionFile() bool {
 func (f *Facade) AccountInfo() AccountInfoDTO {
 	file := f.a.tdlSessionFile()
 	info := AccountInfoDTO{
-		Namespace:   f.a.tdlNamespace(),
-		TdlExe:      f.a.resolveTdl(),
-		TdlVersion:  f.a.tdlVersion(),
-		SessionDir:  tdlDataDir(),
-		SessionFile: file,
-		Running:     isTdlRunning(),
+		ExportAccount: f.exportAccountInfo(),
+		Namespace:     f.a.tdlNamespace(),
+		TdlExe:        f.a.resolveTdl(),
+		TdlVersion:    f.a.tdlVersion(),
+		SessionDir:    tdlDataDir(),
+		SessionFile:   file,
+		Running:       isTdlRunning(),
 	}
 	if st, err := os.Stat(file); err == nil && !st.IsDir() {
 		info.HasSessionFile = true
@@ -64,6 +74,39 @@ func (f *Facade) AccountInfo() AccountInfoDTO {
 // LogoutTdl backs up and removes the current namespace's tdl session file.
 // tdl 0.20 has no logout command, so this is the only reversible way to
 // forget the account without touching other namespaces.
+// exportAccountInfo reads personal_information from the most recent source
+// result.json. It is the Telegram account that produced the export, which is
+// usually the same person but not a live tdl profile.
+func (f *Facade) exportAccountInfo() *ExportAccountDTO {
+	for _, m := range f.a.listWorkspaces() {
+		src := f.a.sourcePath(m.Slug)
+		body, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		var root struct {
+			PersonalInformation struct {
+				UserID      int64  `json:"user_id"`
+				FirstName   string `json:"first_name"`
+				LastName    string `json:"last_name"`
+				Username    string `json:"username"`
+				PhoneNumber string `json:"phone_number"`
+			} `json:"personal_information"`
+		}
+		if json.Unmarshal(body, &root) != nil || root.PersonalInformation.UserID == 0 {
+			continue
+		}
+		name := strings.TrimSpace(root.PersonalInformation.FirstName + " " + root.PersonalInformation.LastName)
+		return &ExportAccountDTO{
+			Name:       name,
+			Username:   root.PersonalInformation.Username,
+			UserID:     root.PersonalInformation.UserID,
+			SourceFile: src,
+		}
+	}
+	return nil
+}
+
 func (f *Facade) LogoutTdl() error {
 	if isTdlRunning() {
 		if err := killAllTdl(); err != nil {

@@ -908,3 +908,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 
 .ring.idle svg { position: relative; z-index: 1; }
+
+.account-id .account-sub { margin-top: 2px; font-size: 11px; color: var(--faint); }

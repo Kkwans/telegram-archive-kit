@@ -2203,6 +2203,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
         : check?.state === "unauthorized"
           ? "bad"
           : "unknown";
+  const exportAccount = account?.exportAccount;
   const accountStatus =
     accountTone === "ok"
       ? "授权正常"
@@ -2245,8 +2246,21 @@ export function Account({ ctx }: { ctx: PageCtx }) {
           <UserRound size={24} />
         </div>
         <div className="account-id">
-          <h2>Telegram 账号</h2>
+          <h2>{exportAccount?.name || "Telegram 账号"}</h2>
           <p>
+            {exportAccount ? (
+              <>
+                {exportAccount.username ? <b>@{exportAccount.username}</b> : <b>未设置用户名</b>}
+                <span>·</span>
+                ID <b>{exportAccount.userId}</b>
+                <span>·</span>
+                来自导出数据
+              </>
+            ) : (
+              "未从 result.json 中发现账号资料"
+            )}
+          </p>
+          <p className="account-sub">
             namespace <b>{account?.namespace || info?.namespace || "-"}</b>
             <span>·</span>
             {sessionState}
@@ -2275,6 +2289,12 @@ export function Account({ ctx }: { ctx: PageCtx }) {
             <span className="meta">{info?.running ? "tdl 正在运行" : "tdl 未运行"}</span>
           </div>
           <dl className="kv account-kv">
+            <dt>导出账号</dt>
+            <dd>
+              {exportAccount
+                ? `${exportAccount.name || "未命名"}${exportAccount.username ? " (@" + exportAccount.username + ")" : ""} · ID ${exportAccount.userId}`
+                : "result.json 中没有 personal_information"}
+            </dd>
             <dt>Namespace</dt>
             <dd>{account?.namespace || info?.namespace || "-"}</dd>
             <dt>会话文件</dt>
@@ -2314,7 +2334,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
           </div>
           <div className="account-status-body">
             <p className="account-identity-note">
-              tdl 0.20 不提供账号昵称 / 用户名 / 用户 ID 的读取接口，这里展示本地会话和真实授权检查结果。退出后重新扫码即可切换账号。
+              名称 / 用户名 / ID 来自 result.json 的 personal_information（导出时的账号资料），tdl 0.20 不提供当前会话的实时资料；授权状态以 tdl chat ls 的检查结果为准。退出后重新扫码即可切换账号。
             </p>
             {!check && !checking && (
               <p className="acct-subhint" style={{ margin: 0 }}>
