@@ -1351,11 +1351,11 @@ const ArtVideo = forwardRef<VideoApi, {
       poster: poster || "",
       volume: 0.8,
       autoplay: true,
-      pip: true,
+      pip: false,
       setting: true,
       playbackRate: false,
       aspectRatio: true,
-      screenshot: true,
+      screenshot: false,
       fullscreen: true,
       fullscreenWeb: false,
       hotkey: false,
@@ -1375,38 +1375,67 @@ const ArtVideo = forwardRef<VideoApi, {
             const value = Math.max(0.1, Math.min(10, Math.round(next * 100) / 100));
             rateRef.current = value;
             boostRef.current = false;
-            player.playbackRate = value;
+            this.playbackRate = value;
             return `${value.toFixed(2)}×`;
+          },
+        },
+        {
+          name: "tak-screenshot",
+          html: "截图",
+          onClick() {
+            void this.screenshot();
+          },
+        },
+        {
+          name: "tak-pip",
+          html: "画中画",
+          onClick() {
+            this.pip = !this.pip;
           },
         },
       ],
     });
     playerRef.current = player;
     const fitFrame = () => {
-      if (!box.current) return;
+      const el = box.current;
+      const stage = el?.parentElement;
+      if (!el || !stage) return;
+      const style = getComputedStyle(stage);
+      const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+      const availW = Math.max(160, stage.clientWidth - padX);
+      const availH = Math.max(120, stage.clientHeight - padY);
       const vw = player.video.videoWidth || 16;
       const vh = player.video.videoHeight || 9;
-      const ratio = frameAspect === "16:9" ? 16 / 9 : frameAspect === "4:3" ? 4 / 3 : vw / vh;
-      const maxW = Math.min(window.innerWidth * 0.92, 1200);
-      const maxH = Math.max(260, window.innerHeight - 210);
-      let h = maxH;
-      let w = h * ratio;
-      if (w > maxW) {
-        w = maxW;
-        h = w / ratio;
+      let ratio = frameAspect === "16:9" ? 16 / 9 : frameAspect === "4:3" ? 4 / 3 : vw / vh;
+      if (!Number.isFinite(ratio) || ratio <= 0) ratio = 16 / 9;
+      let w = availW;
+      let h = w / ratio;
+      if (h > availH) {
+        h = availH;
+        w = h * ratio;
       }
-      box.current.style.width = `${Math.round(w)}px`;
-      box.current.style.height = `${Math.round(h)}px`;
+      el.style.width = `${Math.max(1, Math.floor(w))}px`;
+      el.style.height = `${Math.max(1, Math.floor(h))}px`;
+      el.classList.toggle("compact", w < 430);
+      el.classList.toggle("tiny", w < 360);
     };
     fitFrame();
-    player.on("video:loadedmetadata", fitFrame);
+    player.video.addEventListener("loadedmetadata", fitFrame);
+    player.video.addEventListener("resize", fitFrame);
+    const stageEl = box.current.parentElement;
+    const observer = typeof ResizeObserver !== "undefined" && stageEl ? new ResizeObserver(fitFrame) : null;
+    observer?.observe(stageEl as Element);
     window.addEventListener("resize", fitFrame);
     if (hasNext) {
+      const icon = document.createElement("div");
+      icon.className = "art-icon";
+      icon.innerHTML = '<svg viewBox="0 0 22 22" width="22" height="22" fill="currentColor"><path d="M14.98 9.24 7.06 4.25A1.9 1.9 0 0 0 4.2 5.9v10.2a1.9 1.9 0 0 0 2.86 1.65l7.92-4.99a1.9 1.9 0 0 0 0-3.52z"/><rect x="15.6" y="4" width="2" height="14" rx="1"/></svg>';
       player.controls.add({
         name: "next",
         position: "left",
         index: 11,
-        html: '<svg viewBox="0 0 24 24" width="20" height="20" style="fill:currentColor"><path d="M5 4l10 8-10 8V4z"/><rect x="17" y="4" width="2.4" height="16" rx="1"/></svg>',
+        html: icon,
         tooltip: "下一个视频 (PageDown)",
         click: onNext,
       });
@@ -1436,6 +1465,9 @@ const ArtVideo = forwardRef<VideoApi, {
     });
 
     return () => {
+      observer?.disconnect();
+      player.video.removeEventListener("loadedmetadata", fitFrame);
+      player.video.removeEventListener("resize", fitFrame);
       window.removeEventListener("resize", fitFrame);
       if (audioCtx.current) {
         void audioCtx.current.close();
@@ -1670,7 +1702,7 @@ function MediaViewer({
 
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
-      <div className={`viewer-ambient ${prefs.backdrop}`} style={prefs.backdrop === "ambient" && ambient ? { backgroundImage: `url(${ambient})` } : undefined} aria-hidden="true" />
+      <div className={`viewer-ambient ${prefs.backdrop}`} style={prefs.backdrop === "ambient" && ambient ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .26), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .22), transparent 66%), url(${ambient})` } : undefined} aria-hidden="true" />
       <header className="media-modal-head viewer-head">
         <button className="icon-btn dark" disabled={index <= 0} aria-label="上一个" title="上一个 (PageUp)" onClick={() => onIndex(index - 1)}>
           <ChevronLeft size={18} />
@@ -3068,7 +3100,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
         <div className="account-id">
           <h2>{ready ? displayName : <span className="skeleton-line w-140" />}</h2>
           <p className="account-handle">
-            {!ready ? <span className="skeleton-line w-220" /> : username ? <><AtSign size={12} /> {username}</> : <span className="faint">该账号没有公开 @用户名</span>}
+            {!ready ? <span className="skeleton-line w-220" /> : username ? <><AtSign size={12} /> {username}</> : null}
             {phone && <><i>·</i><Phone size={12} /> {phone}</>}
             {userId && <><i>·</i><Fingerprint size={12} /> ID {userId}</>}
           </p>
@@ -3127,7 +3159,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
             <>
               <div className="account-rows">
                 <div><span>名称</span><b>{profile.name || "未命名"}</b></div>
-                <div><span>用户名（@）</span><b>{profile.username ? "@" + profile.username : "该账号没有公开 @用户名"}<em className="account-hint">显示名称 {profile.name || "X wans"} 与 @用户名 是两项资料</em></b></div>
+                <div><span>用户名（@）</span><b>{profile.username ? "@" + profile.username : "没有"}</b></div>
                 <div><span>手机号</span><b className="mono">{phone || "不可见"}</b></div>
                 <div><span>用户 ID</span><b className="mono">{profile.userId}</b></div>
                 <div><span>数据来源</span><b>{sourceText}</b></div>
@@ -3138,7 +3170,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
                   className="btn sm ghost"
                   onClick={() => {
                     const text = `${profile.name}
-${profile.username ? "@" + profile.username : "未设置用户名"}
+${profile.username ? "@" + profile.username : "没有"}
 ${phone}
 ID ${profile.userId}`;
                     navigator.clipboard?.writeText(text).then(() => toast("账号信息已复制")).catch(() => toast("复制失败", true));
