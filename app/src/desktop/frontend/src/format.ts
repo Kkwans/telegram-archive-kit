@@ -31,3 +31,17 @@ export function clock(ts?: number): string {
   const d = new Date(ts * 1000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+/** Format an ISO timestamp or Unix seconds/milliseconds in the local timezone. */
+export function dateTime(value?: string | number, fallback = "--"): string {
+  if (value === undefined || value === null || value === "") return fallback;
+  let d: Date;
+  if (typeof value === "number") {
+    d = new Date(value < 1e12 ? value * 1000 : value);
+  } else {
+    d = new Date(value);
+  }
+  if (Number.isNaN(d.getTime())) return String(value);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}

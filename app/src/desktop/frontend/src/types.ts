@@ -238,8 +238,12 @@ export interface TaskDetail extends TaskInfo {
 export interface ViewerPrefs {
   seekSeconds: number;
   longPressRate: number;
+  longPressDelayMs: number;
   maxVolume: number;
+  volumeStep: number;
+  videoFrameAspect: string;
   speedWindowSeconds: number;
+  backdrop: string;
 }
 
 export interface PickedDialog {

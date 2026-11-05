@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, 
 import {
   ArrowDownToLine,
   ArrowRight,
+  ArrowUpRight,
   AtSign,
   ChartPie,
   Fingerprint,
@@ -46,11 +47,6 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import Lightbox from "yet-another-react-lightbox";
-import Zoom from "yet-another-react-lightbox/plugins/zoom";
-import Thumbnails from "yet-another-react-lightbox/plugins/thumbnails";
-import "yet-another-react-lightbox/styles.css";
-import "yet-another-react-lightbox/plugins/thumbnails.css";
 import Artplayer from "artplayer";
 import { call } from "./rpc";
 import { Select } from "./Select";
@@ -71,7 +67,7 @@ import type {
   TaskInfo,
   ViewerPrefs,
 } from "./types";
-import { bytes, duration, rate } from "./format";
+import { bytes, dateTime, duration, rate } from "./format";
 
 export interface PageCtx {
   boot: Bootstrap | null;
@@ -230,12 +226,6 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               <RefreshCw size={13} /> 同步全部缺失
             </button>
           </div>
-          <footer className="sync-foot">
-            <span>{chats.length} 个聊天 · {missingTotal > 0 ? `${missingTotal} 个缺失媒体` : "媒体完整"}</span>
-            <button className="link-btn" onClick={() => go("library")}>
-              管理聊天 <ArrowRight size={12} />
-            </button>
-          </footer>
         </section>
       </section>
 
@@ -246,15 +236,15 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         </div>
         <div className="stat">
           <span>消息</span>
-          <div><b>{(stats?.messages ?? 0).toLocaleString()}</b><em>条</em></div>
+          <div>{stats ? <><b>{stats.messages.toLocaleString()}</b><em>条</em></> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
           <span>本地媒体</span>
-          <div><b>{(stats?.media ?? 0).toLocaleString()}</b><em>个</em></div>
+          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个</em></> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
           <span>缺失媒体</span>
-          <div><b className={stats && stats.missing > 0 ? "warn" : ""}>{stats?.missing ?? 0}</b><em>个</em></div>
+          <div>{stats ? <><b className={stats.missing > 0 ? "warn" : ""}>{stats.missing}</b><em>个</em></> : <span className="skeleton-line w-60" />}</div>
         </div>
       </section>
 
@@ -265,13 +255,6 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <span className="meta">{loading ? "正在统计…" : `共 ${totalMedia.toLocaleString()} 个`}</span>
           </div>
           <div className="media-composition">
-            <div className="media-stack" aria-hidden="true">
-              {totalMedia === 0 ? <i className="empty" /> : MEDIA_KINDS.map((k) => {
-                const value = stats?.[k.key] ?? 0;
-                if (value === 0) return null;
-                return <i key={k.key} style={{ width: `${(value * 100) / totalMedia}%`, background: k.color }} />;
-              })}
-            </div>
             <div className="kind-list">
               {MEDIA_KINDS.map((k) => {
                 const value = stats?.[k.key] ?? 0;
@@ -366,7 +349,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               {recentTasks.map((t) => (
                 <div key={t.id} className={`home-task ${t.state}`}>
                   {t.state === "running" ? <RefreshCw size={13} className="spin" /> : t.state === "done" ? <CheckCircle2 size={13} color="var(--ok)" /> : <X size={13} color="var(--danger)" />}
-                  <span>{t.title}</span>
+                  <span>{(() => { const label = t.kind === "sync" ? "下载聊天" : t.kind === "sync-all" ? "批量下载" : t.kind === "refresh" ? "重建网页" : t.title; return t.chat && !label.includes(t.chat) ? `${label} · ${t.chat}` : label; })()}</span>
                   <em>{t.state === "running" ? `${t.percent}%` : t.state === "done" ? "完成" : "失败"}</em>
                 </div>
               ))}
@@ -476,7 +459,7 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
               return `${x.toFixed(1)},${y.toFixed(1)}`;
             })
             .join(" ");
-    const fmtDate = (ts?: number) => (ts ? new Date(ts).toLocaleString("zh-CN", { hour12: false }) : "--");
+    const fmtDate = (ts?: number) => dateTime(ts);
     const statusLabel = historyTask.state === "done" ? "已完成" : "失败";
     return (
       <>
@@ -878,13 +861,6 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
       <div className="page-head">
         <div className="chat-title">
           <h1>{current.name}</h1>
-          <p title={current.dir}>
-            <span>{current.type || "未知类型"}</span>
-            <i>·</i>
-            <span>ID {current.id || "--"}</span>
-            <i>·</i>
-            <span className="chat-dir">{current.dir}</span>
-          </p>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={() => go("library")}>
@@ -916,25 +892,26 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <div><b className={current.missing > 0 ? "warn" : ""}>{current.missing.toLocaleString()}</b><em>个</em></div>
         </div>
         <div className="stat">
-          <span>网页 / 官方导出</span>
-          <div><b>{current.pages}</b><em>页 · 官方 {current.official} 个</em></div>
+          <span>网页</span>
+          <div><b>{current.pages}</b><em>页</em></div>
         </div>
       </section>
 
       <section className="panel">
         <div className="panel-head">
-          <h3>聊天信息</h3>
-          <span className="meta">最近更新 {current.updatedAt || "--"}</span>
+          <h3>归档信息</h3>
         </div>
-        <div className="chat-facts-grid">
+        <div className="chat-facts-grid chat-facts-three">
           <div className="fact"><span>类型</span><b>{current.type || "--"}</b></div>
           <div className="fact"><span>Chat ID</span><b className="mono">{current.id || "--"}</b></div>
           <div className="fact"><span>官方导出</span><b>{current.official} 个</b></div>
-          <div className="fact"><span>网页</span><b>{current.pages} 页</b></div>
+          <div className="fact"><span>首次消息</span><b>{dateTime(current.firstTs)}</b></div>
+          <div className="fact"><span>最后消息</span><b>{dateTime(current.lastTs)}</b></div>
+          <div className="fact"><span>最近更新</span><b>{dateTime(current.updatedAt)}</b></div>
           <div className="fact wide">
             <span>归档目录</span>
             <code title={current.dir}>{current.dir}</code>
-            <button className="icon-btn" title="复制目录" aria-label="复制目录" onClick={copyPath}>
+            <button className="icon-btn" data-tip="复制目录" aria-label="复制目录" onClick={copyPath}>
               <Copy size={13} />
             </button>
           </div>
@@ -1002,9 +979,22 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
   const [limit, setLimit] = useState(120);
-  const [imageIndex, setImageIndex] = useState(-1);
-  const [videoIndex, setVideoIndex] = useState(-1);
+  const [viewer, setViewer] = useState<{ items: MediaItem[]; index: number } | null>(null);
   const [audioItem, setAudioItem] = useState<MediaItem | null>(null);
+  const [size, setSize] = useState<"sm" | "md" | "lg" | "xl">(() => {
+    const saved = localStorage.getItem("tak-media-size");
+    return saved === "sm" || saved === "lg" || saved === "xl" ? saved : "md";
+  });
+  const [sort, setSort] = useState<"default" | "size-desc" | "size-asc">(() => {
+    const saved = localStorage.getItem("tak-media-sort");
+    return saved === "size-desc" || saved === "size-asc" ? saved : "default";
+  });
+  useEffect(() => {
+    localStorage.setItem("tak-media-size", size);
+  }, [size]);
+  useEffect(() => {
+    localStorage.setItem("tak-media-sort", sort);
+  }, [sort]);
 
   const load = () => {
     setItems(null);
@@ -1016,27 +1006,39 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
   useEffect(load, [chat.slug]);
   useEffect(() => {
     setLimit(120);
-    setImageIndex(-1);
-    setVideoIndex(-1);
+    setViewer(null);
     setAudioItem(null);
   }, [filter, chat.slug]);
 
   const mediaItems = useMemo(() => (items ?? []).filter((i) => i.kind !== "file"), [items]);
   const fileItems = useMemo(() => (items ?? []).filter((i) => i.kind === "file"), [items]);
-  const images = useMemo(() => mediaItems.filter((i) => i.kind === "image"), [mediaItems]);
-  const videos = useMemo(() => mediaItems.filter((i) => i.kind === "video"), [mediaItems]);
-  const audios = useMemo(() => mediaItems.filter((i) => i.kind === "audio"), [mediaItems]);
-
+  const orderedMedia = useMemo(() => {
+    if (sort === "default") return mediaItems;
+    return [...mediaItems].sort((a, b) => (sort === "size-desc" ? b.size - a.size : a.size - b.size));
+  }, [mediaItems, sort]);
+  const images = useMemo(() => orderedMedia.filter((i) => i.kind === "image"), [orderedMedia]);
+  const videos = useMemo(() => orderedMedia.filter((i) => i.kind === "video"), [orderedMedia]);
   const shown = useMemo(() => {
-    if (filter === "all") return mediaItems;
-    return mediaItems.filter((i) => i.kind === filter);
-  }, [mediaItems, filter]);
+    if (filter === "all") return orderedMedia;
+    return orderedMedia.filter((i) => i.kind === filter);
+  }, [orderedMedia, filter]);
   const showFiles = filter === "all" || filter === "file";
 
+  const viewerPool = useMemo(() => {
+    if (filter === "image") return images;
+    if (filter === "video") return videos;
+    if (filter === "all") return orderedMedia.filter((i) => i.kind === "image" || i.kind === "video");
+    return orderedMedia.filter((i) => i.kind === "image" || i.kind === "video");
+  }, [filter, images, videos, orderedMedia]);
+
   const openItem = (item: MediaItem) => {
-    if (item.kind === "image") setImageIndex(images.findIndex((i) => i.rel === item.rel));
-    else if (item.kind === "video") setVideoIndex(videos.findIndex((i) => i.rel === item.rel));
-    else if (item.kind === "audio") setAudioItem(item);
+    if (item.kind === "audio") {
+      setAudioItem(item);
+      return;
+    }
+    if (item.kind !== "image" && item.kind !== "video") return;
+    const index = viewerPool.findIndex((i) => i.rel === item.rel);
+    setViewer({ items: viewerPool, index: Math.max(0, index) });
   };
 
   const reveal = (item: MediaItem) =>
@@ -1053,8 +1055,26 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
             {items ? `共 ${mediaItems.length} 个媒体 · ${fileItems.length} 个文件` : "正在读取…"}
           </span>
         </div>
-        <div className="tabs media-tabs" role="tablist" aria-label="媒体筛选">
-          {MEDIA_FILTERS.map((f) => {
+        <div className="media-tools">
+          <div className="media-sort">
+            <Select
+              ariaLabel="媒体排序"
+              value={sort}
+              onChange={(v) => setSort(v as typeof sort)}
+              options={[
+                { value: "default", label: "默认顺序" },
+                { value: "size-desc", label: "大小从大到小" },
+                { value: "size-asc", label: "大小从小到大" },
+              ]}
+            />
+          </div>
+          <div className="media-size" role="group" aria-label="预览图大小">
+            {[["sm", "小"], ["md", "中"], ["lg", "大"], ["xl", "超大"]].map(([key, label]) => (
+              <button key={key} className={size === key ? "on" : ""} onClick={() => setSize(key as typeof size)}>{label}</button>
+            ))}
+          </div>
+          <div className="tabs media-tabs" role="tablist" aria-label="媒体筛选">
+            {MEDIA_FILTERS.map((f) => {
             const count =
               f.key === "all"
                 ? mediaItems.length
@@ -1065,9 +1085,10 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
               <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""} onClick={() => setFilter(f.key)}>
                 {f.label}
                 <span className="tab-count">{count}</span>
-              </button>
-            );
-          })}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -1095,7 +1116,7 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
             </div>
           ) : (
             shown.length > 0 && (
-              <div className="media-grid">
+              <div className={`media-grid size-${size}`}>
                 {shown.slice(0, limit).map((item) => (
                   <button
                     key={item.rel}
@@ -1165,23 +1186,13 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
         </>
       )}
 
-      {imageIndex >= 0 && images[imageIndex] && (
-        <ImageViewer
+      {viewer && viewer.items[viewer.index] && (
+        <MediaViewer
           chat={chat}
-          images={images}
-          index={imageIndex}
-          onIndex={setImageIndex}
-          onClose={() => setImageIndex(-1)}
-          onReveal={reveal}
-        />
-      )}
-      {videoIndex >= 0 && videos[videoIndex] && (
-        <VideoViewer
-          chat={chat}
-          videos={videos}
-          index={videoIndex}
-          onIndex={setVideoIndex}
-          onClose={() => setVideoIndex(-1)}
+          items={viewer.items}
+          index={viewer.index}
+          onIndex={(index) => setViewer((v) => (v ? { ...v, index } : v))}
+          onClose={() => setViewer(null)}
           onReveal={reveal}
           onOpen={openExternal}
           prefs={ctx.prefs}
@@ -1191,67 +1202,6 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
         <AudioViewer chat={chat} item={audioItem} onClose={() => setAudioItem(null)} onReveal={reveal} />
       )}
     </section>
-  );
-}
-
-function ImageViewer({
-  chat,
-  images,
-  index,
-  onIndex,
-  onClose,
-  onReveal,
-}: {
-  chat: ChatRow;
-  images: MediaItem[];
-  index: number;
-  onIndex: (n: number) => void;
-  onClose: () => void;
-  onReveal: (item: MediaItem) => void;
-}) {
-  const current = images[index];
-  const slides = images.map((i) => ({
-    src: mediaURL(chat.slug, i.rel),
-    alt: i.name,
-    thumbnail: i.thumb ? thumbURL(chat.slug, i.thumb) : mediaURL(chat.slug, i.rel),
-  }));
-  return (
-    <>
-      <Lightbox
-        open
-        close={onClose}
-        index={index}
-        slides={slides}
-        plugins={[Zoom, Thumbnails]}
-        on={{ view: ({ index: n }) => onIndex(n) }}
-        animation={{ fade: 200, swipe: 220 }}
-        zoom={{ maxZoomPixelRatio: 4, scrollToZoom: true, wheelZoomDistanceFactor: 400, zoomInMultiplier: 1.25 }}
-        thumbnails={{ width: 76, height: 50, gap: 6, borderRadius: 8, padding: 0 }}
-        carousel={{ finite: false, padding: 0, preload: 6 }}
-      />
-      <header className="lb-header">
-        <div className="lb-title">
-          <b title={current.name}>{current.name}</b>
-          <span>{index + 1} / {images.length} · {bytes(current.size)}</span>
-        </div>
-        <button className="btn sm ghost" onClick={() => onReveal(current)}>
-          <LocateFixed size={12} /> 定位文件
-        </button>
-        <button
-          className="btn sm ghost"
-          aria-label="切换全屏"
-          onClick={() => {
-            if (document.fullscreenElement) void document.exitFullscreen();
-            else void document.documentElement.requestFullscreen();
-          }}
-        >
-          <Maximize2 size={12} /> 全屏
-        </button>
-        <button className="btn sm close-x" aria-label="关闭图片" onClick={onClose}>
-          <X size={14} />
-        </button>
-      </header>
-    </>
   );
 }
 
@@ -1270,13 +1220,16 @@ interface VideoApi {
   setFullscreen(on: boolean): void;
 }
 
-const PLAY_RATES = [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+const PLAY_RATES = [0.5, 1, 1.25, 1.5, 2];
 
 const ArtVideo = forwardRef<VideoApi, {
   src: string;
   poster?: string;
   maxVolume: number;
-}>(function ArtVideo({ src, poster, maxVolume }, ref) {
+  frameAspect: string;
+  hasNext: boolean;
+  onNext: () => void;
+}>(function ArtVideo({ src, poster, maxVolume, frameAspect, hasNext, onNext }, ref) {
   const box = useRef<HTMLDivElement>(null);
   const playerRef = useRef<Artplayer | null>(null);
   const rateRef = useRef(1);
@@ -1395,7 +1348,7 @@ const ArtVideo = forwardRef<VideoApi, {
     const player = new Artplayer({
       container: box.current,
       url: src,
-      poster,
+      poster: poster || "",
       volume: 0.8,
       autoplay: true,
       pip: true,
@@ -1410,7 +1363,7 @@ const ArtVideo = forwardRef<VideoApi, {
       autoSize: false,
       theme: "#2f6bff",
       lang: "zh-cn",
-      moreVideoAttr: { playsInline: true } as never,
+      moreVideoAttr: { playsInline: true, preload: "metadata" } as never,
       settings: [
         {
           name: "tak-precise-speed",
@@ -1429,6 +1382,42 @@ const ArtVideo = forwardRef<VideoApi, {
       ],
     });
     playerRef.current = player;
+    const fitFrame = () => {
+      if (!box.current) return;
+      const vw = player.video.videoWidth || 16;
+      const vh = player.video.videoHeight || 9;
+      const ratio = frameAspect === "16:9" ? 16 / 9 : frameAspect === "4:3" ? 4 / 3 : vw / vh;
+      const maxW = Math.min(window.innerWidth * 0.92, 1200);
+      const maxH = Math.max(260, window.innerHeight - 210);
+      let h = maxH;
+      let w = h * ratio;
+      if (w > maxW) {
+        w = maxW;
+        h = w / ratio;
+      }
+      box.current.style.width = `${Math.round(w)}px`;
+      box.current.style.height = `${Math.round(h)}px`;
+    };
+    fitFrame();
+    player.on("video:loadedmetadata", fitFrame);
+    window.addEventListener("resize", fitFrame);
+    if (hasNext) {
+      player.controls.add({
+        name: "next",
+        position: "left",
+        index: 11,
+        html: '<svg viewBox="0 0 24 24" width="20" height="20" style="fill:currentColor"><path d="M5 4l10 8-10 8V4z"/><rect x="17" y="4" width="2.4" height="16" rx="1"/></svg>',
+        tooltip: "下一个视频 (PageDown)",
+        click: onNext,
+      });
+    }
+    player.controls.add({
+      name: "rate",
+      position: "right",
+      html: player.icons.playbackRate.cloneNode(true) as HTMLElement,
+      tooltip: "播放速度",
+      click: () => { player.setting.show = true; },
+    });
     player.on("video:ratechange", () => {
       if (!boostRef.current) rateRef.current = player.playbackRate;
       syncPreciseRange(player, player.playbackRate);
@@ -1440,6 +1429,7 @@ const ArtVideo = forwardRef<VideoApi, {
     });
 
     return () => {
+      window.removeEventListener("resize", fitFrame);
       if (audioCtx.current) {
         void audioCtx.current.close();
         audioCtx.current = null;
@@ -1448,14 +1438,14 @@ const ArtVideo = forwardRef<VideoApi, {
       player.destroy(false);
       playerRef.current = null;
     };
-  }, [src, poster]);
+  }, [src, poster, frameAspect, hasNext]);
 
   return <div ref={box} className="art-player" />;
 });
 
-function VideoViewer({
+function MediaViewer({
   chat,
-  videos,
+  items,
   index,
   onIndex,
   onClose,
@@ -1464,7 +1454,7 @@ function VideoViewer({
   prefs,
 }: {
   chat: ChatRow;
-  videos: MediaItem[];
+  items: MediaItem[];
   index: number;
   onIndex: (n: number) => void;
   onClose: () => void;
@@ -1472,18 +1462,55 @@ function VideoViewer({
   onOpen: (item: MediaItem) => void;
   prefs: ViewerPrefs;
 }) {
-  const item = videos[index];
+  const item = items[index];
+  const isVideo = item.kind === "video";
   const src = mediaURL(chat.slug, item.rel);
   const poster = item.thumb ? thumbURL(chat.slug, item.thumb) : "";
-  const api = useRef<VideoApi | null>(null);
-  const hold = useRef<{ key: string; timer: number; long: boolean; direction: number } | null>(null);
+  const ambient = item.thumb ? thumbURL(chat.slug, item.thumb) : isVideo ? poster : src;
+  const modal = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
   const active = useRef<HTMLButtonElement>(null);
+  const api = useRef<VideoApi | null>(null);
+  const hold = useRef<{ key: string; timer: number; long: boolean; direction: number } | null>(null);
+  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  const stateRef = useRef({ index, items, onIndex, onClose, prefs, kind: item.kind });
+  stateRef.current = { index, items, onIndex, onClose, prefs, kind: item.kind };
 
   useEffect(() => {
     active.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }, [index]);
+
+  useEffect(() => {
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    setDragging(false);
+    setShowKeys(false);
+    if (hold.current) {
+      window.clearTimeout(hold.current.timer);
+      hold.current = null;
+    }
+    api.current?.endBoost();
+  }, [item.rel]);
+
+  const resetZoom = () => {
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+  };
+
+  const toggleFullscreen = () => {
+    if (stateRef.current.kind === "video") {
+      const p = api.current;
+      if (p) p.setFullscreen(!p.isFullscreen());
+      return;
+    }
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void modal.current?.requestFullscreen();
+  };
 
   useEffect(() => {
     const clearHold = () => {
@@ -1493,27 +1520,56 @@ function VideoViewer({
         hold.current = null;
       }
     };
+    const seekImage = (direction: number) => {
+      const st = stateRef.current;
+      const next = st.index + direction;
+      if (next >= 0 && next < st.items.length) st.onIndex(next);
+    };
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const st = stateRef.current;
       if (e.key === "PageUp" || (e.ctrlKey && e.key === "ArrowLeft")) {
         e.preventDefault();
-        if (index > 0) onIndex(index - 1);
+        seekImage(-1);
         return;
       }
       if (e.key === "PageDown" || (e.ctrlKey && e.key === "ArrowRight")) {
         e.preventDefault();
-        if (index < videos.length - 1) onIndex(index + 1);
+        seekImage(1);
         return;
       }
       if (e.key === "Escape") {
-        if (api.current?.isFullscreen()) api.current.setFullscreen(false);
-        else onClose();
+        if (document.fullscreenElement) void document.exitFullscreen();
+        else if (st.kind === "video" && api.current?.isFullscreen()) api.current.setFullscreen(false);
+        else st.onClose();
         return;
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        api.current?.setFullscreen(!api.current.isFullscreen());
+        toggleFullscreen();
+        return;
+      }
+      if (st.kind === "image") {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          seekImage(-1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          seekImage(1);
+        } else if (e.key === "+" || e.key === "=") {
+          e.preventDefault();
+          setZoom((z) => Math.min(6, Math.round((z + 0.25) * 100) / 100));
+        } else if (e.key === "-") {
+          e.preventDefault();
+          setZoom((z) => {
+            const next = Math.max(1, Math.round((z - 0.25) * 100) / 100);
+            if (next === 1) setOffset({ x: 0, y: 0 });
+            return next;
+          });
+        } else if (e.key === "0") {
+          resetZoom();
+        }
         return;
       }
       if (e.key === " " || e.code === "Space") {
@@ -1533,16 +1589,16 @@ function VideoViewer({
         const timer = window.setTimeout(() => {
           if (hold.current && hold.current.key === e.key) {
             hold.current.long = true;
-            api.current?.beginBoost(prefs.longPressRate);
+            api.current?.beginBoost(st.prefs.longPressRate);
           }
-        }, 300);
+        }, st.prefs.longPressDelayMs);
         hold.current = { key: e.key, timer, long: false, direction };
         return;
       }
       if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         e.preventDefault();
         if (e.repeat) return;
-        api.current?.adjustVolume(e.key === "ArrowUp" ? 10 : -10);
+        api.current?.adjustVolume(e.key === "ArrowUp" ? st.prefs.volumeStep : -st.prefs.volumeStep);
         return;
       }
       if (e.key === "[" || e.key === "]") {
@@ -1556,12 +1612,10 @@ function VideoViewer({
       if (!state || state.key !== e.key) return;
       window.clearTimeout(state.timer);
       if (state.long) api.current?.endBoost();
-      else api.current?.seekBy(state.direction * prefs.seekSeconds);
+      else api.current?.seekBy(state.direction * stateRef.current.prefs.seekSeconds);
       hold.current = null;
     };
-    const onBlur = () => {
-      clearHold();
-    };
+    const onBlur = () => clearHold();
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onUp);
     window.addEventListener("blur", onBlur);
@@ -1571,71 +1625,152 @@ function VideoViewer({
       window.removeEventListener("blur", onBlur);
       clearHold();
     };
-  }, [index, videos.length, onClose, onIndex, prefs.longPressRate, prefs.seekSeconds]);
+  }, []);
+
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (isVideo) return;
+    e.preventDefault();
+    const rect = stage.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    setZoom((prev) => {
+      const next = Math.max(1, Math.min(6, Math.round(prev * (e.deltaY < 0 ? 1.12 : 0.9) * 100) / 100));
+      if (next === 1) {
+        setOffset({ x: 0, y: 0 });
+      } else {
+        const ratio = next / prev;
+        setOffset((o) => ({ x: cx - ratio * (cx - o.x), y: cy - ratio * (cy - o.y) }));
+      }
+      return next;
+    });
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isVideo || zoom <= 1) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
+    setDragging(true);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    setOffset({ x: drag.current.ox + e.clientX - drag.current.x, y: drag.current.oy + e.clientY - drag.current.y });
+  };
+  const onPointerUp = () => {
+    drag.current = null;
+    setDragging(false);
+  };
 
   return (
-    <div className="media-modal" role="dialog" aria-modal="true" aria-label={`视频：${item.name}`}>
-      {poster && <div className="video-ambient" style={{ backgroundImage: `url(${poster})` }} aria-hidden="true" />}
-      <header className="media-modal-head">
-        <button className="icon-btn dark" disabled={index <= 0} aria-label="上一个视频" title="上一个视频 (PageUp)" onClick={() => onIndex(index - 1)}>
+    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
+      <div className={`viewer-ambient ${prefs.backdrop}`} style={prefs.backdrop === "ambient" && ambient ? { backgroundImage: `url(${ambient})` } : undefined} aria-hidden="true" />
+      <header className="media-modal-head viewer-head">
+        <button className="icon-btn dark" disabled={index <= 0} aria-label="上一个" title="上一个 (PageUp)" onClick={() => onIndex(index - 1)}>
           <ChevronLeft size={18} />
         </button>
-        <button className="icon-btn dark" disabled={index >= videos.length - 1} aria-label="下一个视频" title="下一个视频 (PageDown)" onClick={() => onIndex(index + 1)}>
+        <button className="icon-btn dark" disabled={index >= items.length - 1} aria-label="下一个" title="下一个 (PageDown)" onClick={() => onIndex(index + 1)}>
           <ChevronRight size={18} />
         </button>
         <span className="media-modal-name" title={item.name}>{item.name}</span>
-        <span className="media-modal-count">{index + 1} / {videos.length} · {bytes(item.size)}</span>
+        <span className="media-modal-count">{index + 1} / {items.length} · {bytes(item.size)}</span>
         <span className="spacer" />
         <button className="btn sm ghost" onClick={() => setShowKeys((v) => !v)}>
           <Keyboard size={12} /> 快捷键
         </button>
-        <button className="btn sm ghost" onClick={() => onOpen(item)}>
-          <ExternalLink size={12} /> 系统播放器
-        </button>
+        {isVideo && (
+          <button className="btn sm ghost" onClick={() => onOpen(item)}>
+            <ExternalLink size={12} /> 系统播放器
+          </button>
+        )}
         <button className="btn sm ghost" onClick={() => onReveal(item)}>
           <LocateFixed size={12} /> 定位文件
         </button>
-        <button className="btn sm close-x" aria-label="关闭视频" onClick={onClose}>
+        <button className="btn sm ghost" onClick={toggleFullscreen}>
+          <Maximize2 size={12} /> 全屏
+        </button>
+        <button className="btn sm close-x" aria-label="关闭查看器" onClick={onClose}>
           <X size={14} />
         </button>
       </header>
-      <div className="media-modal-main video">
-        <ArtVideo
-          ref={api}
-          key={item.rel}
-          src={src}
-          poster={poster || undefined}
-          maxVolume={prefs.maxVolume}
-        />
+
+      <div className={`media-modal-main viewer-stage ${isVideo ? "video" : "image"}`}>
+        {isVideo ? (
+          <ArtVideo
+            ref={api}
+            key={item.rel}
+            src={src}
+            poster={poster || ""}
+            maxVolume={prefs.maxVolume}
+            frameAspect={prefs.videoFrameAspect}
+            hasNext={index < items.length - 1}
+            onNext={() => onIndex(index + 1)}
+          />
+        ) : (
+          <div
+            ref={stage}
+            className={`image-stage ${zoom > 1 ? "zoomed" : ""} ${dragging ? "dragging" : ""}`}
+            onWheel={onWheel}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onDoubleClick={() => {
+              if (zoom > 1) resetZoom();
+              else setZoom(2);
+            }}
+          >
+            <img
+              src={src}
+              alt={item.name}
+              draggable={false}
+              loading="eager"
+              style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
+            />
+            {zoom > 1 && <span className="image-zoom-badge">{Math.round(zoom * 100)}%</span>}
+          </div>
+        )}
         {showKeys && (
-          <div className="vp-keys" role="dialog" aria-label="视频快捷键">
-            <h4>视频快捷键</h4>
+          <div className="vp-keys" role="dialog" aria-label="查看器快捷键">
+            <h4>{isVideo ? "视频快捷键" : "图片快捷键"}</h4>
             <dl>
-              <dt>← / →</dt><dd>快退 / 快进 {prefs.seekSeconds} 秒（可在设置修改）</dd>
-              <dt>长按 ← / →</dt><dd>{prefs.longPressRate}× 临时倍速，松手恢复</dd>
-              <dt>↑ / ↓</dt><dd>音量 ±10%（最高 {prefs.maxVolume}%）</dd>
-              <dt>M</dt><dd>静音 / 取消静音</dd>
-              <dt>Space</dt><dd>播放 / 暂停</dd>
+              {isVideo ? (
+                <>
+                  <dt>← / →</dt><dd>快退 / 快进 {prefs.seekSeconds} 秒；长按 {prefs.longPressDelayMs}ms 触发 {prefs.longPressRate}× 倍速</dd>
+                  <dt>↑ / ↓</dt><dd>音量 ±{prefs.volumeStep}%（最高 {prefs.maxVolume}%）</dd>
+                  <dt>M</dt><dd>静音 / 取消静音</dd>
+                  <dt>Space</dt><dd>播放 / 暂停</dd>
+                  <dt>[ / ]</dt><dd>倍速 −0.25 / +0.25</dd>
+                </>
+              ) : (
+                <>
+                  <dt>← / →</dt><dd>上一张 / 下一张</dd>
+                  <dt>滚轮</dt><dd>以鼠标位置缩放</dd>
+                  <dt>双击</dt><dd>1× / 2× 切换</dd>
+                  <dt>+ / −</dt><dd>放大 / 缩小</dd>
+                  <dt>0</dt><dd>恢复原始大小</dd>
+                </>
+              )}
               <dt>Enter</dt><dd>进入 / 退出全屏</dd>
-              <dt>Esc</dt><dd>退出全屏；非全屏时关闭查看器</dd>
-              <dt>PageUp / PageDown</dt><dd>上一个 / 下一个视频</dd>
-              <dt>[ / ]</dt><dd>倍速 −0.25 / +0.25</dd>
+              <dt>PageUp / PageDown</dt><dd>上一个 / 下一个</dd>
+              <dt>Esc</dt><dd>全屏时退出全屏，否则关闭查看器</dd>
             </dl>
           </div>
         )}
       </div>
-      <div className="media-strip" ref={strip}>
-        {videos.map((v, i) => (
+
+      <div className="media-strip viewer-strip" ref={strip}>
+        {items.map((v, i) => (
           <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => onIndex(i)}>
-            {v.thumb ? <img src={thumbURL(chat.slug, v.thumb)} alt="" loading="lazy" /> : <Film size={18} />}
+            {v.thumb ? <img src={thumbURL(chat.slug, v.thumb)} alt="" loading="lazy" /> : v.kind === "image" ? <img src={mediaURL(chat.slug, v.rel)} alt="" loading="lazy" /> : <Film size={18} />}
             <span className="strip-index">{i + 1}</span>
+            {v.kind === "video" && <span className="strip-kind"><Play size={9} fill="currentColor" /></span>}
           </button>
         ))}
       </div>
-      <button className="media-nav prev" disabled={index <= 0} aria-label="上一个视频" onClick={() => onIndex(index - 1)}>
+      <button className="media-nav prev" disabled={index <= 0} aria-label="上一个" onClick={() => onIndex(index - 1)}>
         <ChevronLeft size={26} />
       </button>
-      <button className="media-nav next" disabled={index >= videos.length - 1} aria-label="下一个视频" onClick={() => onIndex(index + 1)}>
+      <button className="media-nav next" disabled={index >= items.length - 1} aria-label="下一个" onClick={() => onIndex(index + 1)}>
         <ChevronRight size={26} />
       </button>
     </div>
@@ -1965,7 +2100,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       <section className="panel">
         <div className="panel-head">
           <h3>聊天管理</h3>
-          <span className="meta">{chats.length} 个 · 点击行进入聊天</span>
+          <span className="meta">{chats.length} 个 · 点击行勾选，使用「打开」进入聊天</span>
         </div>
         {sel.size > 0 && (
           <div className="bulk-bar">
@@ -2014,14 +2149,15 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   key={c.slug}
                   tabIndex={0}
                   aria-selected={c.slug === selected}
-                  className={c.slug === selected ? "selected" : ""}
-                  onClick={() => openChat(c.slug)}
+                  className={c.slug === selected || sel.has(c.slug) ? "selected" : ""}
+                  onClick={() => toggleSel(c.slug)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      openChat(c.slug);
+                      toggleSel(c.slug);
                     }
                   }}
+                  title="点击勾选聊天"
                 >
                   <td className="check-col" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={sel.has(c.slug)} onChange={() => toggleSel(c.slug)} aria-label={`选择 ${c.name}`} />
@@ -2039,19 +2175,19 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   <td>{c.media.toLocaleString()}</td>
                   <td>{c.missing > 0 ? <span className="missing-pill">{c.missing}</span> : <span className="muted">0</span>}</td>
                   <td className="hide-sm">{c.pages}</td>
-                  <td className="muted">{c.updatedAt ? c.updatedAt.slice(0, 10) : "--"}</td>
+                  <td className="muted">{dateTime(c.updatedAt)}</td>
                   <td className="row-action">
                     <div className="row-actions" onClick={(e) => e.stopPropagation()}>
-                      <button className="icon-btn" title="打开聊天" aria-label="打开聊天" onClick={() => openChat(c.slug)}>
-                        <ChevronRight size={14} />
+                      <button className="row-open" data-tip="打开聊天" aria-label="打开聊天" onClick={() => openChat(c.slug)}>
+                        <ArrowUpRight size={13} /> 打开
                       </button>
-                      <button className="icon-btn" title="重建网页" aria-label="重建网页" onClick={() => call("startRefreshWeb", { slug: c.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
-                        <RefreshCw size={13} />
+                      <button className="icon-btn lg" data-tip="重建网页" aria-label="重建网页" onClick={() => call("startRefreshWeb", { slug: c.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
+                        <RefreshCw size={14} />
                       </button>
-                      <button className="icon-btn" title="打开目录" aria-label="打开目录" onClick={() => call("revealChat", { slug: c.slug }).catch((e: Error) => toast(e.message, true))}>
-                        <FolderOpen size={13} />
+                      <button className="icon-btn lg" data-tip="打开目录" aria-label="打开目录" onClick={() => call("revealChat", { slug: c.slug }).catch((e: Error) => toast(e.message, true))}>
+                        <FolderOpen size={14} />
                       </button>
-                      <button className="icon-btn danger" title="删除本地归档" aria-label="删除本地归档" onClick={() => {
+                      <button className="icon-btn lg danger" data-tip="删除本地归档" aria-label="删除本地归档" onClick={() => {
                         if (!window.confirm(`删除本地归档「${c.name}」？\n\n只删除档案库副本，Telegram 云端不受影响。`)) return;
                         call("deleteChat", { slug: c.slug }).then(() => { toast("已删除本地归档"); refresh(); }).catch((e: Error) => toast(e.message, true));
                       }}>
@@ -2066,21 +2202,25 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         )}
       </section>
 
-      <div className="home-grid">
-        <section className="panel">
+      <div className="home-grid library-bottom">
+        <section className="panel library-location-card">
           <div className="panel-head">
             <h3>当前档案库</h3>
             <span className="meta">{chats.length} 个聊天</span>
           </div>
-          <div className="kv">
-            <dt>根目录</dt>
-            <dd>{boot?.libraryRoot || "未配置"}</dd>
-            <dt>配置文件</dt>
-            <dd>{boot?.configPath || "--"}</dd>
+          <div className="library-location">
+            <div className="library-folder"><Database size={22} /></div>
+            <div className="library-paths">
+              <div><span>根目录</span><code title={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code></div>
+              <div><span>配置文件</span><code title={boot?.configPath}>{boot?.configPath || "--"}</code></div>
+            </div>
+            <button className="btn sm ghost" data-tip="复制根目录" onClick={() => navigator.clipboard?.writeText(boot?.libraryRoot || "").then(() => toast("根目录已复制")).catch(() => toast("复制失败", true))}>
+              <Copy size={12} /> 复制路径
+            </button>
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel library-recent-card">
           <div className="panel-head">
             <h3>最近使用</h3>
             <span className="meta">点击切换</span>
@@ -2088,11 +2228,12 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           {history.length === 0 ? (
             <div className="chart-empty">还没有历史记录。</div>
           ) : (
-            <div className="logs-list">
+            <div className="recent-libraries">
               {history.map((root) => (
                 <button key={root} onClick={() => switchTo(root)} className={root === boot?.libraryRoot ? "on" : ""}>
-                  <span className="nm">{root}</span>
-                  {root === boot?.libraryRoot && <span className="tm">当前</span>}
+                  <span className="folder-badge"><FolderOpen size={14} /></span>
+                  <span className="library-path" title={root}>{root}</span>
+                  {root === boot?.libraryRoot && <span className="current-badge">当前</span>}
                 </button>
               ))}
             </div>
@@ -2121,16 +2262,20 @@ interface SettingsForm {
   tdlNamespace: string;
   videoSeekSeconds: number;
   videoLongPressRate: number;
+  videoLongPressDelayMs: number;
   videoMaxVolume: number;
+  videoVolumeStep: number;
+  videoFrameAspect: string;
   speedWindowSeconds: number;
+  viewerBackdrop: string;
   version: string;
 }
 
-function SettingsField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function SettingsField({ label, hint, children, wide }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="field">
+    <div className={`field ${wide ? "wide" : ""}`}>
       <label>{label}</label>
-      {children}
+      <div className="field-control">{children}</div>
       {hint && <span className="hint">{hint}</span>}
     </div>
   );
@@ -2168,7 +2313,16 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
     load();
   }, []);
 
-  if (!form) return <div className="chart-empty">正在读取设置…</div>;
+  if (!form) {
+    return (
+      <section className="settings-card settings-loading">
+        <header><div><h3>正在读取设置</h3><p>正在读取本机配置与可用参数…</p></div></header>
+        <div className="account-skeleton">
+          {Array.from({ length: 6 }).map((_, i) => <div key={i}><span className="skeleton-line w-80" /><span className="skeleton-line w-260" /></div>)}
+        </div>
+      </section>
+    );
+  }
 
   const dirty = original ? JSON.stringify(form) !== JSON.stringify(original) : false;
   const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) => setForm((f) => (f ? { ...f, [key]: value } : f));
@@ -2182,8 +2336,12 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
       applyPrefs({
         seekSeconds: next.videoSeekSeconds,
         longPressRate: next.videoLongPressRate,
+        longPressDelayMs: next.videoLongPressDelayMs,
         maxVolume: next.videoMaxVolume,
+        volumeStep: next.videoVolumeStep,
+        videoFrameAspect: next.videoFrameAspect || "original",
         speedWindowSeconds: next.speedWindowSeconds,
+        backdrop: next.viewerBackdrop || "ambient",
       });
       toast("设置已保存");
     } catch (e) {
@@ -2197,7 +2355,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
     <>
       <div className="page-head">
         <div>
-          <h1>设置</h1>
+          <h1>系统设置</h1>
           <p>下载参数会用于下一轮同步；保存后立即写入配置文件</p>
         </div>
         <div className="actions">
@@ -2285,15 +2443,34 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <SettingsField label="左右键快进步长（秒）" hint="短按 ← / → 前进或后退的秒数（1–60）">
             <input type="number" min={1} max={60} value={form.videoSeekSeconds} onChange={(e) => set("videoSeekSeconds", Number(e.target.value))} />
           </SettingsField>
-          <SettingsField label="长按左右键倍速" hint="按住 ← / → 300ms 后临时倍速，松开恢复（1.1–10.0）">
+          <SettingsField label="长按左右键倍速" hint="按住 ← / → 后临时倍速，松开恢复（1.1–10.0）">
             <input type="number" min={1.1} max={10} step={0.1} value={form.videoLongPressRate} onChange={(e) => set("videoLongPressRate", Number(e.target.value))} />
+          </SettingsField>
+          <SettingsField label="长按触发时间（毫秒）" hint="按住左右键多久后进入长按倍速（150–1000）">
+            <input type="number" min={150} max={1000} step={50} value={form.videoLongPressDelayMs} onChange={(e) => set("videoLongPressDelayMs", Number(e.target.value))} />
           </SettingsField>
           <SettingsField label="音量上限（%）" hint="↑ / ↓ 可调到的最大音量，超过 100% 使用 Web Audio 增益（100–300）">
             <input type="number" min={100} max={300} step={10} value={form.videoMaxVolume} onChange={(e) => set("videoMaxVolume", Number(e.target.value))} />
           </SettingsField>
+          <SettingsField label="音量按键步进（%）" hint="按一次 ↑ / ↓ 调整的音量幅度（1–50）">
+            <input type="number" min={1} max={50} step={1} value={form.videoVolumeStep} onChange={(e) => set("videoVolumeStep", Number(e.target.value))} />
+          </SettingsField>
           <SettingsField label="速度曲线默认时间窗（秒）" hint="下载中心曲线默认窗口（60–900 秒），也可在页面内临时切换">
             <input type="number" min={60} max={900} step={30} value={form.speedWindowSeconds} onChange={(e) => set("speedWindowSeconds", Number(e.target.value))} />
           </SettingsField>
+          <SettingsField wide label="视频容器比例" hint="原始比例会按视频实际宽高自适应；固定比例可能产生黑边">
+            <Select
+              ariaLabel="视频容器比例"
+              value={form.videoFrameAspect}
+              onChange={(v) => set("videoFrameAspect", v)}
+              options={[
+                { value: "original", label: "原始比例（推荐）" },
+                { value: "16:9", label: "固定 16 : 9" },
+                { value: "4:3", label: "固定 4 : 3" },
+              ]}
+            />
+          </SettingsField>
+
         </div>
       </section>
 
@@ -2308,7 +2485,19 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <SettingsField label="tdl Namespace" hint="不同 namespace 的登录会话互相隔离">
             <input type="text" value={form.tdlNamespace} onChange={(e) => set("tdlNamespace", e.target.value)} />
           </SettingsField>
-          <div className="switch-stack">
+          <SettingsField label="查看器背景" hint="图片和视频共用；动态取色会从当前媒体生成模糊光晕">
+            <Select
+              ariaLabel="查看器背景"
+              value={form.viewerBackdrop}
+              onChange={(v) => set("viewerBackdrop", v)}
+              options={[
+                { value: "ambient", label: "动态取色（推荐）" },
+                { value: "frosted", label: "磨砂模糊" },
+                { value: "solid", label: "深色纯色" },
+              ]}
+            />
+          </SettingsField>
+          <div className="switch-grid">
             <SettingsToggle
               checked={form.generateThumbnails}
               onChange={(v) => set("generateThumbnails", v)}
@@ -2391,6 +2580,9 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
 
   const renderRows = (labels: string[]) => (
     <div className="diag-rows">
+      {loading && rows.length === 0 && Array.from({ length: labels.length }).map((_, i) => (
+        <div key={`sk-${i}`} className="diag-row"><span className="skeleton-line w-60" /><span className="skeleton-line w-160" /></div>
+      ))}
       {rows
         .filter((r) => labels.includes(r.label))
         .map((r) => (
@@ -2650,6 +2842,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
   const [busy, setBusy] = useState("");
   const [entry, setEntry] = useState("");
   const [showRaw, setShowRaw] = useState(false);
+  const [ready, setReady] = useState(false);
   const autoChecked = useRef(false);
 
   const loadInfo = () => {
@@ -2661,15 +2854,15 @@ export function Account({ ctx }: { ctx: PageCtx }) {
       .catch((e: Error) => toast(e.message, true));
   };
   useEffect(() => {
-    loadInfo();
-    call<AccountProfile | null>("accountProfile")
-      .then((p) => {
+    Promise.allSettled([
+      loadInfo(),
+      call<AccountProfile | null>("accountProfile").then((p) => {
         if (p && p.userId) {
           setProfile(p);
           setProfileSource("cache");
         }
-      })
-      .catch(() => undefined);
+      }),
+    ]).finally(() => setReady(true));
   }, []);
   useEffect(() => {
     if (login?.state === "success") {
@@ -2840,8 +3033,9 @@ export function Account({ ctx }: { ctx: PageCtx }) {
   const username = profile?.username || exportAccount?.username || "";
   const userId = profile?.userId || exportAccount?.userId;
   const phone = profile?.phone ? (profile.phone.startsWith("+") ? profile.phone : "+" + profile.phone) : "";
-  const checkedText = profile?.checkedAt ? new Date(profile.checkedAt).toLocaleString("zh-CN", { hour12: false }) : "尚未读取";
+  const checkedText = profile?.checkedAt ? dateTime(profile.checkedAt) : "尚未读取";
   const sourceText = profileSource === "live" ? "实时读取" : profileSource === "inferred" ? "下载中推断" : "本机缓存";
+  const profileLoading = !ready || (!profile && (checking || (!autoChecked.current && !!account?.hasSessionFile)));
 
   return (
     <>
@@ -2861,22 +3055,26 @@ export function Account({ ctx }: { ctx: PageCtx }) {
       </div>
 
       <section className="account-hero">
-        <div className="account-avatar">
-          {profile?.avatar ? <img src={profile.avatar} alt={displayName} /> : <UserRound size={26} />}
+        <div className={`account-avatar ${!ready ? "skeleton" : ""}`}>
+          {!ready ? null : profile?.avatar ? <img src={profile.avatar} alt={displayName} /> : <UserRound size={26} />}
         </div>
         <div className="account-id">
-          <h2>{displayName}</h2>
+          <h2>{ready ? displayName : <span className="skeleton-line w-140" />}</h2>
           <p className="account-handle">
-            {username ? <><AtSign size={12} /> {username}</> : <span className="faint">未设置用户名</span>}
+            {!ready ? <span className="skeleton-line w-220" /> : username ? <><AtSign size={12} /> {username}</> : <span className="faint">该账号没有公开 @用户名</span>}
             {phone && <><i>·</i><Phone size={12} /> {phone}</>}
             {userId && <><i>·</i><Fingerprint size={12} /> ID {userId}</>}
           </p>
           <p className="account-sub">
-            <span>{profile ? sourceText : "尚未读取账号资料"}</span>
-            <i>·</i>
-            <span>{checkedText}</span>
-            <i>·</i>
-            <span>namespace {account?.namespace || info?.namespace || "-"}</span>
+            {!ready ? <span className="skeleton-line w-260" /> : (
+              <>
+                <span>{profile ? sourceText : "尚未读取账号资料"}</span>
+                <i>·</i>
+                <span>{checkedText}</span>
+                <i>·</i>
+                <span>namespace {account?.namespace || info?.namespace || "-"}</span>
+              </>
+            )}
           </p>
         </div>
         <span className={`account-status ${statusTone}`}><i /> {accountStatus}</span>
@@ -2914,11 +3112,15 @@ export function Account({ ctx }: { ctx: PageCtx }) {
             <h3>账号资料</h3>
             <span className="meta">{profile ? sourceText : "等待读取"}</span>
           </div>
-          {profile ? (
+          {profileLoading ? (
+            <div className="account-skeleton" aria-label="正在读取账号资料">
+              {Array.from({ length: 6 }).map((_, i) => <div key={i}><span className="skeleton-line w-60" /><span className="skeleton-line w-160" /></div>)}
+            </div>
+          ) : profile ? (
             <>
               <div className="account-rows">
                 <div><span>名称</span><b>{profile.name || "未命名"}</b></div>
-                <div><span>用户名</span><b>{profile.username ? "@" + profile.username : "未设置"}</b></div>
+                <div><span>用户名（@）</span><b>{profile.username ? "@" + profile.username : "该账号没有公开 @用户名"}<em className="account-hint">显示名称 {profile.name || "X wans"} 与 @用户名 是两项资料</em></b></div>
                 <div><span>手机号</span><b className="mono">{phone || "不可见"}</b></div>
                 <div><span>用户 ID</span><b className="mono">{profile.userId}</b></div>
                 <div><span>数据来源</span><b>{sourceText}</b></div>
@@ -2969,7 +3171,7 @@ ID ${profile.userId}`;
             <dt>文件大小</dt>
             <dd>{account?.hasSessionFile ? bytes(account?.sessionSize ?? 0) : "无"}</dd>
             <dt>最后修改</dt>
-            <dd>{account?.sessionModified ? new Date(account.sessionModified).toLocaleString("zh-CN", { hour12: false }) : "--"}</dd>
+            <dd>{dateTime(account?.sessionModified)}</dd>
             <dt>tdl</dt>
             <dd className="mono">{info?.exe || "未安装"}</dd>
             <dt>tdl 版本</dt>

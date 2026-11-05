@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Database,
   FileJson,
@@ -34,7 +34,7 @@ const NAV = [
   { key: "library", label: "档案管理", desc: "导入、批量管理与库切换", icon: Database },
   { key: "account", label: "账号管理", desc: "登录、资料与授权状态", icon: UserRound },
   { key: "diagnostics", label: "诊断工具", desc: "环境检查与日志浏览", icon: Stethoscope },
-  { key: "settings", label: "设置", desc: "下载、网络与播放器参数", icon: Settings },
+  { key: "settings", label: "系统设置", desc: "下载、网络与播放器参数", icon: Settings },
 ];
 
 const initialSideWidth = () => {
@@ -49,6 +49,12 @@ interface SideTip {
   desc?: string;
   lines?: string[];
   warn?: string;
+}
+
+interface AppTip {
+  text: string;
+  x: number;
+  y: number;
 }
 
 export default function App() {
@@ -71,11 +77,12 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActive, setPaletteActive] = useState(0);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  const [prefs, setPrefs] = useState<ViewerPrefs>({ seekSeconds: 5, longPressRate: 4, maxVolume: 200, speedWindowSeconds: 180 });
+  const [prefs, setPrefs] = useState<ViewerPrefs>({ seekSeconds: 5, longPressRate: 4, longPressDelayMs: 300, maxVolume: 200, volumeStep: 10, videoFrameAspect: "original", speedWindowSeconds: 180, backdrop: "ambient" });
   const [taskFocus, setTaskFocus] = useState<string | null>(null);
   const [sideWidth, setSideWidth] = useState(initialSideWidth);
   const [sideCollapsed, setSideCollapsed] = useState(initialCollapsed);
   const [sideTip, setSideTip] = useState<SideTip | null>(null);
+  const [appTip, setAppTip] = useState<AppTip | null>(null);
   const lastSample = useRef(0);
   const toastTimer = useRef(0);
   const lastNotice = useRef(0);
@@ -102,6 +109,36 @@ export default function App() {
   useEffect(() => {
     if (palette || pending) setSideTip(null);
   }, [palette, pending]);
+  useEffect(() => {
+    let timer = 0;
+    const hide = () => setAppTip(null);
+    const over = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tip]");
+      if (!el) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const r = el.getBoundingClientRect();
+        setAppTip({ text: el.dataset.tip || "", x: Math.max(70, Math.min(window.innerWidth - 70, r.left + r.width / 2)), y: r.bottom + 8 });
+      }, 90);
+    };
+    const out = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest("[data-tip]");
+      if (!el) return;
+      window.clearTimeout(timer);
+      setAppTip(null);
+    };
+    document.addEventListener("mouseover", over);
+    document.addEventListener("mouseout", out);
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("pointerdown", hide);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("mouseover", over);
+      document.removeEventListener("mouseout", out);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("pointerdown", hide);
+    };
+  }, []);
   useEffect(() => {
     localStorage.setItem("tak-side-collapsed", sideCollapsed ? "1" : "0");
     setSideTip(null);
@@ -173,13 +210,17 @@ export default function App() {
 
   useEffect(() => {
     call<Bootstrap>("bootstrap").then(setBoot).catch((e: Error) => toast(e.message, true));
-    call<{ videoSeekSeconds: number; videoLongPressRate: number; videoMaxVolume: number; speedWindowSeconds: number }>("getSettings")
+    call<{ videoSeekSeconds: number; videoLongPressRate: number; videoLongPressDelayMs: number; videoMaxVolume: number; videoVolumeStep: number; videoFrameAspect: string; speedWindowSeconds: number; viewerBackdrop: string }>("getSettings")
       .then((s) =>
         setPrefs({
           seekSeconds: s.videoSeekSeconds || 5,
           longPressRate: s.videoLongPressRate || 4,
+          longPressDelayMs: s.videoLongPressDelayMs || 300,
           maxVolume: s.videoMaxVolume || 200,
+          volumeStep: s.videoVolumeStep || 10,
+          videoFrameAspect: s.videoFrameAspect || "original",
           speedWindowSeconds: s.speedWindowSeconds || 180,
+          backdrop: s.viewerBackdrop || "ambient",
         })
       )
       .catch(() => undefined);
@@ -211,6 +252,7 @@ export default function App() {
 
   const go = (next: string) => {
     setSideTip(null);
+    setAppTip(null);
     setPage(next);
     if (next !== "overview") setTaskFocus(null);
   };
@@ -278,7 +320,7 @@ export default function App() {
       { id: "nav-tasks", label: "前往：任务中心", hint: "下载与任务", section: "页面", run: () => go("tasks") },
       { id: "nav-library", label: "前往：档案管理", hint: "导入与管理", section: "页面", run: () => go("library") },
       { id: "nav-account", label: "前往：账号管理", hint: "登录与授权", section: "页面", run: () => go("account") },
-      { id: "nav-settings", label: "前往：设置", hint: "参数", section: "页面", run: () => go("settings") },
+      { id: "nav-settings", label: "前往：系统设置", hint: "参数", section: "页面", run: () => go("settings") },
       { id: "nav-diagnostics", label: "前往：诊断工具", hint: "环境与日志", section: "页面", run: () => go("diagnostics") },
     ];
     const chatsCmds: Command[] = chats.map((c) => ({
@@ -412,6 +454,43 @@ export default function App() {
       warn: c.missing > 0 ? `缺失 ${c.missing} 个媒体` : undefined,
     });
   };
+  const beginWindowResize = (edge: string, e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const start = {
+      x: e.clientX, y: e.clientY,
+      w: window.innerWidth, h: window.innerHeight,
+      px: window.screenX, py: window.screenY,
+    };
+    let raf = 0;
+    let pending = { width: start.w, height: start.h, x: start.px, y: start.py };
+    const move = (ev: MouseEvent) => {
+      const dx = ev.clientX - start.x;
+      const dy = ev.clientY - start.y;
+      let width = start.w + (edge.includes("e") ? dx : 0) - (edge.includes("w") ? dx : 0);
+      let height = start.h + (edge.includes("s") ? dy : 0) - (edge.includes("n") ? dy : 0);
+      width = Math.max(1040, width);
+      height = Math.max(680, height);
+      const x = edge.includes("w") ? start.px + (start.w - width) : start.px;
+      const y = edge.includes("n") ? start.py + (start.h - height) : start.py;
+      pending = { width: Math.round(width), height: Math.round(height), x, y };
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        call("windowResize", pending).catch(() => undefined);
+      });
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = getComputedStyle(e.currentTarget).cursor;
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (sideCollapsed) return;
     e.preventDefault();
@@ -432,12 +511,27 @@ export default function App() {
 
   return (
     <div className="app">
+      {(["n", "s", "e", "w", "nw", "ne", "sw", "se"] as const).map((edge) => (
+        <div
+          key={edge}
+          className={`resize-edge ${edge}`}
+          onMouseDown={(e) => beginWindowResize(edge, e)}
+        />
+      ))}
       <header className="titlebar">
         <div className="brand">
           <img className="brand-mark" src="./app-icon.png" alt="Telegram Archive Kit" />
           <span className="brand-name">Telegram Archive Kit</span>
           <span className="brand-ver">{boot?.version ?? "2.0"}</span>
         </div>
+        <button
+          className="side-toggle"
+          onClick={() => { setSideTip(null); setSideCollapsed((v) => !v); }}
+          aria-label={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
+          data-tip={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
+        >
+          {sideCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+        </button>
         {boot && (
           <span className="libchip" title={boot.libraryRoot || "未配置档案库"}>
             <FolderOpen size={12} />
@@ -512,16 +606,6 @@ export default function App() {
                 </button>
               </>
             )}
-            <button
-              className="side-collapse"
-              onClick={() => { setSideTip(null); setSideCollapsed((v) => !v); }}
-              title={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
-              aria-label={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
-              onMouseEnter={(e) => showNavTip(e, sideCollapsed ? "展开侧栏" : "折叠侧栏", "只显示图标，悬停查看详情")}
-              onMouseLeave={() => setSideTip(null)}
-            >
-              {sideCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-            </button>
           </div>
           <div className="chat-list">
             {chats.length === 0 && (
@@ -588,6 +672,8 @@ export default function App() {
           {sideTip.warn && <em>{sideTip.warn}</em>}
         </div>
       )}
+
+      {appTip && <div className="app-tip" role="tooltip" style={{ left: appTip.x, top: appTip.y }}>{appTip.text}</div>}
 
       {palette && (
         <div
