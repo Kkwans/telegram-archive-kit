@@ -155,6 +155,18 @@ export interface PendingInput {
   source?: string;
 }
 
+export interface AccountInfo {
+  namespace: string;
+  tdlExe: string;
+  tdlVersion: string;
+  sessionDir: string;
+  sessionFile: string;
+  sessionSize: number;
+  sessionModified: number;
+  hasSessionFile: boolean;
+  running: boolean;
+}
+
 export interface HomeStats {
   chats: number;
   messages: number;
@@ -176,6 +188,7 @@ export interface TaskInfo {
   id: string;
   kind: string;
   title: string;
+  chat?: string;
   detail?: string;
   state: "running" | "done" | "failed";
   percent: number;

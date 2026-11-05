@@ -187,6 +187,12 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 		return map[string]string{"taskId": id}, nil
+	case "startSyncAllMissing":
+		id, err := b.facade.StartSyncAllMissing()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
 	case "startMergeLibrary":
 		id, err := b.facade.StartMergeLibrary(p.Root)
 		if err != nil {
@@ -283,6 +289,10 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 
 	case "tdlInfo":
 		return b.facade.TdlInfo(), nil
+	case "accountInfo":
+		return b.facade.AccountInfo(), nil
+	case "logoutTdl":
+		return nil, b.facade.LogoutTdl()
 	case "sessionCheck":
 		return b.facade.SessionCheck(p.Timeout), nil
 	case "installTdl":

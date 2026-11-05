@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ type TaskDTO struct {
 	ID         string `json:"id"`
 	Kind       string `json:"kind"`
 	Title      string `json:"title"`
+	Chat       string `json:"chat,omitempty"`
 	Detail     string `json:"detail,omitempty"`
 	State      string `json:"state"` // running|done|failed
 	Percent    int    `json:"percent"`
@@ -25,6 +28,12 @@ type TaskDTO struct {
 type backgroundTask struct {
 	mu  sync.Mutex
 	dto TaskDTO
+}
+
+func (t *backgroundTask) setChat(chat string) {
+	t.mu.Lock()
+	t.dto.Chat = chat
+	t.mu.Unlock()
 }
 
 func (t *backgroundTask) update(percent int, detail string) {
@@ -74,13 +83,16 @@ func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error)
 	}
 	f.taskMu.Unlock()
 
+	f.saveTasks()
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				task.finish(fmt.Errorf("任务异常：%v", r))
+				f.saveTasks()
 			}
 		}()
 		task.finish(fn(task))
+		f.saveTasks()
 	}()
 	return id
 }
@@ -97,7 +109,6 @@ func (f *Facade) Tasks() []TaskDTO {
 
 func (f *Facade) ClearFinishedTasks() {
 	f.taskMu.Lock()
-	defer f.taskMu.Unlock()
 	kept := f.tasks[:0]
 	for _, t := range f.tasks {
 		if t.snapshot().State == "running" {
@@ -105,6 +116,55 @@ func (f *Facade) ClearFinishedTasks() {
 		}
 	}
 	f.tasks = kept
+	f.taskMu.Unlock()
+	f.saveTasks()
+}
+
+func (f *Facade) taskStorePath() string {
+	if f.a == nil || f.a.ConfigDir == "" {
+		return ""
+	}
+	return filepath.Join(f.a.ConfigDir, "tasks.json")
+}
+
+func (f *Facade) saveTasks() {
+	path := f.taskStorePath()
+	if path == "" {
+		return
+	}
+	tasks := f.Tasks()
+	b, err := json.MarshalIndent(tasks, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, b, 0644) == nil {
+		_ = os.Rename(tmp, path)
+	}
+}
+
+func (f *Facade) loadTasks() {
+	path := f.taskStorePath()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var stored []TaskDTO
+	if json.Unmarshal(b, &stored) != nil {
+		return
+	}
+	f.taskMu.Lock()
+	for _, dto := range stored {
+		if dto.State == "running" {
+			dto.State = "failed"
+			dto.Error = "应用上次退出时任务未完成"
+			if dto.FinishedAt == 0 {
+				dto.FinishedAt = dto.StartedAt
+			}
+		}
+		f.tasks = append(f.tasks, &backgroundTask{dto: dto})
+	}
+	f.taskMu.Unlock()
 }
 
 func (f *Facade) StartImportJSON(paths []string) (string, error) {
@@ -142,13 +202,19 @@ func (f *Facade) StartImportOfficial(folder, slug, mode string) (string, error) 
 		if err != nil {
 			return err
 		}
+		t.setChat(chat.Name)
 		t.update(100, "已登记："+chat.Name)
 		return nil
 	}), nil
 }
 
 func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
-	return f.startTask("export", "导出聊天到另一档案库", func(t *backgroundTask) error {
+	name := slug
+	if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
+		name = meta.Chat.Name
+	}
+	return f.startTask("export", "导出聊天："+name, func(t *backgroundTask) error {
+		t.setChat(name)
 		t.update(15, "复制聊天文件")
 		if err := f.ExportChat(slug, dstRoot); err != nil {
 			return err
@@ -159,12 +225,17 @@ func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
 }
 
 func (f *Facade) StartRefreshWeb(slug string) (string, error) {
-	return f.startTask("refresh", "重建聊天网页", func(t *backgroundTask) error {
+	name := slug
+	if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
+		name = meta.Chat.Name
+	}
+	return f.startTask("refresh", "重建网页："+name, func(t *backgroundTask) error {
+		t.setChat(name)
 		t.update(30, "扫描与渲染")
 		if err := f.RefreshWeb(slug); err != nil {
 			return err
 		}
-		t.update(100, "网页已重建")
+		t.update(100, "网页已重建："+name)
 		return nil
 	}), nil
 }
@@ -193,6 +264,45 @@ func (f *Facade) StartRefreshAllWeb() (string, error) {
 		if failures > 0 {
 			return fmt.Errorf("%d 个聊天重建失败", failures)
 		}
+		return nil
+	}), nil
+}
+
+// StartSyncAllMissing runs the one-click sync for every chat that reports
+// missing media, then rebuilds the library page once.
+func (f *Facade) StartSyncAllMissing() (string, error) {
+	var targets []WorkspaceMeta
+	for _, m := range f.a.listWorkspaces() {
+		if m.MissingCount > 0 && fileExists(f.a.sourcePath(m.Slug)) {
+			targets = append(targets, m)
+		}
+	}
+	if len(targets) == 0 {
+		return "", fmt.Errorf("没有缺失媒体的聊天")
+	}
+	return f.startTask("sync-all", fmt.Sprintf("同步全部缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
+		failures := 0
+		for i, m := range targets {
+			t.setChat(m.Chat.Name)
+			t.update(i*100/len(targets), m.Chat.Name)
+			rep := &eventReporter{opID: "sync-all", emit: f.send}
+			rep.Phase(context.Background(), "sync", "同步缺失媒体", m.Chat.Name)
+			if err := f.a.smartSyncCtx(context.Background(), m.Slug, rep); err != nil {
+				failures++
+				continue
+			}
+			if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), m.Slug, true, nil); err != nil {
+				failures++
+			}
+			t.update((i+1)*100/len(targets), m.Chat.Name)
+		}
+		if err := f.a.buildLibrary(); err != nil {
+			return err
+		}
+		if failures > 0 {
+			return fmt.Errorf("%d/%d 个聊天同步失败", failures, len(targets))
+		}
+		t.update(100, fmt.Sprintf("完成 %d 个聊天的同步", len(targets)))
 		return nil
 	}), nil
 }

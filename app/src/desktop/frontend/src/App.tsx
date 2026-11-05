@@ -6,6 +6,7 @@ import {
   FolderOpen,
   HardDrive,
   House,
+  Settings2,
   LayoutDashboard,
   ListTodo,
   MessageSquare,
@@ -23,7 +24,7 @@ import {
 import { call } from "./rpc";
 import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, Overview, SettingsPage, type PageCtx } from "./pages";
-import { TaskCenter } from "./TaskCenter";
+import { TasksPage } from "./TaskCenter";
 import { Select } from "./Select";
 
 type Theme = "light" | "dark";
@@ -34,6 +35,7 @@ const NAV = [
   { key: "overview", label: "下载", icon: LayoutDashboard },
   { key: "chats", label: "聊天", icon: MessagesSquare },
   { key: "library", label: "档案库", icon: Database },
+  { key: "tasks", label: "任务", icon: ListTodo },
   { key: "account", label: "账号", icon: UserRound },
   { key: "settings", label: "设置", icon: Settings },
   { key: "diagnostics", label: "诊断", icon: Stethoscope },
@@ -59,7 +61,6 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActive, setPaletteActive] = useState(0);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  const [taskOpen, setTaskOpen] = useState(false);
   const lastSample = useRef(0);
   const toastTimer = useRef(0);
   const lastNotice = useRef(0);
@@ -190,7 +191,7 @@ export default function App() {
       pickFiles,
       pickFolder,
       tasks,
-      openTasks: () => setTaskOpen(true),
+      openTasks: () => setPage("tasks"),
     }),
     [boot, chats, selected, dl, op, done, login, running, history, tasks]
   );
@@ -229,6 +230,7 @@ export default function App() {
       { id: "nav-home", label: "前往：首页", hint: "总览", section: "页面", run: () => setPage("home") },
       { id: "nav-overview", label: "前往：下载中心", hint: "下载", section: "页面", run: () => setPage("overview") },
       { id: "nav-chats", label: "前往：当前聊天", hint: "聊天", section: "页面", run: () => setPage("chats") },
+      { id: "nav-tasks", label: "前往：任务中心", hint: "任务", section: "页面", run: () => setPage("tasks") },
       { id: "nav-library", label: "前往：档案库", hint: "档案库", section: "页面", run: () => setPage("library") },
       { id: "nav-account", label: "前往：账号", hint: "登录", section: "页面", run: () => setPage("account") },
       { id: "nav-settings", label: "前往：设置", hint: "设置", section: "页面", run: () => setPage("settings") },
@@ -347,12 +349,12 @@ export default function App() {
         <div className="brand">
           <img className="brand-mark" src="./app-icon.png" alt="Telegram Archive Kit" />
           <span className="brand-name">Telegram Archive Kit</span>
-          <span className="brand-ver">{boot?.version ?? "2.1"}</span>
+          <span className="brand-ver">{boot?.version ?? "2.0"}</span>
         </div>
         {boot && (
-          <span className="libchip" title={boot.libraryRoot}>
+          <span className="libchip" title={boot.libraryRoot || "未配置档案库"}>
             <FolderOpen size={12} />
-            <b>{boot.libraryRoot || "未配置档案库"}</b>
+            <span>{boot.libraryRoot || "未配置档案库"}</span>
           </span>
         )}
         <span className="spacer" />
@@ -360,7 +362,7 @@ export default function App() {
           <Search size={12} />
           Ctrl K
         </button>
-        <button className="taskbtn" title="任务中心" aria-label="打开任务中心" onClick={() => setTaskOpen(true)}>
+        <button className="taskbtn" title="任务中心" aria-label="打开任务中心" onClick={() => setPage("tasks")}>
           <ListTodo size={13} />
           任务
           {tasks.filter((t) => t.state === "running").length > 0 && <b>{tasks.filter((t) => t.state === "running").length}</b>}
@@ -406,10 +408,11 @@ export default function App() {
             })}
           </nav>
           <div className="side-head">
-            <h2>聊天</h2>
-            <span className="side-count">{chats.length} 个</span>
-            <button className="side-manage" onClick={() => setPage("library")} title="导入与管理聊天">
-              管理
+            <span className="side-title">聊天</span>
+            <span className="side-count">{chats.length}</span>
+            <span className="spacer" />
+            <button className="side-manage" onClick={() => setPage("library")} title="导入与管理聊天" aria-label="导入与管理聊天">
+              <Settings2 size={12} />
             </button>
           </div>
           <div className="chat-list">
@@ -461,6 +464,7 @@ export default function App() {
             {page === "chats" && <Chats ctx={ctx} />}
             {page === "library" && <Library ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
+            {page === "tasks" && <TasksPage tasks={tasks} onRefresh={refresh} onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))} toast={toast} />}
             {page === "settings" && <SettingsPage ctx={ctx} />}
             {page === "diagnostics" && <Diagnostics ctx={ctx} />}
           </div>
@@ -474,20 +478,8 @@ export default function App() {
         </span>
         <span>{boot?.hasSession ? "会话已保存" : "未登录 Telegram"}</span>
         <span className="spacer" />
-        <span>Telegram Archive Kit {boot?.version ?? "2.1"} · 桌面客户端</span>
+        <span>Telegram Archive Kit {boot?.version ?? "2.0"} · 桌面客户端</span>
       </footer>
-
-      {taskOpen && (
-        <TaskCenter
-          tasks={tasks}
-          onClose={() => setTaskOpen(false)}
-          onClear={() => {
-            call("clearTasks")
-              .then(() => setTasks((list) => list.filter((t) => t.state === "running")))
-              .catch(() => undefined);
-          }}
-        />
-      )}
 
       {palette && (
         <div

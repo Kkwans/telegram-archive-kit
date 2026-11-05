@@ -103,6 +103,7 @@ def package_zip(outputs: list[pathlib.Path]) -> pathlib.Path:
         root / "docs" / "DATA_FORMAT.md",
         root / "docs" / "THIRD_PARTY.md",
         root / "docs" / "ONLINE_TDL_3.0.md",
+        root / "docs" / "STORAGE_SQLITE.md",
     ]
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         for out in outputs:

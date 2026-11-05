@@ -401,8 +401,12 @@ func (a *App) testTdlSession(timeout time.Duration) SessionStatus {
 }
 
 func hasTdlSessionData() bool {
-	for _, p := range []string{filepath.Join(tdlDataDir(), "data"), filepath.Join(tdlDataDir(), "data.kv")} {
-		if fileExists(p) {
+	entries, err := os.ReadDir(filepath.Join(tdlDataDir(), "data"))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
 			return true
 		}
 	}

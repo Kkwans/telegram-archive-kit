@@ -67,7 +67,9 @@ func OpenFacade() (*Facade, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Facade{a: a}, nil
+	f := &Facade{a: a}
+	f.loadTasks()
+	return f, nil
 }
 
 // AcquireLibraryLock marks this process as the writer for the current library.

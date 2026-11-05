@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -45,6 +45,7 @@ import Artplayer from "artplayer";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type {
+  AccountInfo,
   Bootstrap,
   ChatRow,
   DoneState,
@@ -103,6 +104,10 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   const { boot, chats, selected, setSelected, refresh, toast, go, tasks, openTasks } = ctx;
   const [stats, setStats] = useState<HomeStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [syncSlug, setSyncSlug] = useState(selected);
+  useEffect(() => {
+    if (!syncSlug && selected) setSyncSlug(selected);
+  }, [selected]);
 
   const load = () => {
     setLoading(true);
@@ -136,14 +141,31 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   const current = chats.find((c) => c.slug === selected) || null;
 
   const startSync = async () => {
-    if (!selected) {
+    const slug = syncSlug || selected;
+    if (!slug) {
       go("chats");
       return;
     }
+    setSelected(slug);
     try {
-      await call("startOneClick", { slug: selected });
-      toast("已开始同步当前聊天");
+      await call("startOneClick", { slug });
+      toast("已开始同步：" + (chats.find((c) => c.slug === slug)?.name ?? "聊天"));
       go("overview");
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+  const syncAllMissing = async () => {
+    const missing = chats.filter((c) => c.missing > 0);
+    if (missing.length === 0) {
+      toast("所有聊天都没有缺失媒体");
+      return;
+    }
+    if (!window.confirm(`将依次同步 ${missing.length} 个存在缺失媒体的聊天，期间会下载并重建网页。继续？`)) return;
+    try {
+      await call("startSyncAllMissing");
+      toast("批量同步任务已加入任务中心");
+      go("tasks");
     } catch (e) {
       toast((e as Error).message, true);
     }
@@ -161,11 +183,22 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             {chats.length} 个聊天 · {(stats?.messages ?? 0).toLocaleString()} 条消息 · {bytes(stats?.mediaBytes ?? 0)} 媒体已归档
             {stats && stats.missing > 0 ? ` · ${stats.missing} 个缺失` : ""}
           </p>
-          <div className="home-cta">
-            <button className="btn primary" onClick={startSync}>
-              <Play size={13} /> {current ? `同步「${current.name}」` : "开始同步"}
+          <div className="home-sync">
+            <Select
+              ariaLabel="选择要同步的聊天"
+              value={syncSlug || chats[0]?.slug || ""}
+              onChange={setSyncSlug}
+              options={chats.map((c) => ({ value: c.slug, label: c.name }))}
+            />
+            <button className="btn primary" onClick={startSync} disabled={chats.length === 0}>
+              <Play size={13} /> 同步所选
             </button>
-            <button className="btn" onClick={() => go("library")}>
+            <button className="btn" onClick={syncAllMissing} disabled={!chats.some((c) => c.missing > 0)}>
+              <RefreshCw size={13} /> 同步全部缺失
+            </button>
+          </div>
+          <div className="home-cta">
+            <button className="btn ghost" onClick={() => go("library")}>
               <Download size={13} /> 导入 result.json
             </button>
             <button className="btn ghost" onClick={() => boot && call("openLibrary", {}).catch((e: Error) => toast(e.message, true))}>
@@ -200,23 +233,34 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         </div>
       </section>
 
-      <section className="kpis home-kpis">
-        <div className="kpi">
+      <section className="stat-grid">
+        <div className="stat">
           <span>聊天</span>
-          <b>{chats.length}</b>
-          <small>个档案</small>
+          <div>
+            <b>{chats.length}</b>
+            <em>个档案</em>
+          </div>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>消息</span>
-          <b>{(stats?.messages ?? 0).toLocaleString()}</b>
+          <div>
+            <b>{(stats?.messages ?? 0).toLocaleString()}</b>
+            <em>条</em>
+          </div>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>本地媒体</span>
-          <b>{(stats?.media ?? 0).toLocaleString()}</b>
+          <div>
+            <b>{(stats?.media ?? 0).toLocaleString()}</b>
+            <em>个</em>
+          </div>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>缺失媒体</span>
-          <b className={stats && stats.missing > 0 ? "warn" : ""}>{stats?.missing ?? 0}</b>
+          <div>
+            <b className={stats && stats.missing > 0 ? "warn" : ""}>{stats?.missing ?? 0}</b>
+            <em>个</em>
+          </div>
         </div>
       </section>
 
@@ -509,25 +553,29 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
         </div>
       </section>
 
-      <section className="kpis">
-        <div className="kpi">
+      <section className="stat-grid">
+        <div className="stat">
           <span>实时速度</span>
-          <b>{rate(dl?.speedNow ?? 0)}</b>
+          <div>
+            <b>{rate(dl?.speedNow ?? 0)}</b>
+          </div>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>平均速度</span>
-          <b>{rate(dl?.speedAvg ?? 0)}</b>
+          <div>
+            <b>{rate(dl?.speedAvg ?? 0)}</b>
+          </div>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>预计剩余</span>
           <b>{duration(dl?.etaMs ?? 0)}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>本轮完成</span>
-          <b>
-            {dl?.done ?? 0}
-            <small>/ {dl?.total ?? 0}</small>
-          </b>
+          <div>
+            <b>{dl?.done ?? 0}</b>
+            <em>/ {dl?.total ?? 0}</em>
+          </div>
         </div>
       </section>
 
@@ -744,24 +792,23 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         </div>
       </div>
 
-      <section className="kpis">
-        <div className="kpi">
+      <section className="stat-grid">
+        <div className="stat">
           <span>消息</span>
           <b>{current.messages.toLocaleString()}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>媒体</span>
           <b>{current.media.toLocaleString()}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>缺失</span>
           <b className={current.missing > 0 ? "warn" : ""}>{current.missing.toLocaleString()}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>网页 / 官方导出</span>
           <b>
-            {current.pages}
-            <small>/ {current.official}</small>
+            {current.pages} <em>/ {current.official}</em>
           </b>
         </div>
       </section>
@@ -1356,20 +1403,20 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         </div>
       </div>
 
-      <section className="kpis library-kpis">
-        <div className="kpi">
+      <section className="stat-grid">
+        <div className="stat">
           <span>聊天</span>
           <b>{chats.length}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>消息</span>
           <b>{chats.reduce((n, c) => n + c.messages, 0).toLocaleString()}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>媒体</span>
           <b>{chats.reduce((n, c) => n + c.media, 0).toLocaleString()}</b>
         </div>
-        <div className="kpi">
+        <div className="stat">
           <span>缺失</span>
           <b className={chats.some((c) => c.missing > 0) ? "warn" : ""}>{chats.reduce((n, c) => n + c.missing, 0)}</b>
         </div>
@@ -1530,14 +1577,43 @@ interface SettingsForm {
   version: string;
 }
 
+function SettingsField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      {children}
+      {hint && <span className="hint">{hint}</span>}
+    </div>
+  );
+}
+
+function SettingsToggle({ checked, onChange, title, desc }: { checked: boolean; onChange: (v: boolean) => void; title: string; desc: string }) {
+  return (
+    <label className="switch-row">
+      <span>
+        <b>{title}</b>
+        <em>{desc}</em>
+      </span>
+      <span className={`switch ${checked ? "on" : ""}`}>
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <i />
+      </span>
+    </label>
+  );
+}
+
 export function SettingsPage({ ctx }: { ctx: PageCtx }) {
   const { toast } = ctx;
   const [form, setForm] = useState<SettingsForm | null>(null);
+  const [original, setOriginal] = useState<SettingsForm | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = () =>
     call<SettingsForm>("getSettings")
-      .then(setForm)
+      .then((data) => {
+        setForm(data);
+        setOriginal(data);
+      })
       .catch((e: Error) => toast(e.message, true));
   useEffect(() => {
     load();
@@ -1545,14 +1621,15 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
 
   if (!form) return <div className="chart-empty">正在读取设置…</div>;
 
-  const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) =>
-    setForm((f) => (f ? { ...f, [key]: value } : f));
+  const dirty = original ? JSON.stringify(form) !== JSON.stringify(original) : false;
+  const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
   const save = async () => {
     setSaving(true);
     try {
       const next = await call<SettingsForm>("setSettings", { settings: form });
       setForm(next);
+      setOriginal(next);
       toast("设置已保存");
     } catch (e) {
       toast((e as Error).message, true);
@@ -1566,99 +1643,115 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
       <div className="page-head">
         <div>
           <h1>设置</h1>
-          <p>修改后立即写入配置文件；进行中的下载会按新参数在下一轮生效</p>
+          <p>下载参数会用于下一轮同步；保存后立即写入配置文件</p>
         </div>
         <div className="actions">
-          <button className="btn ghost" onClick={load}>
+          <button className="btn ghost" onClick={load} disabled={saving}>
             重新读取
           </button>
-          <button className="btn primary" onClick={save} disabled={saving}>
-            {saving ? "正在保存…" : "保存设置"}
+          <button className="btn primary" onClick={save} disabled={saving || !dirty}>
+            {saving ? "正在保存…" : dirty ? "保存设置" : "已保存"}
           </button>
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h3>下载</h3>
-          <span className="meta">默认 2 × 4 是 Telegram 友好的稳定参数</span>
-        </div>
-        <div className="form">
-          <div className="form-section">下载参数</div>
-          <div className="field">
-            <label>并发文件任务（1–8）</label>
+      <section className="settings-card">
+        <header>
+          <div>
+            <h3>下载性能</h3>
+            <p>默认 2 × 4 是 Telegram 友好的稳定参数；过高容易触发限流或卡死。</p>
+          </div>
+          <span className="settings-badge">并发 × 线程</span>
+        </header>
+        <div className="settings-grid">
+          <SettingsField label="并发文件任务" hint="同时下载多少个文件（1–8）">
             <input type="number" min={1} max={8} value={form.concurrent} onChange={(e) => set("concurrent", Number(e.target.value))} />
-            <span className="hint">同时下载多少个文件</span>
-          </div>
-          <div className="field">
-            <label>单文件线程（1–16）</label>
+          </SettingsField>
+          <SettingsField label="单文件线程" hint="一个文件内部并行分片数（1–16）">
             <input type="number" min={1} max={16} value={form.threads} onChange={(e) => set("threads", Number(e.target.value))} />
-            <span className="hint">一个文件内部并行分片数</span>
-          </div>
-          <div className="form-section">网络与重试</div>
-          <div className="field">
-            <label>网络自动恢复窗口（分钟）</label>
-            <input type="number" min={1} max={180} value={form.networkRetryMinutes} onChange={(e) => set("networkRetryMinutes", Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>未知错误自动重试（0–10）</label>
-            <input type="number" min={0} max={10} value={form.unknownRetryCount} onChange={(e) => set("unknownRetryCount", Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>无进展暂缓阈值（30–600 秒）</label>
-            <input type="number" min={30} max={600} value={form.stallTimeoutSeconds} onChange={(e) => set("stallTimeoutSeconds", Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>疑难文件重试次数（1–10）</label>
-            <input type="number" min={1} max={10} value={form.stalledFileRetries} onChange={(e) => set("stalledFileRetries", Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>重试传输策略</label>
+          </SettingsField>
+          <SettingsField label="重试传输策略" hint="反复卡住时如何调整并发参数">
             <Select
-                ariaLabel="重试传输策略"
-                value={form.transferAdjustment}
-                onChange={(v) => set("transferAdjustment", v)}
-                options={[
-                  { value: "increase", label: "逐步增加线程（推荐）" },
-                  { value: "increase-both", label: "线程和并发一起增加（试验）" },
-                  { value: "decrease", label: "逐步降低线程" },
-                  { value: "keep", label: "保持原配置" },
-                ]}
-              />
-          </div>
-          <div className="field">
-            <label>代理</label>
-            <input type="text" value={form.proxy} placeholder="留空表示系统 / TUN / 直连" onChange={(e) => set("proxy", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>重连超时</label>
-            <input type="text" value={form.reconnectTimeout} onChange={(e) => set("reconnectTimeout", e.target.value)} />
-          </div>
-          <div className="form-section">构建与外观</div>
-          <div className="field">
-            <label>最大修复轮数</label>
+              ariaLabel="重试传输策略"
+              value={form.transferAdjustment}
+              onChange={(v) => set("transferAdjustment", v)}
+              options={[
+                { value: "increase", label: "逐步增加线程（推荐）" },
+                { value: "increase-both", label: "线程和并发一起增加（试验）" },
+                { value: "decrease", label: "逐步降低线程" },
+                { value: "keep", label: "保持原配置" },
+              ]}
+            />
+          </SettingsField>
+          <SettingsField label="最大修复轮数" hint="一次同步中最多进行几轮补漏（1–10）">
             <input type="number" min={1} max={10} value={form.maxRepairPasses} onChange={(e) => set("maxRepairPasses", Number(e.target.value))} />
+          </SettingsField>
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <header>
+          <div>
+            <h3>网络与稳定性</h3>
+            <p>网络波动时的恢复窗口与看门狗；遇到大面积卡死可先恢复默认再排查代理。</p>
           </div>
-          <div className="field">
-            <label>tdl Namespace</label>
+        </header>
+        <div className="settings-grid">
+          <SettingsField label="网络自动恢复窗口（分钟）" hint="网络断开后持续尝试的时间（1–180）">
+            <input type="number" min={1} max={180} value={form.networkRetryMinutes} onChange={(e) => set("networkRetryMinutes", Number(e.target.value))} />
+          </SettingsField>
+          <SettingsField label="未知错误自动重试" hint="非网络类错误的自动重试次数（0–10）">
+            <input type="number" min={0} max={10} value={form.unknownRetryCount} onChange={(e) => set("unknownRetryCount", Number(e.target.value))} />
+          </SettingsField>
+          <SettingsField label="无进展暂缓阈值（秒）" hint="多久没有真实进度就把文件暂缓（30–600）">
+            <input type="number" min={30} max={600} value={form.stallTimeoutSeconds} onChange={(e) => set("stallTimeoutSeconds", Number(e.target.value))} />
+          </SettingsField>
+          <SettingsField label="疑难文件重试次数" hint="对反复卡住的文件最多重试几次（1–10）">
+            <input type="number" min={1} max={10} value={form.stalledFileRetries} onChange={(e) => set("stalledFileRetries", Number(e.target.value))} />
+          </SettingsField>
+          <SettingsField label="代理" hint="留空表示系统 / TUN / 直连；示例 socks5://127.0.0.1:1080">
+            <input type="text" value={form.proxy} placeholder="留空表示系统 / TUN / 直连" onChange={(e) => set("proxy", e.target.value)} />
+          </SettingsField>
+          <SettingsField label="重连超时" hint="tdl 的连接重建等待时间，例如 5m">
+            <input type="text" value={form.reconnectTimeout} onChange={(e) => set("reconnectTimeout", e.target.value)} />
+          </SettingsField>
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <header>
+          <div>
+            <h3>构建、账号与界面</h3>
+            <p>缩略图会占用额外磁盘与 CPU；tdl Namespace 对应一套独立的 Telegram 会话。</p>
+          </div>
+        </header>
+        <div className="settings-grid">
+          <SettingsField label="tdl Namespace" hint="不同 namespace 的登录会话互相隔离">
             <input type="text" value={form.tdlNamespace} onChange={(e) => set("tdlNamespace", e.target.value)} />
+          </SettingsField>
+          <div className="switch-stack">
+            <SettingsToggle
+              checked={form.generateThumbnails}
+              onChange={(v) => set("generateThumbnails", v)}
+              title="生成图片 / 视频封面"
+              desc="构建时生成 720px 缩略图与视频封面，提升媒体网格加载速度"
+            />
+            <SettingsToggle
+              checked={form.openAfterBuild}
+              onChange={(v) => set("openAfterBuild", v)}
+              title="构建完成后自动打开归档库"
+              desc="只影响网页构建，不影响下载任务"
+            />
           </div>
-          <div className="check">
-            <input type="checkbox" checked={form.generateThumbnails} onChange={(e) => set("generateThumbnails", e.target.checked)} />
-            构建时生成图片 / 视频封面
-          </div>
-          <div className="check">
-            <input type="checkbox" checked={form.openAfterBuild} onChange={(e) => set("openAfterBuild", e.target.checked)} />
-            构建完成后自动打开归档库
-          </div>
-          <div className="form-foot">
-            <button className="btn ghost" onClick={load}>
-              还原
-            </button>
-            <button className="btn primary" onClick={save}>
-              保存设置
-            </button>
-          </div>
+        </div>
+        <div className="settings-foot">
+          <span className={dirty ? "warn" : "muted"}>{dirty ? "有未保存的修改" : "所有修改已保存"}</span>
+          <button className="btn ghost" onClick={load} disabled={saving}>
+            还原
+          </button>
+          <button className="btn primary" onClick={save} disabled={saving || !dirty}>
+            {saving ? "正在保存…" : "保存设置"}
+          </button>
         </div>
       </section>
     </>
@@ -1683,15 +1776,21 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
   const [logs, setLogs] = useState<LogInfo[]>([]);
   const [active, setActive] = useState("");
   const [content, setContent] = useState("");
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const load = async () => {
+    setLoading(true);
     try {
-      setRows(await call<DiagRow[]>("diagnostics"));
+      const nextRows = await call<DiagRow[]>("diagnostics");
+      setRows(nextRows);
       const list = await call<LogInfo[]>("listLogs");
       setLogs(list);
       if (!active && list.length > 0) setActive(list[0].name);
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setLoading(false);
     }
   };
   useEffect(() => {
@@ -1705,64 +1804,117 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
       .catch((e: Error) => setContent(e.message));
   }, [active]);
 
+  const value = (label: string) => rows.find((r) => r.label === label)?.value ?? "--";
+  const appLabels = ["版本", "程序目录", "配置文件", "档案库", "聊天数量"];
+  const toolLabels = ["tdl", "tdl 版本", "tdl 会话目录", "会话文件", "Namespace", "FFmpeg", "磁盘剩余"];
+  const visibleLogs = logs.filter((l) => l.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const activeLog = logs.find((l) => l.name === active);
+
+  const renderRows = (labels: string[]) => (
+    <dl className="kv diag-kv">
+      {rows
+        .filter((r) => labels.includes(r.label))
+        .map((r) => (
+          <div key={r.label} style={{ display: "contents" }}>
+            <dt>{r.label}</dt>
+            <dd className={r.state === "warn" ? "warn" : ""}>{r.value}</dd>
+          </div>
+        ))}
+    </dl>
+  );
+
   return (
     <>
       <div className="page-head">
         <div>
           <h1>诊断</h1>
-          <p>环境、路径与会话状态；日志只读</p>
+          <p>环境、路径与会话状态；日志只读，可复制排查</p>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={() => call("revealLogs")}>
             <FolderOpen size={13} /> 打开日志目录
           </button>
-          <button className="btn primary" onClick={load}>
-            <RefreshCw size={13} /> 重新检查
+          <button className="btn primary" onClick={load} disabled={loading}>
+            <RefreshCw size={13} /> {loading ? "正在检查…" : "重新检查"}
           </button>
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h3>环境</h3>
+      <section className="stat-grid">
+        <div className="stat">
+          <span>版本</span>
+          <b>{value("版本")}</b>
         </div>
-        <dl className="kv">
-          {rows.map((r) => (
-            <div key={r.label} style={{ display: "contents" }}>
-              <dt>{r.label}</dt>
-              <dd className={r.state === "warn" ? "warn" : ""}>{r.value}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="stat">
+          <span>聊天</span>
+          <b>{value("聊天数量")}</b>
+        </div>
+        <div className="stat">
+          <span>日志文件</span>
+          <b>{logs.length}</b>
+        </div>
+        <div className="stat">
+          <span>磁盘剩余</span>
+          <b>{value("磁盘剩余")}</b>
+        </div>
       </section>
 
-      <section className="panel">
+      <div className="diag-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <h3>应用与档案库</h3>
+          </div>
+          {renderRows(appLabels)}
+        </section>
+        <section className="panel">
+          <div className="panel-head">
+            <h3>工具与会话</h3>
+          </div>
+          {renderRows(toolLabels)}
+        </section>
+      </div>
+
+      <section className="panel log-panel">
         <div className="panel-head">
           <h3>日志</h3>
-          <span className="meta">{logs.length} 个文件</span>
+          <span className="meta">{visibleLogs.length} / {logs.length} 个文件</span>
+          <input
+            className="log-search"
+            type="search"
+            placeholder="筛选日志文件名…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
           <button
             className="btn sm ghost"
-            style={{ marginLeft: "auto" }}
             disabled={!content}
             onClick={() => navigator.clipboard?.writeText(content).then(() => toast("日志已复制")).catch(() => toast("复制失败", true))}
           >
-            复制当前日志
+            复制日志
           </button>
         </div>
-        {logs.length === 0 ? (
-          <div className="chart-empty">还没有日志。</div>
-        ) : (
-          <div className="logs-list">
-            {logs.map((l) => (
-              <button key={l.name} className={l.name === active ? "on" : ""} onClick={() => setActive(l.name)}>
-                <span className="nm">{l.name}</span>
-                <span className="tm">{l.modTime}</span>
-                <span className="tm">{bytes(l.size)}</span>
-              </button>
-            ))}
+        <div className="log-split">
+          <div className="log-list">
+            {visibleLogs.length === 0 ? (
+              <div className="chart-empty">没有匹配的日志。</div>
+            ) : (
+              visibleLogs.map((l) => (
+                <button key={l.name} className={l.name === active ? "on" : ""} onClick={() => setActive(l.name)}>
+                  <span className="nm">{l.name}</span>
+                  <span className="tm">{l.modTime}</span>
+                  <span className="tm">{bytes(l.size)}</span>
+                </button>
+              ))
+            )}
           </div>
-        )}
-        {active && <pre className="logview">{content}</pre>}
+          <div className="log-view">
+            <div className="log-view-head">
+              <b>{active || "选择日志"}</b>
+              {activeLog && <span>{activeLog.modTime} · {bytes(activeLog.size)}</span>}
+            </div>
+            <pre className="logview">{content || "选择左侧日志查看内容。"}</pre>
+          </div>
+        </div>
       </section>
     </>
   );
@@ -1903,15 +2055,20 @@ function promptLabel(prompt?: string): string {
 export function Account({ ctx }: { ctx: PageCtx }) {
   const { boot, login, running, refresh, toast } = ctx;
   const [info, setInfo] = useState<TdlInfo | null>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
   const [check, setCheck] = useState<SessionCheck | null>(null);
   const [busy, setBusy] = useState("");
   const [entry, setEntry] = useState("");
   const [showRaw, setShowRaw] = useState(false);
 
-  const loadInfo = () =>
+  const loadInfo = () => {
     call<TdlInfo>("tdlInfo")
       .then(setInfo)
       .catch((e: Error) => toast(e.message, true));
+    return call<AccountInfo>("accountInfo")
+      .then(setAccount)
+      .catch((e: Error) => toast(e.message, true));
+  };
   useEffect(() => {
     loadInfo();
   }, []);
@@ -1919,8 +2076,14 @@ export function Account({ ctx }: { ctx: PageCtx }) {
     if (login?.state === "success") {
       loadInfo();
       refresh();
+      void checkSession();
     }
   }, [login?.state]);
+  useEffect(() => {
+    if (account?.hasSessionFile && check === null && busy === "") {
+      void checkSession();
+    }
+  }, [account?.hasSessionFile]);
 
   const active = !!login && (login.state === "starting" || login.state === "waiting");
   const screen = login?.screen ?? [];
@@ -2006,95 +2169,189 @@ export function Account({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const logout = async () => {
+    if (!window.confirm("退出当前 Telegram 会话？\n\n会话文件会先备份到 ~/.tdl/backups，然后从当前 namespace 移除；重新登录即可恢复。")) return;
+    setBusy("logout");
+    try {
+      await call("logoutTdl");
+      setCheck(null);
+      await loadInfo();
+      toast("已退出当前 Telegram 会话");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
   const lp = (login?.prompt ?? "").toLowerCase();
   const wantsPassword = /2fa|password|two-step|两步|密码/.test(lp);
   const wantsPhone = !wantsPassword && /phone|手机号/.test(lp);
   const wantsCode = !wantsPassword && !wantsPhone && /enter code|verification code|login code|验证码/.test(lp);
   const needsInput = active && (login?.kind === "code" || wantsPassword || wantsCode || wantsPhone);
   const showQr = active && login?.kind === "qr" && qr.length > 0 && !wantsPassword && !wantsCode && !wantsPhone && !/submitted|已提交/.test(lp);
-  const sessionState = info?.hasSession ? "已发现本地会话" : "未发现本地会话";
+  const sessionState = account?.hasSessionFile ? "已有本地会话文件" : "没有本地会话文件";
   const checkTone =
     check && (check.state === "ready" ? "ok" : check.state === "unauthorized" ? "danger" : check.state === "busy" ? "" : "warn");
+  const checking = busy === "check";
+  const accountTone = checking
+    ? "unknown"
+    : !account?.hasSessionFile
+      ? "none"
+      : check?.state === "ready"
+        ? "ok"
+        : check?.state === "unauthorized"
+          ? "bad"
+          : "unknown";
+  const accountStatus =
+    accountTone === "ok"
+      ? "授权正常"
+      : accountTone === "bad"
+        ? "授权已失效"
+        : accountTone === "none"
+          ? "未登录"
+          : checking
+            ? "正在检查…"
+            : account?.hasSessionFile
+              ? "状态未知"
+              : "未登录";
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>账号</h1>
-          <p>在本机完成 Telegram 登录；会话文件只保存在 tdl 全局目录</p>
+          <p>查看本机会话与授权状态；登录、检查与退出都在这里完成</p>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={() => call("openTdlDir")}>
             <FolderOpen size={13} /> 打开会话目录
           </button>
-          <button className="btn primary" onClick={loadInfo}>
-            <RefreshCw size={13} /> 刷新状态
+          <button
+            className="btn primary"
+            disabled={checking}
+            onClick={async () => {
+              await loadInfo();
+              await checkSession();
+            }}
+          >
+            <RefreshCw size={13} /> {checking ? "正在检查…" : "刷新状态"}
           </button>
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h3>tdl 与本地会话</h3>
-          <span className="meta">
-            <span className={`dot ${info?.hasSession ? "" : "off"}`} /> {info?.hasSession ? "本地有会话文件" : "无会话文件"}
-          </span>
+      <section className="account-hero">
+        <div className="account-avatar">
+          <UserRound size={24} />
         </div>
-        <dl className="kv">
-          <dt>tdl 程序</dt>
-          <dd>{info?.exe || "未安装"}</dd>
-          <dt>版本</dt>
-          <dd>{info?.version || "未知"}</dd>
-          <dt>Namespace</dt>
-          <dd>{info?.namespace || "-"}</dd>
-          <dt>会话目录</dt>
-          <dd>{info?.sessionDir || "-"}</dd>
-          <dt>本地会话文件</dt>
-          <dd className={info?.hasSession ? "" : "warn"}>{info?.hasSession ? "已发现（不代表授权有效）" : "未发现"}</dd>
-          <dt>进程状态</dt>
-          <dd className={info?.running ? "warn" : ""}>{info?.running ? "tdl.exe 正在运行" : "未运行"}</dd>
-        </dl>
-        <div className="acct-actions">
-          {tdlMissing && (
-            <button className="btn primary" disabled={busy === "install"} onClick={installTdl}>
-              {busy === "install" ? "正在从 GitHub 安装 tdl…" : "安装 tdl"}
-            </button>
-          )}
-          <button className="btn" disabled={busy === "check"} onClick={checkSession}>
-            <Wifi size={13} /> {busy === "check" ? "正在检查连接（最长 45 秒）…" : "检查连接 / 授权"}
-          </button>
-          {info?.running && (
-            <button className="btn danger" disabled={busy === "kill"} onClick={killTdl}>
-              <WifiOff size={13} /> 结束 tdl 进程
-            </button>
-          )}
-        </div>
-        {!check && (
-          <p className="acct-subhint">
-            「本地有会话文件」只说明磁盘上存在登录数据，不代表 Telegram 仍认可它。请点「检查连接 / 授权」；若显示授权不可用，重新扫码即可覆盖。
+        <div className="account-id">
+          <h2>Telegram 账号</h2>
+          <p>
+            namespace <b>{account?.namespace || info?.namespace || "-"}</b>
+            <span>·</span>
+            {sessionState}
           </p>
-        )}
-        {check && (
-          <div className={`check-result ${checkTone}`}>
-            <b>
-              {checkTone === "ok" ? <ShieldCheck size={14} /> : checkTone === "danger" ? <WifiOff size={14} /> : <Wifi size={14} />}
-              {CHECK_LABEL[check.state] ?? check.state}
-            </b>
-            <span>{check.message}</span>
-            {check.state === "unauthorized" && (
-              <span className="warn">
-                本地存在会话文件，但 Telegram 已拒绝该会话（可能在其他设备退出登录、切换了账号，或 namespace 不匹配）。重新扫码登录会覆盖为有效会话。
-              </span>
+        </div>
+        <span className={`account-status ${accountTone}`}>
+          <i /> {accountStatus}
+        </span>
+        <div className="account-hero-actions">
+          <button className="btn sm" onClick={checkSession} disabled={checking || !account?.hasSessionFile}>
+            <Wifi size={12} /> {checking ? "检查中…" : "检查连接"}
+          </button>
+          <button className="btn sm primary" disabled={busy === "login" || tdlMissing || running} onClick={() => startLogin("qr")}>
+            <QrCode size={12} /> 重新登录
+          </button>
+          <button className="btn sm danger" disabled={busy === "logout" || !account?.hasSessionFile} onClick={logout}>
+            <X size={12} /> 退出登录
+          </button>
+        </div>
+      </section>
+
+      <div className="account-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <h3>本地会话</h3>
+            <span className="meta">{info?.running ? "tdl 正在运行" : "tdl 未运行"}</span>
+          </div>
+          <dl className="kv account-kv">
+            <dt>Namespace</dt>
+            <dd>{account?.namespace || info?.namespace || "-"}</dd>
+            <dt>会话文件</dt>
+            <dd className="mono">{account?.sessionFile || "-"}</dd>
+            <dt>文件大小</dt>
+            <dd>{account?.hasSessionFile ? bytes(account?.sessionSize ?? 0) : "无"}</dd>
+            <dt>最后修改</dt>
+            <dd>{account?.sessionModified ? new Date(account.sessionModified).toLocaleString("zh-CN", { hour12: false }) : "--"}</dd>
+            <dt>tdl</dt>
+            <dd className="mono">{info?.exe || "未安装"}</dd>
+            <dt>tdl 版本</dt>
+            <dd>{info?.version || "未知"}</dd>
+          </dl>
+          <div className="account-tools">
+            <button className="btn sm ghost" onClick={() => call("openTdlDir")}>
+              <FolderOpen size={12} /> 会话目录
+            </button>
+            {tdlMissing && (
+              <button className="btn sm primary" disabled={busy === "install"} onClick={installTdl}>
+                {busy === "install" ? "安装中…" : "安装 tdl"}
+              </button>
             )}
-            {check.detail && (
-              <details>
-                <summary>查看输出</summary>
-                <pre>{check.detail}</pre>
-              </details>
+            {info?.running && (
+              <button className="btn sm danger" disabled={busy === "kill"} onClick={killTdl}>
+                <WifiOff size={12} /> 结束 tdl
+              </button>
             )}
           </div>
-        )}
-      </section>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h3>授权状态</h3>
+            <span className={`meta ${checkTone === "danger" ? "warn" : ""}`}>
+              {checking ? "正在执行 tdl chat ls…" : check ? CHECK_LABEL[check.state] ?? check.state : "尚未检查"}
+            </span>
+          </div>
+          <div className="account-status-body">
+            <p className="account-identity-note">
+              tdl 0.20 不提供账号昵称 / 用户名 / 用户 ID 的读取接口，这里展示本地会话和真实授权检查结果。退出后重新扫码即可切换账号。
+            </p>
+            {!check && !checking && (
+              <p className="acct-subhint" style={{ margin: 0 }}>
+                本地有会话文件不代表 Telegram 仍认可它；点「检查连接」确认授权。
+              </p>
+            )}
+            {check && (
+              <div className={`check-result ${checkTone}`} style={{ margin: 0 }}>
+                <b>
+                  {checkTone === "ok" ? <ShieldCheck size={14} /> : checkTone === "danger" ? <WifiOff size={14} /> : <Wifi size={14} />}
+                  {CHECK_LABEL[check.state] ?? check.state}
+                </b>
+                <span>{check.message}</span>
+                {check.state === "unauthorized" && (
+                  <span className="warn">
+                    本地存在会话文件，但 Telegram 已拒绝该会话（可能在其他设备退出登录、切换了账号，或 namespace 不匹配）。重新扫码登录会覆盖为有效会话。
+                  </span>
+                )}
+                {check.detail && (
+                  <details>
+                    <summary>查看输出</summary>
+                    <pre>{check.detail}</pre>
+                  </details>
+                )}
+              </div>
+            )}
+            <div className="account-tools">
+              <button className="btn sm" onClick={checkSession} disabled={checking || !account?.hasSessionFile}>
+                <Wifi size={12} /> 检查连接 / 授权
+              </button>
+              <button className="btn sm danger" disabled={busy === "logout" || !account?.hasSessionFile} onClick={logout}>
+                <X size={12} /> 退出登录
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <section className="panel">
         <div className="panel-head">
