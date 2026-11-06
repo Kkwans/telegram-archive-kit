@@ -78,7 +78,6 @@ export default function App() {
   const [paletteActive, setPaletteActive] = useState(0);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [prefs, setPrefs] = useState<ViewerPrefs>({ seekSeconds: 5, longPressRate: 4, longPressDelayMs: 300, maxVolume: 200, volumeStep: 10, videoFrameAspect: "original", speedWindowSeconds: 180, backdrop: "ambient" });
-  const [taskFocus, setTaskFocus] = useState<string | null>(null);
   const [sideWidth, setSideWidth] = useState(initialSideWidth);
   const [sideCollapsed, setSideCollapsed] = useState(initialCollapsed);
   const [sideTip, setSideTip] = useState<SideTip | null>(null);
@@ -254,12 +253,6 @@ export default function App() {
     setSideTip(null);
     setAppTip(null);
     setPage(next);
-    if (next !== "overview") setTaskFocus(null);
-  };
-  const openDownloadTask = (task: TaskInfo) => {
-    if (task.slug) setSelected(task.slug);
-    setTaskFocus(task.id);
-    setPage("overview");
   };
   const ctx: PageCtx = useMemo(
     () => ({
@@ -282,9 +275,8 @@ export default function App() {
       openTasks: () => setPage("tasks"),
       prefs,
       applyPrefs: setPrefs,
-      taskFocus,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, taskFocus]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs]
   );
 
   useEffect(() => {
@@ -342,7 +334,6 @@ export default function App() {
         section: "操作",
         run: () => {
           call("startOneClick", { slug: selected }).catch((e: Error) => toast(e.message, true));
-          setTaskFocus(null);
           setPage("overview");
         },
       });
@@ -654,7 +645,6 @@ export default function App() {
                 tasks={tasks}
                 onRefresh={refresh}
                 onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))}
-                onOpenDownload={openDownloadTask}
                 toast={toast}
               />
             )}

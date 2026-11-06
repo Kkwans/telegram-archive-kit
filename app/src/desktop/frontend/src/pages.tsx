@@ -30,6 +30,7 @@ import {
   Images,
   KeyRound,
   ListTodo,
+  Loader2,
   LocateFixed,
   Maximize2,
   MessagesSquare,
@@ -63,7 +64,6 @@ import type {
   OperationState,
   SessionCheck,
   TdlInfo,
-  TaskDetail,
   TaskInfo,
   ViewerPrefs,
 } from "./types";
@@ -89,11 +89,19 @@ export interface PageCtx {
   openTasks: () => void;
   prefs: ViewerPrefs;
   applyPrefs: (p: ViewerPrefs) => void;
-  taskFocus: string | null;
 }
 
 const kindLabel = (kind: string): string =>
   kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文件";
+
+function wrapPath(value: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  value.split(/([\\/])/).forEach((part, i) => {
+    nodes.push(part);
+    if (part === "\\" || part === "/") nodes.push(<wbr key={i} />);
+  });
+  return nodes;
+}
 
 function polyPoints(values: number[]): string {
   if (values.length === 0) return "";
@@ -371,19 +379,8 @@ const SPEED_WINDOWS = [
 ];
 
 export function Overview({ ctx }: { ctx: PageCtx }) {
-  const { chats, selected, dl, op, done, running, history, refresh, toast, prefs, taskFocus, go } = ctx;
+  const { chats, selected, dl, op, done, running, history, refresh, toast, prefs, go } = ctx;
   const current = chats.find((c) => c.slug === selected) || null;
-  const [historyTask, setHistoryTask] = useState<TaskDetail | null>(null);
-
-  useEffect(() => {
-    if (!taskFocus) {
-      setHistoryTask(null);
-      return;
-    }
-    call<TaskDetail>("taskDetail", { id: taskFocus })
-      .then(setHistoryTask)
-      .catch(() => setHistoryTask(null));
-  }, [taskFocus]);
   const [windowSec, setWindowSec] = useState(() => {
     const saved = Number(localStorage.getItem("tak-speed-window") || 0);
     return saved >= 60 && saved <= 900 ? saved : prefs.speedWindowSeconds || 180;
@@ -442,110 +439,6 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
       toast((e as Error).message, true);
     }
   };
-
-  if (historyTask && historyTask.state !== "running") {
-    const samples = (historyTask.series ?? []).map((p) => ({ now: p.now, avg: p.avg }));
-    const maxSpeed = Math.max(1, ...samples.flatMap((s) => [s.now, s.avg]));
-    const W = 720, H = 170, L = 64, R = 16, T = 12, B = 24;
-    const plotW = W - L - R;
-    const plotH = H - T - B;
-    const points = (values: number[]) =>
-      values.length === 0
-        ? ""
-        : values
-            .map((v, i) => {
-              const x = L + (samples.length <= 1 ? 0 : (i / (samples.length - 1)) * plotW);
-              const y = T + plotH - Math.min(1, v / maxSpeed) * plotH;
-              return `${x.toFixed(1)},${y.toFixed(1)}`;
-            })
-            .join(" ");
-    const fmtDate = (ts?: number) => dateTime(ts);
-    const statusLabel = historyTask.state === "done" ? "已完成" : "失败";
-    return (
-      <>
-        <div className="page-head">
-          <div>
-            <h1>下载详情</h1>
-            <p>{historyTask.title} · {historyTask.chat || "未知聊天"} · {statusLabel}</p>
-          </div>
-          <div className="actions">
-            <button className="btn ghost" onClick={() => go("tasks")}>
-              <ListTodo size={13} /> 返回任务中心
-            </button>
-            <button className="btn ghost" onClick={() => historyTask.slug && call("openLibrary", { slug: historyTask.slug })} disabled={!historyTask.slug}>
-              <FolderOpen size={13} /> 打开归档库
-            </button>
-          </div>
-        </div>
-
-        <section className={`hero history ${historyTask.state === "failed" ? "failed" : ""}`}>
-          <div className="ring" style={{ background: `conic-gradient(${historyTask.state === "failed" ? "var(--danger)" : "var(--ok)"} 100%, var(--surface-3) 100%)` }}>
-            {historyTask.state === "done" ? <CheckCircle2 size={22} /> : <X size={22} />}
-          </div>
-          <div className="hero-main">
-            <div className="hero-title">
-              {historyTask.title}
-              <span className={`tag ${historyTask.state === "failed" ? "bad" : ""}`}>{statusLabel}</span>
-            </div>
-            <div className="hero-stage">{historyTask.error || historyTask.detail || "任务已结束"}</div>
-            <div className="hero-meta">
-              <span>开始 <b>{fmtDate(historyTask.startedAt)}</b></span>
-              <span>耗时 <b>{duration(historyTask.elapsedMs || ((historyTask.finishedAt || historyTask.startedAt) - historyTask.startedAt))}</b></span>
-              <span>平均 <b>{rate(historyTask.avgSpeed ?? 0)}</b></span>
-              <span>峰值 <b>{rate(historyTask.peakSpeed ?? 0)}</b></span>
-            </div>
-          </div>
-        </section>
-
-        <section className="stat-grid">
-          <div className="stat"><span>平均速度</span><div><b>{rate(historyTask.avgSpeed ?? 0)}</b></div></div>
-          <div className="stat"><span>峰值速度</span><div><b>{rate(historyTask.peakSpeed ?? 0)}</b></div></div>
-          <div className="stat"><span>下载总量</span><div><b>{bytes(historyTask.bytes ?? 0)}</b></div></div>
-          <div className="stat"><span>完成媒体</span><div><b>{historyTask.done ?? 0}</b><em>/ {historyTask.total ?? 0}</em></div></div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h3><ChartPie size={14} /> 历史速度曲线</h3>
-            <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
-          </div>
-          <div className="chart chart-axes">
-            {samples.length >= 2 ? (
-              <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="历史下载速度曲线">
-                {[0, 0.25, 0.5, 0.75, 1].map((f) => {
-                  const y = T + plotH - f * plotH;
-                  return (
-                    <g key={f}>
-                      <line className="grid" x1={L} y1={y} x2={W - R} y2={y} />
-                      <text className="axis-y" x={L - 8} y={y + 3} textAnchor="end">{rate(maxSpeed * f)}</text>
-                    </g>
-                  );
-                })}
-                <text className="axis-x" x={L} y={H - 6}>开始</text>
-                <text className="axis-x" x={W - R} y={H - 6} textAnchor="end">结束</text>
-                <polyline className="avg" points={points(samples.map((s) => s.avg))} />
-                <polyline className="now" points={points(samples.map((s) => s.now))} />
-              </svg>
-            ) : (
-              <div className="chart-empty">这个任务没有保留速度曲线（旧版本任务或未产生下载样本）。</div>
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-head"><h3>任务信息</h3><span className="meta">任务 {historyTask.id}</span></div>
-          <div className="account-rows">
-            <div><span>类型</span><b>下载 / 同步</b></div>
-            <div><span>聊天</span><b>{historyTask.chat || "--"}</b></div>
-            <div><span>开始时间</span><b>{fmtDate(historyTask.startedAt)}</b></div>
-            <div><span>结束时间</span><b>{fmtDate(historyTask.finishedAt)}</b></div>
-            <div><span>耗时</span><b>{duration(historyTask.elapsedMs || 0)}</b></div>
-            <div><span>结果</span><b>{historyTask.error || "同步与网页构建完成"}</b></div>
-          </div>
-        </section>
-      </>
-    );
-  }
 
   const idle = !running && !dl && !op;
   const title = running
@@ -910,7 +803,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <div className="fact"><span>最近更新</span><b>{dateTime(current.updatedAt)}</b></div>
           <div className="fact wide">
             <span>归档目录</span>
-            <code title={current.dir}>{current.dir}</code>
+            <code title={current.dir}>{wrapPath(current.dir)}</code>
             <button className="icon-btn" data-tip="复制目录" aria-label="复制目录" onClick={copyPath}>
               <Copy size={13} />
             </button>
@@ -964,6 +857,61 @@ const mediaURL = (slug: string, rel: string) =>
   `/api/media?slug=${encodeURIComponent(slug)}&f=${encodeURIComponent(rel)}`;
 const thumbURL = (slug: string, rel?: string) =>
   rel ? mediaURL(slug, rel) : "";
+
+const coverToneCache = new Map<string, string>();
+
+function coverTone(src: string): Promise<string> {
+  const cached = coverToneCache.get(src);
+  if (cached) return Promise.resolve(cached);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 24;
+        canvas.height = 24;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) throw new Error("no canvas");
+        ctx.drawImage(img, 0, 0, 24, 24);
+        const data = ctx.getImageData(0, 0, 24, 24).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] < 128) continue;
+          r += data[i];
+          g += data[i + 1];
+          b += data[i + 2];
+          n++;
+        }
+        if (!n) throw new Error("empty");
+        r /= n * 255;
+        g /= n * 255;
+        b /= n * 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h = 0;
+        const l = (max + min) / 2;
+        const d = max - min;
+        const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+        if (d !== 0) {
+          if (max === r) h = ((g - b) / d) % 6;
+          else if (max === g) h = (b - r) / d + 2;
+          else h = (r - g) / d + 4;
+          h = (h * 60 + 360) % 360;
+        }
+        const hue = Math.round(h);
+        const sat = Math.round(Math.max(18, Math.min(42, s * 100)));
+        const lig = Math.round(Math.max(13, Math.min(23, l * 100)));
+        const tone = `hsl(${hue} ${sat}% ${lig}%)`;
+        coverToneCache.set(src, tone);
+        resolve(tone);
+      } catch {
+        resolve("hsl(221 24% 14%)");
+      }
+    };
+    img.onerror = () => resolve("hsl(221 24% 14%)");
+    img.src = src;
+  });
+}
 
 const fileExt = (name: string) => (name.split(".").pop() ?? "").toLowerCase();
 
@@ -1230,7 +1178,10 @@ const ArtVideo = forwardRef<VideoApi, {
   hasNext: boolean;
   onNext: () => void;
 }>(function ArtVideo({ src, poster, maxVolume, frameAspect, hasNext, onNext }, ref) {
+  const wrap = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const fitRef = useRef<() => void>(() => undefined);
+  const posterRatio = useRef(0);
   const playerRef = useRef<Artplayer | null>(null);
   const rateRef = useRef(1);
   const resumeRate = useRef(1);
@@ -1239,10 +1190,34 @@ const ArtVideo = forwardRef<VideoApi, {
   const suppressVolume = useRef(false);
   const audioCtx = useRef<AudioContext | null>(null);
   const gainNode = useRef<GainNode | null>(null);
+  const [ready, setReady] = useState(false);
 
   const showNotice = (text: string) => {
     if (playerRef.current) playerRef.current.notice.show = text;
   };
+
+  const updateRateLabel = (value: number) => {
+    const label = box.current?.querySelector<HTMLElement>(".tak-rate-label");
+    if (label) label.textContent = `${value.toFixed(2)}×`;
+  };
+
+  useEffect(() => {
+    if (!poster) {
+      posterRatio.current = 0;
+      return;
+    }
+    let alive = true;
+    const img = new Image();
+    const remember = () => {
+      if (!alive || !img.naturalWidth || !img.naturalHeight) return;
+      posterRatio.current = img.naturalWidth / img.naturalHeight;
+      fitRef.current();
+    };
+    img.onload = remember;
+    img.src = poster;
+    if (img.complete) remember();
+    return () => { alive = false; };
+  }, [poster]);
 
   const ensureAudio = (player: Artplayer) => {
     if (audioCtx.current) {
@@ -1291,6 +1266,7 @@ const ArtVideo = forwardRef<VideoApi, {
       boostRef.current = false;
       p.playbackRate = next;
       syncPreciseRange(p, next);
+      updateRateLabel(next);
       p.notice.show = `${next.toFixed(2)}×`;
     },
     beginBoost(rate) {
@@ -1299,6 +1275,7 @@ const ArtVideo = forwardRef<VideoApi, {
       resumeRate.current = rateRef.current;
       boostRef.current = true;
       p.playbackRate = Math.max(0.1, Math.min(10, rate));
+      updateRateLabel(p.playbackRate);
       showNotice(`${rate.toFixed(1)}× 长按倍速`);
     },
     endBoost() {
@@ -1307,6 +1284,7 @@ const ArtVideo = forwardRef<VideoApi, {
       boostRef.current = false;
       p.playbackRate = resumeRate.current;
       syncPreciseRange(p, resumeRate.current);
+      updateRateLabel(resumeRate.current);
       showNotice(`${resumeRate.current.toFixed(2)}×`);
     },
     getVolume: () => volumeRef.current,
@@ -1344,6 +1322,7 @@ const ArtVideo = forwardRef<VideoApi, {
 
   useEffect(() => {
     if (!box.current) return;
+    setReady(false);
     Artplayer.PLAYBACK_RATE = PLAY_RATES;
     const player = new Artplayer({
       container: box.current,
@@ -1363,7 +1342,7 @@ const ArtVideo = forwardRef<VideoApi, {
       autoSize: false,
       theme: "#2f6bff",
       lang: "zh-cn",
-      moreVideoAttr: { playsInline: true, preload: "metadata" } as never,
+      moreVideoAttr: { playsInline: true, preload: "auto" } as never,
       settings: [
         {
           name: "tak-precise-speed",
@@ -1376,6 +1355,7 @@ const ArtVideo = forwardRef<VideoApi, {
             rateRef.current = value;
             boostRef.current = false;
             this.playbackRate = value;
+            updateRateLabel(value);
             return `${value.toFixed(2)}×`;
           },
         },
@@ -1398,16 +1378,16 @@ const ArtVideo = forwardRef<VideoApi, {
     playerRef.current = player;
     const fitFrame = () => {
       const el = box.current;
-      const stage = el?.parentElement;
+      const stage = wrap.current?.parentElement;
       if (!el || !stage) return;
       const style = getComputedStyle(stage);
       const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
       const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
       const availW = Math.max(160, stage.clientWidth - padX);
       const availH = Math.max(120, stage.clientHeight - padY);
-      const vw = player.video.videoWidth || 16;
-      const vh = player.video.videoHeight || 9;
-      let ratio = frameAspect === "16:9" ? 16 / 9 : frameAspect === "4:3" ? 4 / 3 : vw / vh;
+      const vw = player.video.videoWidth;
+      const vh = player.video.videoHeight;
+      let ratio = frameAspect === "16:9" ? 16 / 9 : frameAspect === "4:3" ? 4 / 3 : (vw > 0 && vh > 0 ? vw / vh : posterRatio.current || 16 / 9);
       if (!Number.isFinite(ratio) || ratio <= 0) ratio = 16 / 9;
       let w = availW;
       let h = w / ratio;
@@ -1420,10 +1400,15 @@ const ArtVideo = forwardRef<VideoApi, {
       el.classList.toggle("compact", w < 430);
       el.classList.toggle("tiny", w < 360);
     };
+    fitRef.current = fitFrame;
     fitFrame();
-    player.video.addEventListener("loadedmetadata", fitFrame);
+    const onMeta = () => {
+      fitFrame();
+      setReady(true);
+    };
+    player.video.addEventListener("loadedmetadata", onMeta);
     player.video.addEventListener("resize", fitFrame);
-    const stageEl = box.current.parentElement;
+    const stageEl = wrap.current?.parentElement;
     const observer = typeof ResizeObserver !== "undefined" && stageEl ? new ResizeObserver(fitFrame) : null;
     observer?.observe(stageEl as Element);
     window.addEventListener("resize", fitFrame);
@@ -1436,27 +1421,35 @@ const ArtVideo = forwardRef<VideoApi, {
         position: "left",
         index: 11,
         html: icon,
-        tooltip: "下一个视频 (PageDown)",
         click: onNext,
       });
     }
+    const rateLabel = document.createElement("span");
+    rateLabel.className = "tak-rate-label";
+    rateLabel.textContent = "1.00×";
     player.controls.add({
       name: "rate",
       position: "right",
-      html: player.icons.playbackRate.cloneNode(true) as HTMLElement,
-      tooltip: "播放速度",
-      selector: PLAY_RATES.map((v) => ({ html: v === 1 ? "正常" : `${v}×`, value: String(v), default: v === 1 })),
+      html: rateLabel,
+      selector: PLAY_RATES.map((v) => ({ html: `${v.toFixed(2)}×`, value: String(v), default: v === 1 })),
       onSelect(selector) {
         const value = Number(selector.value);
         rateRef.current = value;
         boostRef.current = false;
         player.playbackRate = value;
         syncPreciseRange(player, value);
+        updateRateLabel(value);
       },
     });
+    const volumeControl = player.template.$controlsLeft.querySelector(".art-control-volume");
+    const settingControl = player.template.$controlsRight.querySelector(".art-control-setting");
+    if (volumeControl && volumeControl.parentElement !== player.template.$controlsRight) {
+      player.template.$controlsRight.insertBefore(volumeControl, settingControl);
+    }
     player.on("video:ratechange", () => {
       if (!boostRef.current) rateRef.current = player.playbackRate;
       syncPreciseRange(player, player.playbackRate);
+      updateRateLabel(player.playbackRate);
     });
     player.on("video:volumechange", () => {
       if (suppressVolume.current) return;
@@ -1466,7 +1459,8 @@ const ArtVideo = forwardRef<VideoApi, {
 
     return () => {
       observer?.disconnect();
-      player.video.removeEventListener("loadedmetadata", fitFrame);
+      fitRef.current = () => undefined;
+      player.video.removeEventListener("loadedmetadata", onMeta);
       player.video.removeEventListener("resize", fitFrame);
       window.removeEventListener("resize", fitFrame);
       if (audioCtx.current) {
@@ -1479,7 +1473,17 @@ const ArtVideo = forwardRef<VideoApi, {
     };
   }, [src, poster, frameAspect, hasNext]);
 
-  return <div ref={box} className="art-player" />;
+  return (
+    <div ref={wrap} className="art-video-wrap">
+      <div ref={box} className={`art-player ${ready ? "is-ready" : "is-loading"}`} />
+      {!ready && (
+        <div className="art-video-loading" aria-live="polite">
+          {poster ? <img src={poster} alt="" /> : <div className="art-video-loading-shade" />}
+          <span className="art-video-loading-state"><Loader2 size={15} className="spin" /> 正在加载视频…</span>
+        </div>
+      )}
+    </div>
+  );
 });
 
 function MediaViewer({
@@ -1517,8 +1521,31 @@ function MediaViewer({
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  const [tone, setTone] = useState("hsl(221 24% 14%)");
   const stateRef = useRef({ index, items, onIndex, onClose, prefs, kind: item.kind });
   stateRef.current = { index, items, onIndex, onClose, prefs, kind: item.kind };
+
+  useEffect(() => {
+    if (prefs.backdrop !== "solid") return;
+    let alive = true;
+    void coverTone(ambient).then((value) => {
+      if (alive) setTone(value);
+    });
+    return () => { alive = false; };
+  }, [ambient, prefs.backdrop]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    for (const near of [items[index + 1], items[index - 1]]) {
+      if (near?.kind !== "video") continue;
+      fetch(mediaURL(chat.slug, near.rel), {
+        headers: { Range: "bytes=0-65535" },
+        signal: controller.signal,
+        cache: "force-cache",
+      }).catch(() => undefined);
+    }
+    return () => controller.abort();
+  }, [chat.slug, items, index]);
 
   useEffect(() => {
     active.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
@@ -1702,14 +1729,16 @@ function MediaViewer({
 
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
-      <div className={`viewer-ambient ${prefs.backdrop}`} style={prefs.backdrop === "ambient" && ambient ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .26), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .22), transparent 66%), url(${ambient})` } : undefined} aria-hidden="true" />
+      {prefs.backdrop !== "frosted" && (
+        <div
+          className={`viewer-ambient ${prefs.backdrop}`}
+          style={prefs.backdrop === "ambient" && ambient
+            ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .26), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .22), transparent 66%), url(${ambient})` }
+            : prefs.backdrop === "solid" ? { background: tone } : undefined}
+          aria-hidden="true"
+        />
+      )}
       <header className="media-modal-head viewer-head">
-        <button className="icon-btn dark" disabled={index <= 0} aria-label="上一个" title="上一个 (PageUp)" onClick={() => onIndex(index - 1)}>
-          <ChevronLeft size={18} />
-        </button>
-        <button className="icon-btn dark" disabled={index >= items.length - 1} aria-label="下一个" title="下一个 (PageDown)" onClick={() => onIndex(index + 1)}>
-          <ChevronRight size={18} />
-        </button>
         <span className="media-modal-name" title={item.name}>{item.name}</span>
         <span className="media-modal-count">{index + 1} / {items.length} · {bytes(item.size)}</span>
         <span className="spacer" />
@@ -1727,8 +1756,8 @@ function MediaViewer({
         <button className="btn sm ghost" onClick={toggleFullscreen}>
           <Maximize2 size={12} /> 全屏
         </button>
-        <button className="btn sm close-x" aria-label="关闭查看器" onClick={onClose}>
-          <X size={14} />
+        <button className="viewer-close" aria-label="关闭查看器" onClick={onClose}>
+          <X size={17} />
         </button>
       </header>
 
@@ -1876,6 +1905,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [mode, setMode] = useState("reference");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
 
   const toggleSel = (slug: string) => setSel((prev) => {
     const next = new Set(prev);
@@ -2040,6 +2070,27 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     go("chats");
   };
 
+  const copyText = (text: string, label: string) => {
+    navigator.clipboard?.writeText(text).then(() => toast(`${label}已复制`)).catch(() => toast("复制失败", true));
+  };
+
+  const removeChat = (chat: ChatRow) => {
+    if (!window.confirm(`删除本地归档「${chat.name}」？\n\n只删除档案库副本，Telegram 云端不受影响。`)) return;
+    call("deleteChat", { slug: chat.slug })
+      .then(() => {
+        toast("已删除本地归档");
+        if (detailChat?.slug === chat.slug) setDetailChat(null);
+        refresh();
+      })
+      .catch((e: Error) => toast(e.message, true));
+  };
+
+  const verifyChat = (chat: ChatRow) => {
+    call<Stats>("verifyChat", { slug: chat.slug })
+      .then((st) => toast(`「${chat.name}」核对完成：缺失 ${st.missing} 个媒体`))
+      .catch((e: Error) => toast(e.message, true));
+  };
+
   return (
     <>
       <div className="page-head">
@@ -2139,29 +2190,29 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       <section className="panel">
         <div className="panel-head">
           <h3>聊天管理</h3>
-          <span className="meta">{chats.length} 个 · 点击行勾选，使用「打开」进入聊天</span>
+          <span className="meta">{chats.length} 个 · 点击行查看聊天详情，勾选后批量操作</span>
         </div>
-        {sel.size > 0 && (
-          <div className="bulk-bar">
-            <b>已选 {sel.size} 个聊天</b>
-            <button className="btn sm" disabled={busy === "bulk"} onClick={rebuildSelected}>
-              <RefreshCw size={12} /> 重建网页
-            </button>
-            <button className="btn sm" disabled={busy === "bulk"} onClick={verifySelected}>
-              <ShieldCheck size={12} /> 核对完整性
-            </button>
-            <button className="btn sm" disabled={busy === "bulk"} onClick={exportSelected}>
-              <ArrowDownToLine size={12} /> 导出
-            </button>
-            <button className="btn sm danger" disabled={busy === "bulk"} onClick={deleteSelected}>
-              <Trash2 size={12} /> 删除
-            </button>
-            <span className="spacer" />
-            <button className="btn sm ghost" onClick={() => setSel(new Set())}>
-              <X size={12} /> 取消选择
-            </button>
-          </div>
-        )}
+        <div className="chat-toolbar">
+          <span className={`select-summary ${sel.size > 0 ? "on" : ""}`}>
+            {sel.size > 0 ? <>已选 <b>{sel.size}</b> 个聊天</> : "勾选聊天后可批量操作"}
+          </span>
+          <span className="spacer" />
+          <button className="btn sm" disabled={busy === "bulk" || sel.size === 0} onClick={rebuildSelected}>
+            <RefreshCw size={12} /> 重建网页
+          </button>
+          <button className="btn sm" disabled={busy === "bulk" || sel.size === 0} onClick={verifySelected}>
+            <ShieldCheck size={12} /> 核对完整性
+          </button>
+          <button className="btn sm" disabled={busy === "bulk" || sel.size === 0} onClick={exportSelected}>
+            <ArrowDownToLine size={12} /> 导出
+          </button>
+          <button className="btn sm danger" disabled={busy === "bulk" || sel.size === 0} onClick={deleteSelected}>
+            <Trash2 size={12} /> 删除
+          </button>
+          <button className="btn sm ghost" onClick={() => setSel(new Set())} style={{ visibility: sel.size > 0 ? "visible" : "hidden" }}>
+            <X size={12} /> 取消选择
+          </button>
+        </div>
         {chats.length === 0 ? (
           <div className="state-box">
             <p>还没有聊天。导入 result.json 后会出现在这里。</p>
@@ -2189,14 +2240,17 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   tabIndex={0}
                   aria-selected={c.slug === selected}
                   className={c.slug === selected || sel.has(c.slug) ? "selected" : ""}
-                  onClick={() => toggleSel(c.slug)}
+                  onClick={() => setDetailChat(c)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      setDetailChat(c);
+                    } else if (e.key === " ") {
                       e.preventDefault();
                       toggleSel(c.slug);
                     }
                   }}
-                  title="点击勾选聊天"
+                  title="点击查看聊天详情"
                 >
                   <td className="check-col" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={sel.has(c.slug)} onChange={() => toggleSel(c.slug)} aria-label={`选择 ${c.name}`} />
@@ -2217,20 +2271,17 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   <td className="muted">{dateTime(c.updatedAt)}</td>
                   <td className="row-action">
                     <div className="row-actions" onClick={(e) => e.stopPropagation()}>
-                      <button className="row-open" data-tip="打开聊天" aria-label="打开聊天" onClick={() => openChat(c.slug)}>
-                        <ArrowUpRight size={13} /> 打开
+                      <button className="row-btn" aria-label={`打开 ${c.name}`} onClick={() => openChat(c.slug)}>
+                        <ArrowUpRight size={13} /> <span>打开</span>
                       </button>
-                      <button className="icon-btn lg" data-tip="重建网页" aria-label="重建网页" onClick={() => call("startRefreshWeb", { slug: c.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
-                        <RefreshCw size={14} />
+                      <button className="row-btn" aria-label={`重建 ${c.name} 的网页`} onClick={() => call("startRefreshWeb", { slug: c.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
+                        <RefreshCw size={13} /> <span>重建</span>
                       </button>
-                      <button className="icon-btn lg" data-tip="打开目录" aria-label="打开目录" onClick={() => call("revealChat", { slug: c.slug }).catch((e: Error) => toast(e.message, true))}>
-                        <FolderOpen size={14} />
+                      <button className="row-btn" aria-label={`定位 ${c.name} 的目录`} onClick={() => call("revealChat", { slug: c.slug }).catch((e: Error) => toast(e.message, true))}>
+                        <FolderOpen size={13} /> <span>定位</span>
                       </button>
-                      <button className="icon-btn lg danger" data-tip="删除本地归档" aria-label="删除本地归档" onClick={() => {
-                        if (!window.confirm(`删除本地归档「${c.name}」？\n\n只删除档案库副本，Telegram 云端不受影响。`)) return;
-                        call("deleteChat", { slug: c.slug }).then(() => { toast("已删除本地归档"); refresh(); }).catch((e: Error) => toast(e.message, true));
-                      }}>
-                        <Trash2 size={13} />
+                      <button className="row-btn danger" aria-label={`删除 ${c.name}`} onClick={() => removeChat(c)}>
+                        <Trash2 size={13} /> <span>删除</span>
                       </button>
                     </div>
                   </td>
@@ -2250,12 +2301,25 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           <div className="library-location">
             <div className="library-folder"><Database size={22} /></div>
             <div className="library-paths">
-              <div><span>根目录</span><code title={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code></div>
-              <div><span>配置文件</span><code title={boot?.configPath}>{boot?.configPath || "--"}</code></div>
+              <div className="library-path-row">
+                <div>
+                  <span>根目录</span>
+                  <code title={boot?.libraryRoot}>{wrapPath(boot?.libraryRoot || "未配置")}</code>
+                </div>
+                <button className="icon-btn" title="复制根目录" aria-label="复制根目录" onClick={() => copyText(boot?.libraryRoot || "", "根目录")}>
+                  <Copy size={13} />
+                </button>
+              </div>
+              <div className="library-path-row">
+                <div>
+                  <span>配置文件</span>
+                  <code title={boot?.configPath}>{wrapPath(boot?.configPath || "--")}</code>
+                </div>
+                <button className="icon-btn" title="复制配置文件路径" aria-label="复制配置文件路径" onClick={() => copyText(boot?.configPath || "", "配置文件路径")}>
+                  <Copy size={13} />
+                </button>
+              </div>
             </div>
-            <button className="btn sm ghost" data-tip="复制根目录" onClick={() => navigator.clipboard?.writeText(boot?.libraryRoot || "").then(() => toast("根目录已复制")).catch(() => toast("复制失败", true))}>
-              <Copy size={12} /> 复制路径
-            </button>
           </div>
         </section>
 
@@ -2279,6 +2343,62 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           )}
         </section>
       </div>
+
+      {detailChat && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailChat(null); }}>
+          <div className="modal chat-detail-modal" role="dialog" aria-modal="true" aria-labelledby="chat-detail-title">
+            <div className="chat-detail-head">
+              <span className="avatar lg">{detailChat.name.slice(0, 1)}</span>
+              <div className="chat-detail-id">
+                <h2 id="chat-detail-title">{detailChat.name}</h2>
+                <p>{detailChat.type || "聊天"} · ID {detailChat.id || "--"}</p>
+              </div>
+              <button className="icon-btn lg" aria-label="关闭聊天详情" onClick={() => setDetailChat(null)}>
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="chat-detail-stats">
+              <div><span>消息</span><b>{detailChat.messages.toLocaleString()}</b></div>
+              <div><span>媒体</span><b>{detailChat.media.toLocaleString()}</b></div>
+              <div><span>缺失</span><b className={detailChat.missing > 0 ? "warn" : ""}>{detailChat.missing}</b></div>
+              <div><span>网页</span><b>{detailChat.pages}</b></div>
+            </div>
+
+            <div className="account-rows chat-detail-rows">
+              <div><span>聊天类型</span><b>{detailChat.type || "未知"}</b></div>
+              <div><span>Chat ID</span><b className="mono">{detailChat.id || "--"}</b></div>
+              <div><span>首次消息</span><b>{dateTime(detailChat.firstTs)}</b></div>
+              <div><span>最后消息</span><b>{dateTime(detailChat.lastTs)}</b></div>
+              <div><span>最近更新</span><b>{dateTime(detailChat.updatedAt)}</b></div>
+              <div><span>数据来源</span><b>{detailChat.hasSource ? "本地导入" : "本机归档"} · 官方导出 {detailChat.official} 个</b></div>
+              <div className="wide"><span>归档目录</span><b className="mono" title={detailChat.dir}>{detailChat.dir}</b></div>
+            </div>
+
+            <div className="chat-detail-actions">
+              <button className="btn ghost" onClick={() => copyText(detailChat.dir, "归档目录")}>
+                <Copy size={12} /> 复制路径
+              </button>
+              <button className="btn ghost" onClick={() => call("revealChat", { slug: detailChat.slug }).catch((e: Error) => toast(e.message, true))}>
+                <FolderOpen size={12} /> 打开目录
+              </button>
+              <button className="btn ghost" onClick={() => verifyChat(detailChat)}>
+                <ShieldCheck size={12} /> 核对完整性
+              </button>
+              <button className="btn ghost" onClick={() => call("startRefreshWeb", { slug: detailChat.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
+                <RefreshCw size={12} /> 重建网页
+              </button>
+              <button className="btn danger" onClick={() => removeChat(detailChat)}>
+                <Trash2 size={12} /> 删除归档
+              </button>
+              <span className="spacer" />
+              <button className="btn primary" onClick={() => openChat(detailChat.slug)}>
+                <ArrowUpRight size={12} /> 打开聊天
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -2524,15 +2644,15 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <SettingsField label="tdl Namespace" hint="不同 namespace 的登录会话互相隔离">
             <input type="text" value={form.tdlNamespace} onChange={(e) => set("tdlNamespace", e.target.value)} />
           </SettingsField>
-          <SettingsField label="查看器背景" hint="图片和视频共用；动态取色会从当前媒体生成模糊光晕">
+          <SettingsField label="查看器背景" hint="动态取色（半透明）保留当前画面的色彩与玻璃感；动态取色（不透明）使用封面主色；磨砂模糊直接虚化打开查看器前的页面">
             <Select
               ariaLabel="查看器背景"
               value={form.viewerBackdrop}
               onChange={(v) => set("viewerBackdrop", v)}
               options={[
-                { value: "ambient", label: "动态取色（推荐）" },
+                { value: "ambient", label: "动态取色（半透明）" },
+                { value: "solid", label: "动态取色（不透明）" },
                 { value: "frosted", label: "磨砂模糊" },
-                { value: "solid", label: "深色纯色" },
               ]}
             />
           </SettingsField>
@@ -2627,7 +2747,7 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
         .map((r) => (
           <div key={r.label} className={`diag-row ${r.state}`}>
             <span className="diag-label">{r.label}</span>
-            <span className="diag-value" title={r.value}>{r.value}</span>
+            <span className="diag-value" title={r.value}>{wrapPath(r.value)}</span>
           </div>
         ))}
     </div>
@@ -3075,6 +3195,8 @@ export function Account({ ctx }: { ctx: PageCtx }) {
   const checkedText = profile?.checkedAt ? dateTime(profile.checkedAt) : "尚未读取";
   const sourceText = profileSource === "live" ? "实时读取" : profileSource === "inferred" ? "下载中推断" : "本机缓存";
   const profileLoading = !ready || (!profile && (checking || (!autoChecked.current && !!account?.hasSessionFile)));
+  const sessionUsable = !!account?.hasSessionFile && check?.state !== "unauthorized";
+  const showLogin = active || busy === "login" || (ready && !sessionUsable);
 
   return (
     <>
@@ -3130,9 +3252,9 @@ export function Account({ ctx }: { ctx: PageCtx }) {
         </div>
       </section>
 
-      {check && (
+      {check && check.state !== "ready" && (
         <div className={`account-check-line ${checkTone}`}>
-          {check.state === "ready" ? <ShieldCheck size={15} /> : check.state === "unauthorized" ? <WifiOff size={15} /> : <Wifi size={15} />}
+          {check.state === "unauthorized" ? <WifiOff size={15} /> : <Wifi size={15} />}
           <b>{CHECK_LABEL[check.state] ?? check.state}</b>
           <span>{check.message}</span>
           {check.state === "unauthorized" && <em>本地会话存在但 Telegram 已拒绝；重新扫码登录会覆盖为有效会话。</em>}
@@ -3159,10 +3281,9 @@ export function Account({ ctx }: { ctx: PageCtx }) {
             <>
               <div className="account-rows">
                 <div><span>名称</span><b>{profile.name || "未命名"}</b></div>
-                <div><span>用户名（@）</span><b>{profile.username ? "@" + profile.username : "没有"}</b></div>
+                {profile.username && <div><span>用户名（@）</span><b>@{profile.username}</b></div>}
                 <div><span>手机号</span><b className="mono">{phone || "不可见"}</b></div>
                 <div><span>用户 ID</span><b className="mono">{profile.userId}</b></div>
-                <div><span>数据来源</span><b>{sourceText}</b></div>
                 <div><span>最后验证</span><b>{checkedText}</b></div>
               </div>
               <div className="account-profile-actions">
@@ -3170,8 +3291,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
                   className="btn sm ghost"
                   onClick={() => {
                     const text = `${profile.name}
-${profile.username ? "@" + profile.username : "没有"}
-${phone}
+${profile.username ? "@" + profile.username + "\n" : ""}${phone}
 ID ${profile.userId}`;
                     navigator.clipboard?.writeText(text).then(() => toast("账号信息已复制")).catch(() => toast("复制失败", true));
                   }}
@@ -3206,13 +3326,13 @@ ID ${profile.userId}`;
             <dt>Namespace</dt>
             <dd>{account?.namespace || info?.namespace || "-"}</dd>
             <dt>会话文件</dt>
-            <dd className="mono">{account?.sessionFile || "-"}</dd>
+            <dd className="mono">{wrapPath(account?.sessionFile || "-")}</dd>
             <dt>文件大小</dt>
             <dd>{account?.hasSessionFile ? bytes(account?.sessionSize ?? 0) : "无"}</dd>
             <dt>最后修改</dt>
             <dd>{dateTime(account?.sessionModified)}</dd>
             <dt>tdl</dt>
-            <dd className="mono">{info?.exe || "未安装"}</dd>
+            <dd className="mono">{wrapPath(info?.exe || "未安装")}</dd>
             <dt>tdl 版本</dt>
             <dd>{info?.version || "未知"}</dd>
           </dl>
@@ -3234,6 +3354,7 @@ ID ${profile.userId}`;
         </section>
       </div>
 
+      {showLogin && (
       <section className="panel">
         <div className="panel-head">
           <h3>Telegram 登录</h3>
@@ -3336,6 +3457,7 @@ ID ${profile.userId}`;
           </div>
         )}
       </section>
+      )}
     </>
   );
 }

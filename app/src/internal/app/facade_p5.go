@@ -64,12 +64,21 @@ type archiveDataFile struct {
 	Messages []archiveDataMessage `json:"messages"`
 }
 
+func hasParentSegment(rel string) bool {
+	for _, part := range strings.Split(rel, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *Facade) mediaRelAbs(slug, rel string) (string, string, error) {
 	if slug == "" || slug != filepath.Base(slug) {
 		return "", "", errors.New("无效的聊天标识")
 	}
 	rel = strings.TrimSpace(strings.ReplaceAll(rel, "\\", "/"))
-	if rel == "" || strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") || strings.ContainsRune(rel, ':') {
+	if rel == "" || strings.HasPrefix(rel, "/") || hasParentSegment(rel) || strings.ContainsRune(rel, ':') {
 		return "", "", errors.New("无效的媒体路径")
 	}
 	clean := filepath.Clean(filepath.FromSlash(rel))
