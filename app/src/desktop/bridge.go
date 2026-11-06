@@ -393,6 +393,8 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return nil, nil
 	case "sessionCheck":
 		return b.sessionCheck(p.Timeout), nil
+	case "captureWindow":
+		return b.CaptureWindow()
 	case "onlineChats":
 		return b.OnlineChats(p.Timeout)
 	case "onlineChatsCached":

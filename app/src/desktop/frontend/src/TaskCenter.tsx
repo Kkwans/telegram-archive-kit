@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowLeft,
+  Check,
   CheckCircle2,
   ChartPie,
   Download,
@@ -152,9 +153,6 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
     : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : "任务失败"));
-  const ringStyle = running
-    ? { background: `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` }
-    : undefined;
 
   return (
     <>
@@ -174,24 +172,25 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
         </div>
       </div>
 
-      <section className={`hero ${running ? "" : "idle"} ${failed ? "failed" : ""}`}>
+      <section className={`download-hero ${running ? "running" : failed ? "failed" : "done"}`}>
         <div
-          className={`ring ${running ? "" : "idle"}`}
+          className="download-hero-icon"
           role="progressbar"
           aria-valuenow={Math.round(percent)}
           aria-valuemin={0}
           aria-valuemax={100}
-          style={ringStyle}
+          style={running ? { background: `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` } : undefined}
         >
-          {running ? <b>{Math.round(percent)}%</b> : failed ? <X size={22} /> : <CheckCircle2 size={24} />}
+          {running ? <b>{Math.round(percent)}%</b> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
-        <div className="hero-main">
-          <div className="hero-title">
-            {taskTitle(task)}{task.chat ? ` · ${task.chat}` : ""}
+        <div className="download-hero-main">
+          <div className="download-hero-title">
+            <h2>{taskTitle(task)}</h2>
+            {task.chat && <span className="download-hero-chat">{task.chat}</span>}
             <span className={`tag ${failed ? "bad" : ""}`}>{statusLabel(task.state)}</span>
           </div>
-          <div className="hero-stage" title={result}>{result}</div>
-          <div className="hero-meta">
+          <p className="download-hero-desc" title={result}>{result}</p>
+          <div className="download-hero-meta">
             <span>速度 <b>{rate(speedNow)}</b></span>
             <span>平均 <b>{rate(task.avgSpeed ?? 0)}</b></span>
             <span>已下载 <b>{bytes(task.bytes ?? 0)}</b></span>
@@ -199,9 +198,14 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             <span>耗时 <b>{fmtDuration(elapsed)}</b></span>
           </div>
         </div>
+        {!running && (
+          <span className="download-hero-watermark" aria-hidden="true">
+            {failed ? <X size={132} strokeWidth={1.4} /> : <Check size={144} strokeWidth={1.4} />}
+          </span>
+        )}
       </section>
 
-      <section className="stat-grid">
+      <section className="stat-grid download-stats">
         <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>
         <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
         <div className="stat"><span>预计剩余</span><div><b>{running && (task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--"}</b></div></div>
@@ -252,7 +256,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             </tbody>
           </table>
         ) : (
-          <div className="chart-empty">{running ? "当前没有正在下载的文件。" : "任务已结束，没有正在下载的文件。"}</div>
+          <div className="download-empty"><Download size={14} /> {running ? "当前没有正在下载的文件。" : "任务已结束，没有正在下载的文件。"}</div>
         )}
       </section>
 
@@ -274,7 +278,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             ))}
           </div>
         ) : (
-          <div className="chart-empty">这个任务没有完成记录。</div>
+          <div className="download-empty"><CheckCircle2 size={14} /> 旧任务没有保存逐项媒体记录；新任务会显示最近完成的文件。</div>
         )}
       </section>
 

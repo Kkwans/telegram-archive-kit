@@ -253,11 +253,59 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const sync = () => document.body.classList.toggle("has-modal", !!document.querySelector(".modal-backdrop"));
+    let disposed = false;
+    let busy = false;
+    let open = false;
+    const clear = () => {
+      document.body.classList.remove("glass-ready", "glass-captured", "glass-capturing");
+      document.body.style.removeProperty("--glass-snapshot");
+    };
+    const capture = async () => {
+      if (busy || disposed) return;
+      busy = true;
+      document.body.classList.add("glass-capturing");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      let image = "";
+      try {
+        image = await Promise.race([
+          call<string>("captureWindow"),
+          new Promise<string>((resolve) => window.setTimeout(() => resolve(""), 1500)),
+        ]);
+      } catch {
+        image = "";
+      }
+      if (disposed) return;
+      if (!document.querySelector(".modal-backdrop")) {
+        document.body.classList.remove("glass-capturing");
+        busy = false;
+        return;
+      }
+      if (image) {
+        document.body.style.setProperty("--glass-snapshot", `url("${image}")`);
+        document.body.classList.add("glass-captured");
+      }
+      document.body.classList.add("glass-ready");
+      document.body.classList.remove("glass-capturing");
+      busy = false;
+    };
+    const sync = () => {
+      const has = !!document.querySelector(".modal-backdrop");
+      if (has && !open) {
+        open = true;
+        void capture();
+      } else if (!has && open) {
+        open = false;
+        clear();
+      }
+    };
     const observer = new MutationObserver(sync);
     observer.observe(document.body, { childList: true, subtree: true });
     sync();
-    return () => observer.disconnect();
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      clear();
+    };
   }, []);
 
   const go = (next: string) => {
