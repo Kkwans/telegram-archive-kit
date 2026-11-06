@@ -80,7 +80,6 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActive, setPaletteActive] = useState(0);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  const [taskFocus, setTaskFocus] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<ViewerPrefs>({ seekSeconds: 5, longPressRate: 4, longPressDelayMs: 300, maxVolume: 200, volumeStep: 10, videoFrameAspect: "original", speedWindowSeconds: 180, backdrop: "ambient" });
   const [sideWidth, setSideWidth] = useState(initialSideWidth);
   const [sideCollapsed, setSideCollapsed] = useState(initialCollapsed);
@@ -253,16 +252,18 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const sync = () => document.body.classList.toggle("has-modal", !!document.querySelector(".modal-backdrop"));
+    const observer = new MutationObserver(sync);
+    observer.observe(document.body, { childList: true, subtree: true });
+    sync();
+    return () => observer.disconnect();
+  }, []);
+
   const go = (next: string) => {
     setSideTip(null);
     setAppTip(null);
     setPage(next);
-    if (next !== "overview") setTaskFocus(null);
-  };
-  const openDownloadTask = (task: TaskInfo) => {
-    if (task.slug) setSelected(task.slug);
-    setTaskFocus(task.id);
-    setPage("overview");
   };
   const ctx: PageCtx = useMemo(
     () => ({
@@ -283,11 +284,10 @@ export default function App() {
       pickFolder,
       tasks,
       openTasks: () => setPage("tasks"),
-      taskFocus,
       prefs,
       applyPrefs: setPrefs,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, taskFocus]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs]
   );
 
   useEffect(() => {
@@ -658,7 +658,6 @@ export default function App() {
                 tasks={tasks}
                 onRefresh={refresh}
                 onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))}
-                onOpenDownload={openDownloadTask}
                 toast={toast}
               />
             )}

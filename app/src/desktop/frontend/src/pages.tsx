@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -70,7 +71,6 @@ import type {
   RemoteTools,
   SessionCheck,
   TdlInfo,
-  TaskDetail,
   TaskInfo,
   ViewerPrefs,
 } from "./types";
@@ -94,7 +94,6 @@ export interface PageCtx {
   pickFolder: (purpose: string, title: string) => Promise<string>;
   tasks: TaskInfo[];
   openTasks: () => void;
-  taskFocus?: string | null;
   prefs: ViewerPrefs;
   applyPrefs: (p: ViewerPrefs) => void;
 }
@@ -386,137 +385,9 @@ const SPEED_WINDOWS = [
   { value: "900", label: "最近 15 分钟" },
 ];
 
-function DownloadHistoryPage({ task, onBack }: { task: TaskDetail; onBack: () => void }) {
-  const samples = (task.series ?? []).map((p) => ({ now: p.now, avg: p.avg }));
-  const maxSpeed = Math.max(1, ...samples.flatMap((s) => [s.now, s.avg]));
-  const W = 720, H = 170, L = 58, R = 14, T = 12, B = 30;
-  const plotW = W - L - R;
-  const plotH = H - T - B;
-  const points = (values: number[]) =>
-    values.length === 0
-      ? ""
-      : values
-          .map((v, i) => {
-            const x = L + (samples.length <= 1 ? 0 : (i / (samples.length - 1)) * plotW);
-            const y = T + plotH - Math.min(1, v / maxSpeed) * plotH;
-            return `${x.toFixed(1)},${y.toFixed(1)}`;
-          })
-          .join(" ");
-  const failed = task.state === "failed";
-  const clock = (ts?: number) => {
-    if (!ts) return "--:--";
-    const d = new Date(ts);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-  };
-  const span = Math.max(1, (task.finishedAt || task.startedAt) - task.startedAt);
-  const axisTimes: { x: number; label: string; anchor: "start" | "middle" | "end" }[] =
-    [0, 0.25, 0.5, 0.75, 1].map((f) => ({
-      x: L + f * plotW,
-      label: clock(task.startedAt + span * f),
-      anchor: f === 0 ? "start" : f === 1 ? "end" : "middle",
-    }));
-  return (
-    <>
-      <div className="page-head download-detail-head">
-        <div className="task-detail-title">
-          <button className="btn" onClick={onBack}>
-            <ChevronLeft size={14} /> 返回任务中心
-          </button>
-          <div>
-            <h1>下载详情</h1>
-            <p>{task.title} · {task.chat || "未知聊天"} · {failed ? "失败" : "已完成"}</p>
-          </div>
-        </div>
-        <div className="actions">
-          <button className="btn ghost" disabled={!task.slug} onClick={() => task.slug && call("openLibrary", { slug: task.slug })}>
-            <FolderOpen size={13} /> 打开归档库
-          </button>
-        </div>
-      </div>
-
-      <section className={`download-result-card ${failed ? "failed" : ""}`}>
-        <span className="download-status">{failed ? <X size={26} /> : <CheckCircle2 size={26} />}</span>
-        <div className="download-result-main">
-          <div className="download-result-title">
-            {task.title}
-            <span className={`tag ${failed ? "bad" : ""}`}>{failed ? "失败" : "完成"}</span>
-          </div>
-          <div className="download-result-detail">{task.error || task.detail || "同步与网页构建完成"}</div>
-          <div className="download-result-meta">
-            <span>开始 <b>{dateTime(task.startedAt)}</b></span>
-            <span>耗时 <b>{duration(task.elapsedMs || ((task.finishedAt || task.startedAt) - task.startedAt))}</b></span>
-            <span>平均 <b>{rate(task.avgSpeed ?? 0)}</b></span>
-            <span>峰值 <b>{rate(task.peakSpeed ?? 0)}</b></span>
-          </div>
-        </div>
-      </section>
-
-      <section className="stat-grid">
-        <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
-        <div className="stat"><span>峰值速度</span><div><b>{rate(task.peakSpeed ?? 0)}</b></div></div>
-        <div className="stat"><span>下载总量</span><div><b>{bytes(task.bytes ?? 0)}</b></div></div>
-        <div className="stat"><span>完成媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h3><ChartPie size={14} /> 历史速度曲线</h3>
-          <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
-        </div>
-        <div className="chart chart-axes">
-          {samples.length >= 2 ? (
-            <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="历史下载速度曲线">
-              {[0, 0.25, 0.5, 0.75, 1].map((f) => {
-                const y = T + plotH - f * plotH;
-                return (
-                  <g key={f}>
-                    <line className="grid" x1={L} y1={y} x2={W - R} y2={y} />
-                    <text className="axis-y" x={L - 9} y={y + 4} textAnchor="end">{rate(maxSpeed * f)}</text>
-                  </g>
-                );
-              })}
-              {axisTimes.map((t) => (
-                <text key={t.x} className="axis-x" x={t.x} y={H - 8} textAnchor={t.anchor}>{t.label}</text>
-              ))}
-              <polyline className="avg" points={points(samples.map((s) => s.avg))} />
-              <polyline className="now" points={points(samples.map((s) => s.now))} />
-            </svg>
-          ) : (
-            <div className="chart-empty">这个任务没有保留速度曲线。</div>
-          )}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head"><h3>任务信息</h3><span className="meta">任务 {task.id}</span></div>
-        <div className="account-rows task-detail-rows">
-          <div><span>类型</span><b>下载 / 同步</b></div>
-          <div><span>聊天</span><b>{task.chat || "--"}</b></div>
-          <div><span>开始时间</span><b>{dateTime(task.startedAt)}</b></div>
-          <div><span>结束时间</span><b>{dateTime(task.finishedAt)}</b></div>
-          <div><span>耗时</span><b>{duration(task.elapsedMs || 0)}</b></div>
-          <div><span>结果</span><b className={failed ? "danger-text" : ""}>{task.error || "同步与网页构建完成"}</b></div>
-        </div>
-      </section>
-    </>
-  );
-}
-
 export function Overview({ ctx }: { ctx: PageCtx }) {
-  const { chats, selected, dl, op, done, running, history, refresh, toast, prefs, go, taskFocus } = ctx;
+  const { chats, selected, dl, op, done, running, history, refresh, toast, prefs, go } = ctx;
   const current = chats.find((c) => c.slug === selected) || null;
-  const [historyTask, setHistoryTask] = useState<TaskDetail | null>(null);
-  useEffect(() => {
-    if (!taskFocus) {
-      setHistoryTask(null);
-      return;
-    }
-    let cancelled = false;
-    call<TaskDetail>("taskDetail", { id: taskFocus })
-      .then((task) => { if (!cancelled) setHistoryTask(task); })
-      .catch(() => { if (!cancelled) setHistoryTask(null); });
-    return () => { cancelled = true; };
-  }, [taskFocus]);
   const [windowSec, setWindowSec] = useState(() => {
     const saved = Number(localStorage.getItem("tak-speed-window") || 0);
     return saved >= 60 && saved <= 900 ? saved : prefs.speedWindowSeconds || 180;
@@ -575,10 +446,6 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
       toast((e as Error).message, true);
     }
   };
-
-  if (historyTask && historyTask.state !== "running") {
-    return <DownloadHistoryPage task={historyTask} onBack={() => go("tasks")} />;
-  }
 
   const idle = !running && !dl && !op;
   const title = running
@@ -2605,7 +2472,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         </section>
       </div>
 
-      {remoteOpen && (
+      {remoteOpen && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setRemoteOpen(false); }}>
           <div className="modal remote-modal" role="dialog" aria-modal="true" aria-labelledby="remote-title">
             <div className="remote-head">
@@ -2783,10 +2650,11 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               <p className="remote-note">TAK 不保存 SMB 密码；网络共享使用 Windows 凭据管理器，rclone / SSHFS 由对应工具管理凭据。远程库的缩略图与视频播放缓存会在本机单独保存。</p>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {detailChat && (
+      {detailChat && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailChat(null); }}>
           <div className="modal chat-detail-modal" role="dialog" aria-modal="true" aria-labelledby="chat-detail-title">
             <div className="chat-detail-head">
@@ -2846,7 +2714,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

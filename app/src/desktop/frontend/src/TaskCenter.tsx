@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowLeft,
   CheckCircle2,
   ChartPie,
-  Clock,
   Download,
   FileJson,
   FolderInput,
@@ -140,7 +140,7 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
   );
 }
 
-function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () => void; toast: (msg: string, err?: boolean) => void }) {
+export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () => void; toast: (msg: string, err?: boolean) => void }) {
   const meta = kindMeta(task.kind);
   const download = meta.group === "download";
   const noop = noNewMedia(task);
@@ -157,8 +157,8 @@ function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () 
             <ArrowLeft size={14} /> 返回
           </button>
           <div>
-            <h1>任务详情</h1>
-            <p>{meta.label}{task.chat ? ` · ${task.chat}` : ""}</p>
+            <h1>下载详情</h1>
+            <p>{meta.label}{task.chat ? ` · ${task.chat}` : ""} · {statusLabel(task.state)}</p>
           </div>
         </div>
         <div className="actions">
@@ -231,19 +231,18 @@ export function TasksPage({
   tasks,
   onRefresh,
   onClear,
-  onOpenDownload,
   toast,
 }: {
   tasks: TaskInfo[];
   onRefresh: () => void;
   onClear: () => void;
-  onOpenDownload: (task: TaskInfo) => void;
   toast: (msg: string, err?: boolean) => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [active, setActive] = useState<TaskDetail | null>(null);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
 
   useEffect(() => {
@@ -267,14 +266,14 @@ export function TasksPage({
   const done = tasks.filter((t) => t.state === "done").length;
 
   const openTask = async (task: TaskInfo) => {
-    if (kindMeta(task.kind).group === "download") {
-      onOpenDownload(task);
-      return;
-    }
+    const download = kindMeta(task.kind).group === "download";
     try {
-      setModalTask(await call<TaskDetail>("taskDetail", { id: task.id }));
+      const detail = await call<TaskDetail>("taskDetail", { id: task.id });
+      if (download) setActive(detail);
+      else setModalTask(detail);
     } catch (e) {
-      setModalTask({ ...task, series: [] });
+      if (download) setActive({ ...task, series: [] });
+      else setModalTask({ ...task, series: [] });
       toast((e as Error).message, true);
     }
   };
@@ -288,12 +287,16 @@ export function TasksPage({
       .catch((e: Error) => toast(e.message, true));
   };
 
+  if (active) {
+    return <TaskDetailView task={active} onBack={() => setActive(null)} toast={toast} />;
+  }
+
   return (
     <>
       <div className="page-head">
         <div>
           <h1>任务中心</h1>
-          <p>下载任务打开专用下载页；其他任务弹窗查看详情</p>
+          <p>下载任务打开独立下载详情页；其他任务弹窗查看详情</p>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={onRefresh}>
@@ -359,7 +362,18 @@ export function TasksPage({
                 const meta = kindMeta(t.kind);
                 const Icon = meta.icon;
                 return (
-                  <tr key={t.id} onClick={() => void openTask(t)} title="点击查看任务详情">
+                  <tr
+                    key={t.id}
+                    tabIndex={0}
+                    onClick={() => void openTask(t)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void openTask(t);
+                      }
+                    }}
+                    title="点击查看任务详情"
+                  >
                     <td className="task-col-state">
                       <span className={`task-state ${t.state}`}>
                         {t.state === "running" ? <Loader2 size={12} className="spin" /> : t.state === "done" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
@@ -371,7 +385,11 @@ export function TasksPage({
                     </td>
                     <td className="task-main">
                       <div className="task-title-line">
-                        <b title={taskTitle(t)}>{taskTitle(t)}</b>
+                        <b title={taskTitle(t)}>
+                          <button className="task-title-btn" onClick={(e) => { e.stopPropagation(); void openTask(t); }}>
+                            {taskTitle(t)}
+                          </button>
+                        </b>
                         {t.state === "done" && noNewMedia(t) && <span className="task-note">无新增</span>}
                       </div>
                     </td>
@@ -392,7 +410,7 @@ export function TasksPage({
         )}
       </section>
 
-      {modalTask && (
+      {modalTask && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setModalTask(null); }}>
           <div className="modal task-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
             <div className="task-modal-head">
@@ -416,7 +434,8 @@ export function TasksPage({
               <button className="btn ghost" onClick={() => setModalTask(null)}><X size={12} /> 关闭</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

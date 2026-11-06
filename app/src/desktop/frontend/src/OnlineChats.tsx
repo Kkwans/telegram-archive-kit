@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   CheckCircle2,
@@ -569,7 +570,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
         </section>
       )}
 
-      {previewPeer && (
+      {previewPeer && createPortal(
         <div
           className="modal-backdrop"
           role="presentation"
@@ -661,7 +662,8 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
               ) : null}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
