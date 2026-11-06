@@ -51,7 +51,7 @@ func (b *Bridge) StartRcloneMount(remote, subpath, drive string) (string, error)
 
 	spec := remote + ":"
 	if subpath != "" {
-		spec += "/" + subpath
+		spec += subpath
 	}
 	logPath := filepath.Join(b.facade.ConfigDir(), "rclone-mount-"+drive+".log")
 	logFile, err := os.Create(logPath)
