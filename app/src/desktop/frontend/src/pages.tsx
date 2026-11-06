@@ -1912,6 +1912,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
+  const [detailStats, setDetailStats] = useState<Stats | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [remotePath, setRemotePath] = useState("");
@@ -1933,6 +1934,18 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     const timer = window.setInterval(probe, 30000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [boot?.libraryRoot]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetailStats(null);
+    if (detailChat) {
+      call<Stats>("verifyChat", { slug: detailChat.slug })
+        .then((st) => { if (!cancelled) setDetailStats(st); })
+        .catch(() => undefined);
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailChat?.slug]);
 
   const openRemote = () => {
     setRemoteOpen(true);
@@ -2653,21 +2666,28 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               </button>
             </div>
 
-            <div className="chat-detail-stats">
-              <div><span>消息</span><b>{detailChat.messages.toLocaleString()}</b></div>
-              <div><span>媒体</span><b>{detailChat.media.toLocaleString()}</b></div>
-              <div><span>缺失</span><b className={detailChat.missing > 0 ? "warn" : ""}>{detailChat.missing}</b></div>
-              <div><span>网页</span><b>{detailChat.pages}</b></div>
-            </div>
-
-            <div className="account-rows chat-detail-rows">
-              <div><span>聊天类型</span><b>{detailChat.type || "未知"}</b></div>
-              <div><span>Chat ID</span><b className="mono">{detailChat.id || "--"}</b></div>
-              <div><span>首次消息</span><b>{dateTime(detailChat.firstTs)}</b></div>
-              <div><span>最后消息</span><b>{dateTime(detailChat.lastTs)}</b></div>
-              <div><span>最近更新</span><b>{dateTime(detailChat.updatedAt)}</b></div>
-              <div><span>数据来源</span><b>{detailChat.hasSource ? "本地导入" : "本机归档"} · 官方导出 {detailChat.official} 个</b></div>
-              <div className="wide"><span>归档目录</span><b className="mono" title={detailChat.dir}>{detailChat.dir}</b></div>
+            <div className="chat-detail-grid">
+              <div className="chat-detail-tile"><span>Chat ID</span><b className="mono">{detailChat.id || "--"}</b></div>
+              <div className="chat-detail-tile"><span>工作区目录</span><b className="mono" title={detailChat.dir}>{detailChat.slug}</b></div>
+              <div className="chat-detail-tile"><span>消息</span><b>{detailChat.messages.toLocaleString()}</b></div>
+              <div className="chat-detail-tile">
+                <span>媒体文件</span>
+                <b>{detailChat.media.toLocaleString()}{detailChat.missing > 0 && <em> · 缺 {detailChat.missing}</em>}</b>
+              </div>
+              <div className="chat-detail-tile">
+                <span>图片 / 视频</span>
+                <b>{detailStats ? `${detailStats.images} / ${detailStats.videos}` : "—"}</b>
+              </div>
+              <div className="chat-detail-tile">
+                <span>音频 / 文件</span>
+                <b>{detailStats ? `${detailStats.audio} / ${detailStats.files}` : "—"}</b>
+              </div>
+              <div className="chat-detail-tile"><span>最早消息</span><b>{dateTime(detailChat.firstTs)}</b></div>
+              <div className="chat-detail-tile"><span>最新消息</span><b>{dateTime(detailChat.lastTs)}</b></div>
+              <div className="chat-detail-tile"><span>最近更新</span><b>{dateTime(detailChat.updatedAt)}</b></div>
+              <div className="chat-detail-tile"><span>网页</span><b>{detailChat.pages} 页</b></div>
+              <div className="chat-detail-tile"><span>官方 ChatExport</span><b>{detailChat.official} 份</b></div>
+              <div className="chat-detail-tile"><span>生成器</span><b>TelegramArchiveKit {ctx.boot?.version || "3.0"}</b></div>
             </div>
 
             <div className="chat-detail-actions">

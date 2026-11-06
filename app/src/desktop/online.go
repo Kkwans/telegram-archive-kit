@@ -35,6 +35,7 @@ type OnlineChat struct {
 	Name            string `json:"name"`
 	Username        string `json:"username,omitempty"`
 	HasPhoto        bool   `json:"hasPhoto"`
+	AccessHash      int64  `json:"accessHash,omitempty"`
 	Avatar          string `json:"avatar,omitempty"`
 	LastMessage     string `json:"lastMessage,omitempty"`
 	LastKind        string `json:"lastKind,omitempty"`
@@ -91,6 +92,19 @@ func (s *OnlineService) Ready(peer string) bool {
 	_, hasChat := s.chats[peer]
 	_, hasRef := s.refs[peer]
 	return hasChat && hasRef
+}
+
+func (s *OnlineService) CachedChat(ns, peer string) (OnlineChat, bool) {
+	cached := s.Cached(ns)
+	if cached == nil {
+		return OnlineChat{}, false
+	}
+	for _, chat := range cached.Chats {
+		if chat.Peer == peer {
+			return chat, true
+		}
+	}
+	return OnlineChat{}, false
 }
 
 func (s *OnlineService) Chat(peer string) (OnlineChat, bool) {
@@ -330,6 +344,7 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 		out.Peer = "user:" + strconv.FormatInt(user.ID, 10)
 		out.ID = user.ID
 		out.Type = "private"
+		out.AccessHash = user.AccessHash
 		if user.Bot {
 			out.Type = "bot"
 		}
@@ -371,6 +386,7 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 		out.Peer = "channel:" + strconv.FormatInt(ch.ID, 10)
 		out.ID = ch.ID
 		out.Type = "group"
+		out.AccessHash = ch.AccessHash
 		if ch.Broadcast {
 			out.Type = "channel"
 		}

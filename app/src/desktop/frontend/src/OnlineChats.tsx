@@ -204,11 +204,12 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const canExport = !!data?.chats.length;
   const summary = [
-    { label: "全部会话", value: counts.all, icon: Inbox },
-    { label: "私聊", value: counts.private, icon: UserRound },
-    { label: "群组", value: counts.group, icon: Users },
-    { label: "频道", value: counts.channel, icon: Megaphone },
+    { label: "全部会话", value: counts.all },
+    { label: "私聊", value: counts.private },
+    { label: "群组", value: counts.group },
+    { label: "频道", value: counts.channel },
   ];
 
   return (
@@ -230,15 +231,12 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
       </div>
 
       <section className="online-summary" aria-label="在线会话概况">
-        {summary.map((s) => {
-          const Icon = s.icon;
-          return (
-            <div key={s.label} className="online-summary-cell">
-              <span className="online-summary-icon"><Icon size={14} /></span>
-              <div><b>{loading && !data ? "—" : s.value}</b><span>{s.label}</span></div>
-            </div>
-          );
-        })}
+        {summary.map((s) => (
+          <div key={s.label} className="online-summary-cell">
+            <span>{s.label}</span>
+            <b>{loading && !data ? "—" : s.value}</b>
+          </div>
+        ))}
         <div className="online-summary-foot">
           {data?.fetchedAt ? (
             <><span>更新于 {fullWhen(Math.floor(data.fetchedAt / 1000))}</span>{data.source === "cache" && <em>缓存快照</em>}</>
@@ -406,17 +404,10 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                     <p>{selected.lastMessage || "这个会话还没有可显示的消息。"}</p>
                   </div>
 
-                  <dl className="online-facts">
-                    <div><dt>类型</dt><dd>{typeMeta(selected.type).label}</dd></div>
-                    <div><dt>会话 ID</dt><dd className="mono">{selected.id}</dd></div>
-                    <div><dt>未读</dt><dd title={selected.unread ? `${selected.unread} 条未读` : "已读"}>{selected.unread ? (selected.unread > 99 ? "99+" : selected.unread) : 0}</dd></div>
-                    <div><dt>置顶</dt><dd>{selected.pinned ? "是" : "否"}</dd></div>
-                  </dl>
-
                   <div className="online-detail-actions">
                     <button
                       className="btn primary"
-                      disabled={!!exporting}
+                      disabled={!!exporting || !canExport}
                       onClick={() => void runExport(selected)}
                     >
                       {exporting === selected.peer ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />}

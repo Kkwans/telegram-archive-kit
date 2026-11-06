@@ -86,3 +86,18 @@ func TestMapOnlineMedia(t *testing.T) {
 		t.Errorf("document mapping = %q %q %q %d %v", kind, file, name, size, ok)
 	}
 }
+
+func TestPeerInputFromChat(t *testing.T) {
+	user := peerInputFromChat(OnlineChat{Peer: "user:42", ID: 42, AccessHash: 99})
+	if p, ok := user.(*tg.InputPeerUser); !ok || p.UserID != 42 || p.AccessHash != 99 {
+		t.Errorf("user peer = %#v", user)
+	}
+	channel := peerInputFromChat(OnlineChat{Peer: "channel:43", ID: 43, AccessHash: 88})
+	if p, ok := channel.(*tg.InputPeerChannel); !ok || p.ChannelID != 43 || p.AccessHash != 88 {
+		t.Errorf("channel peer = %#v", channel)
+	}
+	chat := peerInputFromChat(OnlineChat{Peer: "chat:44", ID: 44})
+	if p, ok := chat.(*tg.InputPeerChat); !ok || p.ChatID != 44 {
+		t.Errorf("chat peer = %#v", chat)
+	}
+}

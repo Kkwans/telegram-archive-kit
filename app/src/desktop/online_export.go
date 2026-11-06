@@ -33,13 +33,10 @@ type OnlineExportResult struct {
 // ExportMessages reads a complete (or limited) history through gotd and turns
 // it into Telegram Desktop-compatible result.json messages. The downloader and
 // renderer then use the same pipeline as a manually imported export.
-func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy, peerKey string, timeout time.Duration, minID, limit int) (OnlineChat, []map[string]any, int, error) {
-	s.mu.Lock()
-	chat, chatOK := s.chats[peerKey]
-	ref, refOK := s.refs[peerKey]
-	s.mu.Unlock()
-	if !chatOK || !refOK {
-		return OnlineChat{}, nil, 0, errors.New("在线列表已过期，请刷新后重试")
+func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int) (OnlineChat, []map[string]any, int, error) {
+	ref := peerInputFromChat(chat)
+	if ref == nil {
+		return OnlineChat{}, nil, 0, errors.New("该会话缺少访问凭据，请刷新在线列表后重试")
 	}
 	blob, app, err := readTdlSession(ns)
 	if err != nil {
@@ -72,7 +69,7 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy, peerKey s
 		pages := 0
 		for {
 			res, err := client.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-				Peer:     ref.peer,
+				Peer:     ref,
 				OffsetID: offset,
 				MinID:    minID,
 				Limit:    100,
@@ -527,30 +524,47 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int) (OnlineExportR
 			return OnlineExportResult{}, fmt.Errorf("无法读取在线会话：%w", err)
 		}
 	}
-	existingSlug := ""
-	existed := false
-	idText := ""
-	localDir := ""
-	local := b.facade.ListChats()
-	if meta, ok := b.online.Chat(peerKey); ok {
-		idText = strconv.FormatInt(meta.ID, 10)
-		for _, c := range local {
-			if c.ID == idText {
-				existingSlug = c.Slug
-				localDir = c.Dir
-				existed = true
-				break
-			}
+	chat, ok := b.online.Chat(peerKey)
+	if !ok {
+		if cached, found := b.online.CachedChat(info.Namespace, peerKey); found {
+			chat = cached
+			ok = true
 		}
 	}
-	if idText == "" {
+	needsAccessHash := strings.HasPrefix(peerKey, "user:") || strings.HasPrefix(peerKey, "channel:")
+	if !ok || (needsAccessHash && chat.AccessHash == 0) {
+		if _, fetchErr := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, exportTimeout); fetchErr != nil {
+			if !ok {
+				return OnlineExportResult{}, fmt.Errorf("无法读取在线会话：%w", fetchErr)
+			}
+			if needsAccessHash && chat.AccessHash == 0 {
+				return OnlineExportResult{}, fmt.Errorf("该会话缺少访问凭据，请在网络恢复后刷新在线列表：%w", fetchErr)
+			}
+		} else {
+			chat, ok = b.online.Chat(peerKey)
+		}
+	}
+	if !ok {
 		return OnlineExportResult{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
+	}
+	existingSlug := ""
+	existed := false
+	idText := strconv.FormatInt(chat.ID, 10)
+	localDir := ""
+	local := b.facade.ListChats()
+	for _, c := range local {
+		if c.ID == idText {
+			existingSlug = c.Slug
+			localDir = c.Dir
+			existed = true
+			break
+		}
 	}
 	minID := 0
 	if existed && localDir != "" {
 		minID = localMaxMessageID(localDir)
 	}
-	chat, messages, media, err := b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, peerKey, exportTimeout, minID, limit)
+	_, messages, media, err := b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, chat, exportTimeout, minID, limit)
 	if err != nil {
 		return OnlineExportResult{}, err
 	}
@@ -628,6 +642,19 @@ func localMaxMessageID(workspace string) int {
 		}
 	}
 	return maxID
+}
+
+func peerInputFromChat(chat OnlineChat) tg.InputPeerClass {
+	switch {
+	case strings.HasPrefix(chat.Peer, "user:"):
+		return &tg.InputPeerUser{UserID: chat.ID, AccessHash: chat.AccessHash}
+	case strings.HasPrefix(chat.Peer, "channel:"):
+		return &tg.InputPeerChannel{ChannelID: chat.ID, AccessHash: chat.AccessHash}
+	case strings.HasPrefix(chat.Peer, "chat:"):
+		return &tg.InputPeerChat{ChatID: chat.ID}
+	default:
+		return nil
+	}
 }
 
 func desktopChatType(chat OnlineChat) string {
