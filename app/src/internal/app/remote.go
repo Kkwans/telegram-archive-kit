@@ -37,6 +37,15 @@ func (f *Facade) RemoteStatus() RemoteStatusDTO {
 
 func (f *Facade) RemoteStatusFor(root string) RemoteStatusDTO {
 	remote, kind := platform.NetworkPathKind(root)
+	if !remote && f.a.Settings.LastRemoteRoot != "" && strings.EqualFold(filepath.Clean(root), filepath.Clean(f.a.Settings.LastRemoteRoot)) {
+		// A mapped drive can vanish from Windows after a network drop. Keep the
+		// library classified as remote so the UI shows the offline banner.
+		remote = true
+		kind = f.a.Settings.LastRemoteKind
+		if kind == "" {
+			kind = "mapped"
+		}
+	}
 	out := RemoteStatusDTO{
 		Root: root, Remote: remote, Kind: kind,
 		CacheLimitBytes: remoteCacheLimitBytes,

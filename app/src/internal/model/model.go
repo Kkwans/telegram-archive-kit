@@ -187,6 +187,8 @@ type Settings struct {
 	VideoFrameAspect       string   `json:"video_frame_aspect,omitempty"`
 	SpeedWindowSeconds     int      `json:"speed_window_seconds,omitempty"`
 	ViewerBackdrop         string   `json:"viewer_backdrop,omitempty"`
+	LastRemoteRoot         string   `json:"last_remote_root,omitempty"`
+	LastRemoteKind         string   `json:"last_remote_kind,omitempty"`
 }
 
 func DefaultSettings() Settings {

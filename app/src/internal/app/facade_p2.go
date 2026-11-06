@@ -270,6 +270,10 @@ func (f *Facade) SwitchLibrary(root string) error {
 		lock.release()
 		return err
 	}
+	if remote, kind := platform.NetworkPathKind(root); remote {
+		f.a.Settings.LastRemoteRoot = root
+		f.a.Settings.LastRemoteKind = kind
+	}
 	if err := f.a.saveSettings(); err != nil {
 		lock.release()
 		return err
