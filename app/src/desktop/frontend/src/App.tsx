@@ -60,6 +60,54 @@ interface AppTip {
   y: number;
 }
 
+// Frost the captured frame once, before it reaches CSS. Blurring a pseudo
+// element directly fades its edges to transparent, which showed up as a
+// translucent ring around every dialog.
+async function frostSnapshot(src: string): Promise<string> {
+  if (!src) return "";
+  const image = new Image();
+  image.src = src;
+  try {
+    await image.decode();
+  } catch {
+    return src;
+  }
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  if (!width || !height) return src;
+  const viewport = Math.max(1, window.innerWidth);
+  const blur = Math.max(8, Math.round(28 * (width / viewport)));
+  const pad = blur * 3 + 8;
+  const source = document.createElement("canvas");
+  source.width = width + pad * 2;
+  source.height = height + pad * 2;
+  const sourceCtx = source.getContext("2d");
+  if (!sourceCtx) return src;
+  sourceCtx.drawImage(image, pad, pad, width, height);
+  sourceCtx.drawImage(image, 0, 0, 1, height, 0, pad, pad, height);
+  sourceCtx.drawImage(image, width - 1, 0, 1, height, pad + width, pad, pad, height);
+  sourceCtx.drawImage(image, 0, 0, width, 1, pad, 0, width, pad);
+  sourceCtx.drawImage(image, 0, height - 1, width, 1, pad, pad + height, width, pad);
+  sourceCtx.drawImage(image, 0, 0, 1, 1, 0, 0, pad, pad);
+  sourceCtx.drawImage(image, width - 1, 0, 1, 1, pad + width, 0, pad, pad);
+  sourceCtx.drawImage(image, 0, height - 1, 1, 1, 0, pad + height, pad, pad);
+  sourceCtx.drawImage(image, width - 1, height - 1, 1, 1, pad + width, pad + height, pad, pad);
+  const blurred = document.createElement("canvas");
+  blurred.width = source.width;
+  blurred.height = source.height;
+  const blurredCtx = blurred.getContext("2d");
+  if (!blurredCtx || typeof blurredCtx.filter !== "string") return src;
+  blurredCtx.filter = `blur(${blur}px) saturate(1.45) brightness(1.03)`;
+  blurredCtx.drawImage(source, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = width;
+  out.height = height;
+  const outCtx = out.getContext("2d");
+  if (!outCtx) return src;
+  outCtx.drawImage(blurred, pad, pad, width, height, 0, 0, width, height);
+  return out.toDataURL("image/jpeg", 0.86);
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [chats, setChats] = useState<ChatRow[]>([]);
@@ -281,6 +329,12 @@ export default function App() {
         return;
       }
       if (image) {
+        try {
+          image = await frostSnapshot(image);
+        } catch {
+          /* keep the sharp capture as a fallback */
+        }
+        if (disposed) return;
         document.body.style.setProperty("--glass-snapshot", `url("${image}")`);
         document.body.classList.add("glass-captured");
       }

@@ -19,9 +19,11 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
+  Eye,
   FolderPlus,
   GitMerge,
   Keyboard,
+  Minimize2,
   RotateCcw,
   Save,
   Search,
@@ -1210,6 +1212,8 @@ const ArtVideo = forwardRef<VideoApi, {
   const audioCtx = useRef<AudioContext | null>(null);
   const gainNode = useRef<GainNode | null>(null);
   const [ready, setReady] = useState(false);
+  const [framed, setFramed] = useState(false);
+  const [fit, setFit] = useState<"" | "compact" | "tiny">("");
 
   const showNotice = (text: string) => {
     if (playerRef.current) playerRef.current.notice.show = text;
@@ -1422,17 +1426,23 @@ const ArtVideo = forwardRef<VideoApi, {
         wrap.current.style.width = width;
         wrap.current.style.height = height;
       }
-      el.classList.toggle("compact", w < 430);
-      el.classList.toggle("tiny", w < 360);
+      setFit(w < 360 ? "tiny" : w < 430 ? "compact" : "");
     };
     fitRef.current = fitFrame;
     fitFrame();
     const onMeta = () => {
       fitFrame();
+      setFramed(true);
+    };
+    const onData = () => {
+      fitFrame();
       setReady(true);
     };
     player.video.addEventListener("loadedmetadata", onMeta);
+    player.video.addEventListener("loadeddata", onData);
     player.video.addEventListener("resize", fitFrame);
+    if (player.video.readyState >= 1) onMeta();
+    if (player.video.readyState >= 2) onData();
     const stageEl = wrap.current?.parentElement;
     const observer = typeof ResizeObserver !== "undefined" && stageEl ? new ResizeObserver(fitFrame) : null;
     observer?.observe(stageEl as Element);
@@ -1471,6 +1481,25 @@ const ArtVideo = forwardRef<VideoApi, {
     if (volumeControl && volumeControl.parentElement !== player.template.$controlsRight) {
       player.template.$controlsRight.insertBefore(volumeControl, settingControl);
     }
+    const timeAbove = document.createElement("div");
+    timeAbove.className = "tak-time-above";
+    const clock = (value: number) => {
+      const total = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      const hour = Math.floor(total / 3600);
+      const minute = Math.floor((total % 3600) / 60);
+      const second = total % 60;
+      const tail = `${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`;
+      return hour > 0 ? `${hour}:${tail}` : tail;
+    };
+    const syncTimeAbove = () => {
+      timeAbove.textContent = `${clock(player.video.currentTime)} / ${clock(player.video.duration)}`;
+    };
+    const progressEl = player.template.$bottom.querySelector(".art-progress");
+    progressEl?.appendChild(timeAbove);
+    syncTimeAbove();
+    player.video.addEventListener("timeupdate", syncTimeAbove);
+    player.video.addEventListener("durationchange", syncTimeAbove);
+    player.video.addEventListener("seeked", syncTimeAbove);
     player.on("video:ratechange", () => {
       if (!boostRef.current) rateRef.current = player.playbackRate;
       syncPreciseRange(player, player.playbackRate);
@@ -1486,7 +1515,11 @@ const ArtVideo = forwardRef<VideoApi, {
       observer?.disconnect();
       fitRef.current = () => undefined;
       player.video.removeEventListener("loadedmetadata", onMeta);
+      player.video.removeEventListener("loadeddata", onData);
       player.video.removeEventListener("resize", fitFrame);
+      player.video.removeEventListener("timeupdate", syncTimeAbove);
+      player.video.removeEventListener("durationchange", syncTimeAbove);
+      player.video.removeEventListener("seeked", syncTimeAbove);
       window.removeEventListener("resize", fitFrame);
       if (audioCtx.current) {
         void audioCtx.current.close();
@@ -1499,15 +1532,22 @@ const ArtVideo = forwardRef<VideoApi, {
   }, [src, poster, frameAspect, hasNext]);
 
   return (
-    <div ref={wrap} className="art-video-wrap">
-      <div ref={box} className={`art-player ${ready ? "is-ready" : "is-loading"}`} />
-      {!ready && (
-        <div className="art-video-loading" aria-live="polite">
-          {poster ? <img src={poster} alt="" /> : <div className="art-video-loading-shade" />}
-          <span className="art-video-loading-state"><Loader2 size={15} className="spin" /> 正在加载视频…</span>
+    <>
+      <div ref={wrap} className={`art-video-wrap ${ready ? "is-ready" : "is-loading"} ${framed ? "" : "is-pre-meta"}`}>
+        <div ref={box} className={`art-player ${fit}`} />
+        {framed && !ready && (
+          <div className={`art-video-loading ${frameAspect === "original" ? "" : "fixed"}`} aria-live="polite">
+            {poster ? <img src={poster} alt="" /> : <div className="art-video-loading-shade" />}
+            <span className="art-video-loading-state"><Loader2 size={15} className="spin" /> 正在加载视频…</span>
+          </div>
+        )}
+      </div>
+      {!framed && (
+        <div className="art-video-pending" aria-live="polite">
+          <Loader2 size={15} className="spin" /> 正在加载视频…
         </div>
       )}
-    </div>
+    </>
   );
 });
 
@@ -1547,6 +1587,9 @@ function MediaViewer({
   const [dragging, setDragging] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [tone, setTone] = useState("hsl(221 24% 14%)");
+  const [immersive, setImmersive] = useState(false);
+  const immersiveRef = useRef(false);
+  immersiveRef.current = immersive;
   const stateRef = useRef({ index, items, onIndex, onClose, prefs, kind: item.kind });
   stateRef.current = { index, items, onIndex, onClose, prefs, kind: item.kind };
 
@@ -1603,6 +1646,24 @@ function MediaViewer({
     else void modal.current?.requestFullscreen();
   };
 
+  const enterImmersive = () => {
+    setImmersive(true);
+    if (!document.fullscreenElement) void modal.current?.requestFullscreen().catch(() => undefined);
+  };
+
+  const exitImmersive = () => {
+    setImmersive(false);
+    if (document.fullscreenElement) void document.exitFullscreen();
+  };
+
+  useEffect(() => {
+    const onFullscreen = () => {
+      if (!document.fullscreenElement) setImmersive(false);
+    };
+    document.addEventListener("fullscreenchange", onFullscreen);
+    return () => document.removeEventListener("fullscreenchange", onFullscreen);
+  }, []);
+
   useEffect(() => {
     const clearHold = () => {
       if (hold.current) {
@@ -1633,6 +1694,7 @@ function MediaViewer({
       if (e.key === "Escape") {
         if (document.fullscreenElement) void document.exitFullscreen();
         else if (st.kind === "video" && api.current?.isFullscreen()) api.current.setFullscreen(false);
+        else if (immersiveRef.current) setImmersive(false);
         else st.onClose();
         return;
       }
@@ -1753,7 +1815,7 @@ function MediaViewer({
   };
 
   return (
-    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
+    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
       {prefs.backdrop !== "frosted" && (
         <div
           className={`viewer-ambient ${prefs.backdrop}`}
@@ -1778,6 +1840,11 @@ function MediaViewer({
         <button className="btn sm ghost" onClick={() => onReveal(item)}>
           <LocateFixed size={12} /> 定位文件
         </button>
+        {!isVideo && (
+          <button className="btn sm ghost" onClick={enterImmersive}>
+            <Eye size={12} /> 沉浸模式
+          </button>
+        )}
         <button className="btn sm ghost" onClick={toggleFullscreen}>
           <Maximize2 size={12} /> 全屏
         </button>
@@ -1866,6 +1933,11 @@ function MediaViewer({
       <button className="media-nav next" disabled={index >= items.length - 1} aria-label="下一个" onClick={() => onIndex(index + 1)}>
         <ChevronRight size={26} />
       </button>
+      {immersive && (
+        <button className="viewer-immersive-exit" onClick={exitImmersive} title="退出沉浸模式（Esc）" aria-label="退出沉浸模式">
+          <Minimize2 size={15} />
+        </button>
+      )}
     </div>
   );
 }

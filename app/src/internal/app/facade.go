@@ -50,6 +50,9 @@ type Facade struct {
 	taskSeq         int64
 	tasks           []*backgroundTask
 	lastTaskPersist time.Time
+
+	mediaMu    sync.Mutex
+	mediaCache map[string]mediaCacheEntry
 }
 
 // DesktopState is polled by the window; it intentionally excludes Bootstrap
@@ -247,7 +250,7 @@ func (f *Facade) ListChats() []ChatDTO {
 	for _, m := range list {
 		dto := ChatDTO{
 			Slug: m.Slug, Name: m.Chat.Name, Type: m.Chat.Type, ID: m.Chat.ID,
-			Messages: m.MessageCount, Media: m.MediaCount, Missing: m.MissingCount,
+			Messages: m.MessageCount, Media: f.workspaceMediaSummary(m.Slug).Total, Missing: m.MissingCount,
 			FirstTS: m.FirstTS, LastTS: m.LastTS, UpdatedAt: formatMetaTime(m.UpdatedAt),
 			HasSource: fileExists(f.a.sourcePath(m.Slug)),
 			Official:  len(m.OfficialExports),

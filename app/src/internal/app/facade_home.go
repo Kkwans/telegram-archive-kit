@@ -1,9 +1,6 @@
 package app
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -58,35 +55,16 @@ func (f *Facade) HomeStats() HomeStatsDTO {
 	for _, c := range f.ListChats() {
 		out.Chats++
 		out.Messages += c.Messages
-		out.Media += c.Media
 		out.Missing += c.Missing
 		out.Pages += c.Pages
 		out.Official += c.Official
-		data, err := os.ReadFile(filepath.Join(f.a.workspaceDir(c.Slug), "data", "archive-data.js"))
-		if err == nil {
-			text := string(data)
-			if i := strings.IndexByte(text, '{'); i >= 0 {
-				var parsed archiveDataFile
-				dec := json.NewDecoder(strings.NewReader(text[i:]))
-				if dec.Decode(&parsed) == nil {
-					for _, m := range parsed.Messages {
-						for _, x := range m.Media {
-							out.MediaBytes += x.Size
-							switch x.Kind {
-							case "image":
-								out.Images++
-							case "video":
-								out.Videos++
-							case "audio":
-								out.Audio++
-							default:
-								out.Files++
-							}
-						}
-					}
-				}
-			}
-		}
+		summary := f.workspaceMediaSummary(c.Slug)
+		out.Media += summary.Total
+		out.Images += summary.Images
+		out.Videos += summary.Videos
+		out.Audio += summary.Audio
+		out.Files += summary.Files
+		out.MediaBytes += summary.Bytes
 	}
 	out.LibraryBytes = out.MediaBytes
 	out.DiskFree, out.DiskTotal = diskFreeSpace(f.a.Settings.LibraryRoot)

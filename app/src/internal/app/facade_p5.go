@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"telegramarchivekit/internal/archive"
 )
@@ -64,6 +65,107 @@ type archiveDataMessage struct {
 
 type archiveDataFile struct {
 	Messages []archiveDataMessage `json:"messages"`
+}
+
+// mediaSummary mirrors what ChatMedia can actually display. Archive metadata
+// from older builds still counts *_thumb.jpg previews, so the chat list cannot
+// trust meta.MediaCount alone.
+type mediaSummary struct {
+	Total  int
+	Images int
+	Videos int
+	Audio  int
+	Files  int
+	Bytes  int64
+}
+
+type mediaCacheEntry struct {
+	summary mediaSummary
+	at      time.Time
+}
+
+const mediaSummaryTTL = 8 * time.Second
+
+func (f *Facade) workspaceMediaSummary(slug string) mediaSummary {
+	key := f.a.Settings.LibraryRoot + "\x00" + slug
+	f.mediaMu.Lock()
+	if entry, ok := f.mediaCache[key]; ok && time.Since(entry.at) < mediaSummaryTTL {
+		f.mediaMu.Unlock()
+		return entry.summary
+	}
+	f.mediaMu.Unlock()
+	summary := f.scanWorkspaceMediaSummary(slug)
+	f.mediaMu.Lock()
+	if f.mediaCache == nil {
+		f.mediaCache = map[string]mediaCacheEntry{}
+	}
+	f.mediaCache[key] = mediaCacheEntry{summary: summary, at: time.Now()}
+	f.mediaMu.Unlock()
+	return summary
+}
+
+func (f *Facade) scanWorkspaceMediaSummary(slug string) mediaSummary {
+	var out mediaSummary
+	root := f.a.workspaceDir(slug)
+	seen := map[string]bool{}
+	add := func(rel, name, kind string, size int64) {
+		rel = strings.TrimSpace(strings.ReplaceAll(rel, "\\", "/"))
+		if rel == "" || strings.HasPrefix(rel, "/") || hasParentSegment(rel) || strings.ContainsRune(rel, ':') {
+			return
+		}
+		if seen[rel] || archive.IsThumbnailFile(rel) || archive.IsThumbnailFile(name) {
+			return
+		}
+		if name == "" {
+			name = filepath.Base(rel)
+		}
+		if kind == "" {
+			kind = mediaKindFromExt(filepath.Ext(name))
+		}
+		seen[rel] = true
+		out.Total++
+		out.Bytes += size
+		switch kind {
+		case "image":
+			out.Images++
+		case "video":
+			out.Videos++
+		case "audio":
+			out.Audio++
+		default:
+			out.Files++
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "data", "archive-data.js")); err == nil {
+		text := string(data)
+		if i := strings.IndexByte(text, '{'); i >= 0 {
+			var parsed archiveDataFile
+			if json.NewDecoder(strings.NewReader(text[i:])).Decode(&parsed) == nil {
+				for _, m := range parsed.Messages {
+					for _, x := range m.Media {
+						add(x.Path, x.Name, x.Kind, x.Size)
+					}
+				}
+			}
+		}
+	}
+	for _, dir := range []string{"media", "files"} {
+		entries, err := os.ReadDir(filepath.Join(root, dir))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			add(dir+"/"+entry.Name(), entry.Name(), mediaKindFromExt(filepath.Ext(entry.Name())), info.Size())
+		}
+	}
+	return out
 }
 
 func hasParentSegment(rel string) bool {

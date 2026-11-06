@@ -38,4 +38,8 @@ func TestChatMediaExcludesVideoThumbnails(t *testing.T) {
 	if len(items) != 1 || items[0].Name != "real.mp4" {
 		t.Fatalf("thumbnail leaked into media list: %#v", items)
 	}
+	summary := f.workspaceMediaSummary(slug)
+	if summary.Total != 1 || summary.Videos != 1 || summary.Images != 0 {
+		t.Fatalf("thumbnail leaked into media summary: %#v", summary)
+	}
 }
