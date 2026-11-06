@@ -515,6 +515,18 @@ func serviceText(action tg.MessageActionClass) string {
 func (b *Bridge) OnlineExport(peerKey string, timeout, limit int) (OnlineExportResult, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
+	exportTimeout := time.Duration(timeout) * time.Second
+	if exportTimeout <= 0 {
+		exportTimeout = 180 * time.Second
+	}
+	// The page may still be showing a cached snapshot while the live dialog
+	// list is refreshing. Resolve the peer once here instead of failing with a
+	// misleading "expired" error.
+	if !b.online.Ready(peerKey) {
+		if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, exportTimeout); err != nil {
+			return OnlineExportResult{}, fmt.Errorf("无法读取在线会话：%w", err)
+		}
+	}
 	existingSlug := ""
 	existed := false
 	idText := ""
@@ -531,11 +543,14 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int) (OnlineExportR
 			}
 		}
 	}
+	if idText == "" {
+		return OnlineExportResult{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
+	}
 	minID := 0
 	if existed && localDir != "" {
 		minID = localMaxMessageID(localDir)
 	}
-	chat, messages, media, err := b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, peerKey, time.Duration(timeout)*time.Second, minID, limit)
+	chat, messages, media, err := b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, peerKey, exportTimeout, minID, limit)
 	if err != nil {
 		return OnlineExportResult{}, err
 	}

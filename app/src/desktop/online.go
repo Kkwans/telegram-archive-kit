@@ -85,6 +85,14 @@ func (s *OnlineService) path(ns string) string {
 	return filepath.Join(s.dir, "online-chats-"+profileKey(ns)+".json")
 }
 
+func (s *OnlineService) Ready(peer string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, hasChat := s.chats[peer]
+	_, hasRef := s.refs[peer]
+	return hasChat && hasRef
+}
+
 func (s *OnlineService) Chat(peer string) (OnlineChat, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
