@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -84,5 +86,44 @@ func TestDownloadTaskHistoryPersists(t *testing.T) {
 	}
 	if len(d2.Completed) != 1 || d2.Completed[0].Name != "photo.jpg" {
 		t.Fatalf("media history not restored: %#v", d2.Completed)
+	}
+}
+
+func TestCompletedTaskBackfillsRecentWorkspaceMedia(t *testing.T) {
+	root := t.TempDir()
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	f.a.Settings.LibraryRoot = root
+	task := f.createTask("sync", "同步聊天：旧任务", "旧任务")
+	task.setSlug("chat-old")
+	task.finish(nil)
+
+	mediaDir := filepath.Join(root, "chats", "chat-old", "media")
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(mediaDir, "old.jpg")
+	newer := filepath.Join(mediaDir, "newer.mp4")
+	if err := os.WriteFile(old, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newer, []byte("newer!"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	_ = os.Chtimes(old, now.Add(-time.Hour), now.Add(-time.Hour))
+	_ = os.Chtimes(newer, now, now)
+
+	detail, err := f.TaskDetail(task.snapshot().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Completed) != 2 {
+		t.Fatalf("expected backfilled media, got %#v", detail.Completed)
+	}
+	if detail.Completed[0].Name != "newer.mp4" || detail.Completed[0].Expected != 6 {
+		t.Fatalf("unexpected backfill order: %#v", detail.Completed)
+	}
+	if detail.Completed[1].Name != "old.jpg" || detail.Completed[1].Kind != "image" {
+		t.Fatalf("unexpected backfill entry: %#v", detail.Completed[1])
 	}
 }

@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"telegramarchivekit/internal/archive"
 )
 
 // TaskDTO is one background operation shown in the desktop task center.
@@ -222,13 +225,62 @@ func (f *Facade) taskDetails() []TaskDetailDTO {
 
 func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 	f.taskMu.Lock()
-	defer f.taskMu.Unlock()
 	for _, t := range f.tasks {
-		if d := t.detail(); d.ID == id {
-			return d, nil
+		d := t.detail()
+		if d.ID != id {
+			continue
+		}
+		f.taskMu.Unlock()
+		if len(d.Completed) == 0 && d.State != "running" && d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
+			d.Completed = f.recentWorkspaceMedia(d.Slug, 5)
+		}
+		return d, nil
+	}
+	f.taskMu.Unlock()
+	return TaskDetailDTO{}, fmt.Errorf("任务不存在")
+}
+
+// recentWorkspaceMedia backfills the completed list for tasks recorded before
+// per-file progress was persisted. The files are real workspace media, not a
+// synthetic placeholder.
+func (f *Facade) recentWorkspaceMedia(slug string, limit int) []TaskProgress {
+	if f.a == nil || slug == "" || limit <= 0 {
+		return nil
+	}
+	type recentFile struct {
+		name string
+		size int64
+		mod  time.Time
+	}
+	files := make([]recentFile, 0, 32)
+	for _, dir := range []string{f.a.mediaDir(slug), f.a.filesDir(slug)} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			files = append(files, recentFile{name: entry.Name(), size: info.Size(), mod: info.ModTime()})
 		}
 	}
-	return TaskDetailDTO{}, fmt.Errorf("任务不存在")
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
+	if len(files) > limit {
+		files = files[:limit]
+	}
+	out := make([]TaskProgress, 0, len(files))
+	for _, file := range files {
+		out = append(out, TaskProgress{
+			Name: file.name, Kind: archive.MediaKind(file.name), Done: true, Percent: 100,
+			Expected: file.size, Transferred: file.size, ElapsedMs: -1,
+		})
+	}
+	return out
 }
 
 func (f *Facade) ClearFinishedTasks() {
