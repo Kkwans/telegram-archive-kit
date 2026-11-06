@@ -2554,10 +2554,23 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                       <em className={remoteTools?.rclone ? "ok" : ""}>rclone {remoteTools?.rclone ? "已安装" : "未检测到"}</em>
                       <em className={remoteTools?.winFsp ? "ok" : ""}>WinFsp {remoteTools?.winFsp ? "已安装" : "未检测到"}</em>
                     </div>
+                    {remoteTools?.rclone && !remoteTools.rcloneRemotes?.length && (
+                      <span>已安装，但还没有 remote；先运行 <code>rclone config</code> 创建。</span>
+                    )}
                   </div>
-                  <button className="btn sm ghost" onClick={() => copyRemoteCommand("winget install Rclone.Rclone\nwinget install WinFsp.WinFsp")}>
-                    <Copy size={12} /> 复制安装命令
-                  </button>
+                  {remoteTools?.rcloneRemotes?.length ? (
+                    <button className="btn sm ghost" onClick={() => setRcloneOpen((v) => !v)}>
+                      <Server size={12} /> 挂载 remote
+                    </button>
+                  ) : remoteTools?.rclone ? (
+                    <button className="btn sm ghost" onClick={() => copyRemoteCommand("rclone config")}>
+                      <Copy size={12} /> 配置 remote
+                    </button>
+                  ) : (
+                    <button className="btn sm ghost" onClick={() => copyRemoteCommand(remoteTools?.winFsp ? "winget install Rclone.Rclone" : "winget install Rclone.Rclone\nwinget install WinFsp.WinFsp")}>
+                      <Copy size={12} /> 复制安装命令
+                    </button>
+                  )}
                 </div>
                 <div className="remote-option">
                   <span className="remote-option-icon"><Server size={17} /></span>
@@ -2569,9 +2582,15 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                       <em className={remoteTools?.winFsp ? "ok" : ""}>WinFsp {remoteTools?.winFsp ? "已安装" : "未检测到"}</em>
                     </div>
                   </div>
-                  <button className="btn sm ghost" onClick={() => copyRemoteCommand("winget install SSHFS-Win.SSHFS-Win")}>
-                    <Copy size={12} /> 复制安装命令
-                  </button>
+                  {remoteTools?.sshfs ? (
+                    <button className="btn sm ghost" onClick={() => copyRemoteCommand("net use X: \\\\sshfs\\user@host")}>
+                      <Copy size={12} /> 复制映射命令
+                    </button>
+                  ) : (
+                    <button className="btn sm ghost" onClick={() => copyRemoteCommand("winget install SSHFS-Win.SSHFS-Win")}>
+                      <Copy size={12} /> 复制安装命令
+                    </button>
+                  )}
                 </div>
                 <div className="remote-option muted">
                   <span className="remote-option-icon"><Network size={17} /></span>
