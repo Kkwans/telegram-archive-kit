@@ -164,7 +164,7 @@ func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta
 					continue
 				}
 				abs, ok := ResolveOfficialHref(root, sm[1])
-				if !ok || seen[abs] {
+				if !ok || seen[abs] || IsThumbnailFile(abs) {
 					continue
 				}
 				seen[abs] = true

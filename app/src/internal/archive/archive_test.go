@@ -80,6 +80,7 @@ func TestOfficialExportIgnoresInlineTextSticker(t *testing.T) {
 		}
 	}
 	write("video_files/V (109).mp4", "video-bytes")
+	write("video_files/V (109).mp4_thumb.jpg", "thumb-bytes")
 	write("photos/p1.jpg", "photo-bytes")
 	write("stickers/AnimatedSticker.tgs", "sticker-bytes")
 	html := `<!doctype html><div class="page_header"><div class="text bold">宿舍</div></div><div class="history">` +

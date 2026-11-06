@@ -69,7 +69,14 @@ func BuildArchiveWithDirs(jsonPath string, mediaDirs []string, extra map[string]
 		mediaByID[id] = DedupeMedia(mediaByID[id])
 	}
 	for id, files := range extra {
-		mediaByID[id] = DedupeMedia(append(mediaByID[id], files...))
+		filtered := make([]Media, 0, len(files))
+		for _, file := range files {
+			if IsThumbnailFile(file.Name) || IsThumbnailFile(file.Path) {
+				continue
+			}
+			filtered = append(filtered, file)
+		}
+		mediaByID[id] = DedupeMedia(append(mediaByID[id], filtered...))
 	}
 	arc := &Archive{
 		SchemaVersion: model.SchemaVersion,
@@ -325,6 +332,9 @@ func ScanMedia(dir string) (map[string][]Media, []string, error) {
 			return nil
 		}
 		base := d.Name()
+		if IsThumbnailFile(base) {
+			return nil
+		}
 		var id string
 		if m := reMsg.FindStringSubmatch(base); len(m) == 2 {
 			id = m[1]
@@ -355,6 +365,18 @@ func ScanMedia(dir string) (map[string][]Media, []string, error) {
 		sort.Slice(by[id], func(i, j int) bool { return by[id][i].Name < by[id][j].Name })
 	}
 	return by, unmatched, nil
+}
+
+// IsThumbnailFile reports inline video thumbnails exported by Telegram
+// Desktop, e.g. IMG_6471.MP4_thumb.jpg. They are previews, never media items.
+func IsThumbnailFile(name string) bool {
+	base := strings.ToLower(filepath.Base(name))
+	for _, ext := range []string{".jpg", ".jpeg", ".png", ".webp"} {
+		if strings.HasSuffix(base, "_thumb"+ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func MediaKind(name string) string {

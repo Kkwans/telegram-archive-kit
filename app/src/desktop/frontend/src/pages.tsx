@@ -940,9 +940,9 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
     const saved = localStorage.getItem("tak-media-size");
     return saved === "sm" || saved === "lg" || saved === "xl" ? saved : "md";
   });
-  const [sort, setSort] = useState<"default" | "size-desc" | "size-asc">(() => {
+  const [sort, setSort] = useState<"newest" | "oldest" | "size-desc" | "size-asc">(() => {
     const saved = localStorage.getItem("tak-media-sort");
-    return saved === "size-desc" || saved === "size-asc" ? saved : "default";
+    return saved === "oldest" || saved === "size-desc" || saved === "size-asc" ? saved : "newest";
   });
   useEffect(() => {
     localStorage.setItem("tak-media-size", size);
@@ -967,10 +967,21 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
 
   const mediaItems = useMemo(() => (items ?? []).filter((i) => i.kind !== "file"), [items]);
   const fileItems = useMemo(() => (items ?? []).filter((i) => i.kind === "file"), [items]);
-  const orderedMedia = useMemo(() => {
-    if (sort === "default") return mediaItems;
-    return [...mediaItems].sort((a, b) => (sort === "size-desc" ? b.size - a.size : a.size - b.size));
-  }, [mediaItems, sort]);
+  const orderItems = (list: MediaItem[]) => {
+    const timeKey = (item: MediaItem) => {
+      const messageID = Number(item.id);
+      return Number.isFinite(messageID) && messageID > 0 ? messageID : item.modTime || 0;
+    };
+    const ordered = [...list];
+    if (sort === "size-desc") return ordered.sort((a, b) => b.size - a.size);
+    if (sort === "size-asc") return ordered.sort((a, b) => a.size - b.size);
+    return ordered.sort((a, b) => {
+      const diff = timeKey(a) - timeKey(b);
+      return sort === "newest" ? (diff || a.name.localeCompare(b.name)) * -1 : diff || a.name.localeCompare(b.name);
+    });
+  };
+  const orderedMedia = useMemo(() => orderItems(mediaItems), [mediaItems, sort]);
+  const orderedFiles = useMemo(() => orderItems(fileItems), [fileItems, sort]);
   const images = useMemo(() => orderedMedia.filter((i) => i.kind === "image"), [orderedMedia]);
   const videos = useMemo(() => orderedMedia.filter((i) => i.kind === "video"), [orderedMedia]);
   const shown = useMemo(() => {
@@ -1017,7 +1028,8 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
               value={sort}
               onChange={(v) => setSort(v as typeof sort)}
               options={[
-                { value: "default", label: "默认顺序" },
+                { value: "newest", label: "最新在前" },
+                { value: "oldest", label: "最早在前" },
                 { value: "size-desc", label: "大小从大到小" },
                 { value: "size-asc", label: "大小从小到大" },
               ]}
@@ -1115,7 +1127,7 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
                 <span>{fileItems.length} 个</span>
               </div>
               <div className="file-list">
-                {fileItems.map((f) => (
+                {orderedFiles.map((f) => (
                   <div className="file-row" key={f.rel}>
                     <span className={`file-ext ext-${fileExt(f.name).slice(0, 4)}`}>{fileExt(f.name).toUpperCase().slice(0, 4) || "FILE"}</span>
                     <div className="file-info">
@@ -1402,8 +1414,14 @@ const ArtVideo = forwardRef<VideoApi, {
         h = availH;
         w = h * ratio;
       }
-      el.style.width = `${Math.max(1, Math.floor(w))}px`;
-      el.style.height = `${Math.max(1, Math.floor(h))}px`;
+      const width = `${Math.max(1, Math.floor(w))}px`;
+      const height = `${Math.max(1, Math.floor(h))}px`;
+      el.style.width = width;
+      el.style.height = height;
+      if (wrap.current) {
+        wrap.current.style.width = width;
+        wrap.current.style.height = height;
+      }
       el.classList.toggle("compact", w < 430);
       el.classList.toggle("tiny", w < 360);
     };

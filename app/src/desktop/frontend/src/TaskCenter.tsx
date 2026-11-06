@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   Activity,
@@ -94,47 +94,77 @@ function fileKindLabel(kind: string): string {
 
 function TaskSpeedChart({ task }: { task: TaskDetail }) {
   const samples = task.series ?? [];
+  const [hover, setHover] = useState<number | null>(null);
   if (samples.length < 2) {
     return <div className="chart-empty">这个任务没有保留速度采样。</div>;
   }
-  const W = 960, H = 190, L = 64, R = 18, T = 14, B = 30;
-  const plotW = W - L - R;
-  const plotH = H - T - B;
   const max = Math.max(1, ...samples.flatMap((s) => [s.now, s.avg]));
-  const points = (key: "now" | "avg") =>
-    samples
-      .map((s, i) => {
-        const x = L + (i / (samples.length - 1)) * plotW;
-        const y = T + plotH - Math.min(1, s[key] / max) * plotH;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
   const first = samples[0].at || task.startedAt;
   const last = samples[samples.length - 1].at || task.finishedAt || Date.now();
   const span = Math.max(1, last - first);
-  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
-    x: L + f * plotW,
-    label: clockText(first + span * f),
-    anchor: (f === 0 ? "start" : f === 1 ? "end" : "middle") as "start" | "middle" | "end",
-  }));
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const pointAt = (index: number) => {
+    const sample = samples[index];
+    return {
+      x: (index / (samples.length - 1)) * 100,
+      nowY: 100 - Math.min(1, sample.now / max) * 100,
+      avgY: 100 - Math.min(1, sample.avg / max) * 100,
+    };
+  };
+  const points = (key: "now" | "avg") =>
+    samples.map((sample, index) => `${((index / (samples.length - 1)) * 100).toFixed(2)},${(100 - Math.min(1, sample[key] / max) * 100).toFixed(2)}`).join(" ");
+  const onMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    setHover(Math.round(ratio * (samples.length - 1)));
+  };
+  const hovering = hover === null ? null : samples[hover];
+  const point = hover === null ? null : pointAt(hover);
+  const hoverTime = hovering ? (hovering.at || first + span * (hover! / (samples.length - 1))) : 0;
+  const tipPosition = point && point.x > 68 ? "flip" : point && point.x < 32 ? "start" : "";
   return (
-    <div className="chart chart-axes task-chart">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="历史下载速度曲线">
-        {[0, 0.25, 0.5, 0.75, 1].map((f) => {
-          const y = T + plotH - f * plotH;
-          return (
-            <g key={f}>
-              <line className="grid" x1={L} y1={y} x2={W - R} y2={y} />
-              <text className="axis-y" x={L - 9} y={y + 3} textAnchor="end">{rate(max * f)}</text>
-            </g>
-          );
-        })}
-        {xTicks.map((tick) => (
-          <text key={tick.x} className="axis-x" x={tick.x} y={H - 8} textAnchor={tick.anchor}>{tick.label}</text>
-        ))}
-        <polyline className="avg" points={points("avg")} />
-        <polyline className="now" points={points("now")} />
-      </svg>
+    <div className="speed-chart">
+      <div className="speed-chart-body">
+        <div className="speed-y-axis" aria-hidden="true">
+          {ticks.map((f) => (
+            <span key={f} style={{ top: `${(1 - f) * 100}%` }}>{rate(max * f)}</span>
+          ))}
+        </div>
+        <div className="speed-plot" onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="历史下载速度曲线">
+            {ticks.map((f) => (
+              <line key={f} className="grid" x1="0" x2="100" y1={(1 - f) * 100} y2={(1 - f) * 100} vectorEffect="non-scaling-stroke" />
+            ))}
+            <polyline className="avg" points={points("avg")} vectorEffect="non-scaling-stroke" />
+            <polyline className="now" points={points("now")} vectorEffect="non-scaling-stroke" />
+          </svg>
+          <div className="speed-x-axis" aria-hidden="true">
+            {ticks.map((f, index) => (
+              <span
+                key={f}
+                className={index === 0 ? "start" : index === ticks.length - 1 ? "end" : ""}
+                style={{ left: `${f * 100}%` }}
+              >
+                {clockText(first + span * f)}
+              </span>
+            ))}
+          </div>
+          {hovering && point && (
+            <>
+              <div className="speed-crosshair" style={{ left: `${point.x}%` }} />
+              <div className="speed-point now" style={{ left: `${point.x}%`, top: `${point.nowY}%` }} />
+              <div className="speed-point avg" style={{ left: `${point.x}%`, top: `${point.avgY}%` }} />
+              <div className={`speed-tip ${tipPosition}`} style={{ left: `${point.x}%` }}>
+                <b>{clockText(hoverTime)}</b>
+                <span><i className="now" /> 实时 {rate(hovering.now)}</span>
+                <span><i className="avg" /> 平均 {rate(hovering.avg)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="speed-hint">悬停查看对应时间点的实时与平均速度</div>
     </div>
   );
 }

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"telegramarchivekit/internal/archive"
 )
 
 // MediaItemDTO is one locally stored media/document file for the desktop
@@ -111,7 +113,7 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 
 	add := func(id, name, kind, rel, thumb string, size int64, modTime int64) {
 		rel = strings.ReplaceAll(rel, "\\", "/")
-		if rel == "" || seen[rel] {
+		if rel == "" || seen[rel] || archive.IsThumbnailFile(name) || archive.IsThumbnailFile(rel) {
 			return
 		}
 		abs, clean, err := f.mediaRelAbs(slug, rel)
@@ -179,18 +181,18 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 	}
 
-	// Keep the chat's original chronological order by default; the desktop
-	// gallery offers explicit size sorting on top of this.
+	// Newest message first by default; the desktop gallery offers explicit
+	// oldest-first and size sorting on top of this.
 	sort.SliceStable(items, func(i, j int) bool {
 		ai, _ := strconv.ParseInt(items[i].ID, 10, 64)
 		aj, _ := strconv.ParseInt(items[j].ID, 10, 64)
 		if ai != aj {
-			return ai < aj
+			return ai > aj
 		}
 		if items[i].ModTime != items[j].ModTime {
-			return items[i].ModTime < items[j].ModTime
+			return items[i].ModTime > items[j].ModTime
 		}
-		return items[i].Name < items[j].Name
+		return items[i].Name > items[j].Name
 	})
 	return items, nil
 }
