@@ -26,8 +26,11 @@ type Bridge struct {
 	facade  *takapp.Facade
 	window  *application.WebviewWindow
 	profile *ProfileService
+	online  *OnlineService
 
 	mu      sync.Mutex
+	mountMu sync.Mutex
+	mounts  map[string]*rcloneMount
 	pending *PendingInput
 	notice  *Notice
 	dialog  *PickedDialog
@@ -76,7 +79,12 @@ type stateReply struct {
 }
 
 func NewBridge(f *takapp.Facade) *Bridge {
-	return &Bridge{facade: f, profile: NewProfileService(f.ConfigDir())}
+	return &Bridge{
+		facade:  f,
+		profile: NewProfileService(f.ConfigDir()),
+		online:  NewOnlineService(f.ConfigDir()),
+		mounts:  make(map[string]*rcloneMount),
+	}
 }
 
 // sessionCheck queries Telegram directly with the existing tdl auth key. That
@@ -186,10 +194,14 @@ type apiParams struct {
 	Root     string              `json:"root"`
 	Dst      string              `json:"dst"`
 	Path     string              `json:"path"`
+	Drive    string              `json:"drive"`
+	Peer     string              `json:"peer"`
+	Limit    int                 `json:"limit"`
 	Name     string              `json:"name"`
 	Title    string              `json:"title"`
 	Initial  string              `json:"initial"`
 	Paths    []string            `json:"paths"`
+	Peers    []string            `json:"peers"`
 	Settings *takapp.SettingsDTO `json:"settings"`
 	Kind     string              `json:"kind"`
 	ID       string              `json:"id"`
@@ -347,6 +359,19 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.facade.SetSettings(*p.Settings)
 	case "diagnostics":
 		return b.facade.Diagnostics(), nil
+	case "remoteStatus":
+		if strings.TrimSpace(p.Root) != "" {
+			return b.facade.RemoteStatusFor(p.Root), nil
+		}
+		return b.facade.RemoteStatus(), nil
+	case "remoteTools":
+		return b.RemoteTools(), nil
+	case "clearRemoteCache":
+		return b.facade.ClearRemoteCache()
+	case "rcloneMount":
+		return b.StartRcloneMount(p.Name, p.Path, p.Drive)
+	case "rcloneUnmount":
+		return nil, b.StopRcloneMount(p.Drive)
 	case "listLogs":
 		return b.facade.ListLogs(), nil
 	case "readLog":
@@ -367,6 +392,14 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return nil, nil
 	case "sessionCheck":
 		return b.sessionCheck(p.Timeout), nil
+	case "onlineChats":
+		return b.OnlineChats(p.Timeout)
+	case "onlineChatsCached":
+		return b.OnlineChatsCached(), nil
+	case "onlineAvatars":
+		return b.OnlineAvatars(p.Peers, p.Timeout)
+	case "onlineExport":
+		return b.OnlineExport(p.Peer, p.Timeout, p.Limit)
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":
@@ -567,6 +600,7 @@ func (b *Bridge) closeWindow() {
 }
 
 func (b *Bridge) quit() {
+	b.stopAllRcloneMounts()
 	b.facade.Shutdown()
 	if b.window != nil {
 		b.window.Hide()
@@ -595,6 +629,9 @@ func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.NotFound(w, r)
 		return
+	}
+	if cached := b.cachedRemoteThumb(path, slug, name); cached != "" {
+		path = cached
 	}
 	f, err := os.Open(path)
 	if err != nil {

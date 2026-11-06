@@ -459,6 +459,26 @@ func (f *Facade) Diagnostics() []DiagRow {
 	if free := platform.FreeSpaceBytes(f.a.Settings.LibraryRoot); free > 0 {
 		rows = append(rows, DiagRow{Label: "磁盘剩余", Value: fmt.Sprintf("%.1f GB", float64(free)/(1024*1024*1024)), State: "ok"})
 	}
+	if remote, kind := platform.NetworkPathKind(f.a.Settings.LibraryRoot); remote {
+		st := f.RemoteStatus()
+		state := "ok"
+		status := "连接正常"
+		if !st.Reachable {
+			state, status = "warn", "不可访问"
+		} else if !st.Writable {
+			state, status = "warn", "只读"
+		}
+		label := "SMB / UNC"
+		if kind == "mapped" {
+			label = "映射网络盘"
+		}
+		rows = append(rows,
+			DiagRow{Label: "远程库", Value: fmt.Sprintf("%s · %s · %d ms", label, status, st.LatencyMs), State: state},
+		)
+		if st.CacheBytes > 0 {
+			rows = append(rows, DiagRow{Label: "远程缓存", Value: fmt.Sprintf("%.1f MB", float64(st.CacheBytes)/(1024*1024)), State: "ok"})
+		}
+	}
 	return rows
 }
 

@@ -11,6 +11,21 @@ export interface Bootstrap {
   history?: string[];
 }
 
+export interface RemoteStatus {
+  root: string;
+  remote: boolean;
+  kind: string;
+  reachable: boolean;
+  writable: boolean;
+  freeBytes: number;
+  freeKnown: boolean;
+  latencyMs: number;
+  cacheBytes: number;
+  cacheLimitBytes: number;
+  cachePath?: string;
+  error?: string;
+}
+
 export interface ChatRow {
   slug: string;
   name: string;
@@ -271,4 +286,52 @@ export interface DesktopState {
   dialog?: PickedDialog;
   tasks: TaskInfo[];
   running: boolean;
+}
+
+export interface OnlineChat {
+  peer: string;
+  id: number;
+  type: string;
+  name: string;
+  username?: string;
+  hasPhoto: boolean;
+  avatar?: string;
+  lastMessage?: string;
+  lastKind?: string;
+  lastMessageId?: number;
+  lastDate?: number;
+  unread?: number;
+  pinned?: boolean;
+  archived?: boolean;
+  localSlug?: string;
+  localMessages?: number;
+  localMedia?: number;
+  localUpdatedAt?: string;
+  archivedLocally?: boolean;
+}
+
+export interface OnlineChats {
+  chats: OnlineChat[];
+  fetchedAt: number;
+  source?: string;
+  error?: string;
+}
+
+export interface OnlineExportResult {
+  slug: string;
+  chat: string;
+  taskId: string;
+  messages: number;
+  media: number;
+  existed: boolean;
+  upToDate?: boolean;
+}
+
+export interface RemoteTools {
+  rclone: boolean;
+  winFsp: boolean;
+  sshfs: boolean;
+  winget: boolean;
+  powerShell: boolean;
+  rcloneRemotes?: string[];
 }

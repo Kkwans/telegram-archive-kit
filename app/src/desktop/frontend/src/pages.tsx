@@ -35,6 +35,10 @@ import {
   Maximize2,
   MessagesSquare,
   Music,
+  Network,
+  Server,
+  Cloud,
+  AlertTriangle,
   Play,
   Sparkles,
   QrCode,
@@ -62,6 +66,8 @@ import type {
   LoginState,
   MediaItem,
   OperationState,
+  RemoteStatus,
+  RemoteTools,
   SessionCheck,
   TdlInfo,
   TaskInfo,
@@ -1906,6 +1912,94 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
+  const [remote, setRemote] = useState<RemoteStatus | null>(null);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remotePath, setRemotePath] = useState("");
+  const [remoteProbe, setRemoteProbe] = useState<RemoteStatus | null>(null);
+  const [remoteTesting, setRemoteTesting] = useState(false);
+  const [remoteTools, setRemoteTools] = useState<RemoteTools | null>(null);
+  const [rcloneOpen, setRcloneOpen] = useState(false);
+  const [rcloneRemote, setRcloneRemote] = useState("");
+  const [rcloneSub, setRcloneSub] = useState("");
+  const [rcloneDrive, setRcloneDrive] = useState("Z");
+  const [rcloneBusy, setRcloneBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const probe = () => call<RemoteStatus>("remoteStatus")
+      .then((st) => { if (!cancelled) setRemote(st); })
+      .catch(() => undefined);
+    void probe();
+    const timer = window.setInterval(probe, 30000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [boot?.libraryRoot]);
+
+  const openRemote = () => {
+    setRemoteOpen(true);
+    setRemotePath(remote?.remote ? remote.root : "");
+    setRemoteProbe(null);
+    setRemoteTools(null);
+    setRcloneOpen(false);
+    setRcloneBusy(false);
+    call<RemoteTools>("remoteTools").then((tools) => {
+      setRemoteTools(tools);
+      if (tools.rcloneRemotes?.length) setRcloneRemote(tools.rcloneRemotes[0]);
+    }).catch(() => undefined);
+  };
+  const mountRclone = async () => {
+    if (!rcloneRemote) {
+      toast("请选择 rclone remote", true);
+      return;
+    }
+    setRcloneBusy(true);
+    try {
+      const mounted = await call<string>("rcloneMount", { name: rcloneRemote, path: rcloneSub, drive: rcloneDrive });
+      setRemotePath(mounted);
+      setRcloneOpen(false);
+      const st = await call<RemoteStatus>("remoteStatus", { root: mounted });
+      setRemoteProbe(st);
+      toast(`rclone 已挂载到 ${mounted}`);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setRcloneBusy(false);
+    }
+  };
+  const testRemote = async () => {
+    const root = remotePath.trim();
+    if (!root) {
+      toast("请输入网络位置或盘符", true);
+      return;
+    }
+    setRemoteTesting(true);
+    setRemoteProbe(null);
+    try {
+      const st = await call<RemoteStatus>("remoteStatus", { root });
+      setRemoteProbe(st);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setRemoteTesting(false);
+    }
+  };
+  const useRemote = async () => {
+    if (!remoteProbe?.reachable || !remoteProbe.writable) return;
+    await switchTo(remoteProbe.root);
+    setRemoteOpen(false);
+  };
+  const copyRemoteCommand = (cmd: string) => {
+    navigator.clipboard?.writeText(cmd).then(() => toast("安装命令已复制")).catch(() => toast("复制失败", true));
+  };
+  const clearRemoteCache = async () => {
+    try {
+      const cleared = await call<number>("clearRemoteCache");
+      const next = await call<RemoteStatus>("remoteStatus");
+      setRemote(next);
+      toast(cleared > 0 ? `已清理远程缓存 ${bytes(cleared)}` : "远程缓存原本为空");
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
 
   const toggleSel = (slug: string) => setSel((prev) => {
     const next = new Set(prev);
@@ -1916,6 +2010,10 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const allSelected = chats.length > 0 && sel.size === chats.length;
   const toggleAll = () => setSel(allSelected ? new Set() : new Set(chats.map((c) => c.slug)));
   const selectedChats = chats.filter((c) => sel.has(c.slug));
+
+  const pathKindLabel = (kind?: string) =>
+    kind === "unc" ? "SMB / UNC" : kind === "mapped" ? "映射网络盘" : kind === "local" ? "本地磁盘" : "未知位置";
+  const remoteOffline = !!remote?.remote && !remote.reachable;
 
   const rebuildSelected = async () => {
     if (selectedChats.length === 0) return;
@@ -2099,20 +2197,36 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           <p>导入、批量管理、重建与库切换都在这里；删除与合并前都会要求确认</p>
         </div>
         <div className="actions">
+          <button className="btn ghost" onClick={openRemote}>
+            <Network size={13} /> 网络位置
+          </button>
           <button className="btn ghost" onClick={() => boot && call("openPath", { path: boot.libraryRoot })}>
             <FolderOpen size={13} /> 打开目录
           </button>
-          <button className="btn ghost" onClick={merge}>
+          <button className="btn ghost" disabled={remoteOffline} onClick={merge}>
             <GitMerge size={13} /> 合并另一个库
           </button>
           <button className="btn ghost" disabled={busy === "switch"} onClick={pickAndSwitch}>
             <FolderPlus size={13} /> 切换 / 新建
           </button>
-          <button className="btn primary" onClick={importJSON}>
+          <button className="btn primary" disabled={remoteOffline} onClick={importJSON}>
             <Download size={13} /> 导入 result.json
           </button>
         </div>
       </div>
+
+      {remoteOffline && (
+        <div className="remote-offline-banner" role="status">
+          <WifiOff size={15} />
+          <div>
+            <b>远程档案库暂不可达</b>
+            <span>{remote?.error || "请检查网络、NAS 电源或映射盘状态；本地缓存仍可浏览。"}</span>
+          </div>
+          <button className="btn sm ghost" onClick={() => call<RemoteStatus>("remoteStatus").then(setRemote).catch(() => undefined)}>
+            重新检测
+          </button>
+        </div>
+      )}
 
       <section className="stat-grid">
         <div className="stat">
@@ -2343,6 +2457,168 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           )}
         </section>
       </div>
+
+      {remoteOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setRemoteOpen(false); }}>
+          <div className="modal remote-modal" role="dialog" aria-modal="true" aria-labelledby="remote-title">
+            <div className="remote-head">
+              <div className="remote-title">
+                <span className="remote-title-icon"><Network size={18} /></span>
+                <div>
+                  <h2 id="remote-title">添加网络档案库</h2>
+                  <p>直接使用 SMB / UNC，或先用 rclone / SSHFS 挂载为盘符，再选择该位置。</p>
+                </div>
+              </div>
+              <button className="icon-btn" aria-label="关闭网络档案库设置" onClick={() => setRemoteOpen(false)}>
+                <X size={15} />
+              </button>
+            </div>
+            <div className="remote-body">
+              {remote && (
+                <div className={`remote-current ${remote.remote ? "is-remote" : ""} ${remote.reachable ? "" : "is-offline"}`}>
+                  <span className="remote-current-icon"><Database size={16} /></span>
+                  <div>
+                    <b>{remote.remote ? "当前为远程档案库" : "当前为本地档案库"}</b>
+                    <span title={remote.root}>{remote.root}</span>
+                  </div>
+                  <em>{pathKindLabel(remote.kind)}</em>
+                  {remote.remote && remote.reachable && (
+                    <span className="remote-current-meta">{remote.latencyMs} ms · {remote.freeKnown ? `${bytes(remote.freeBytes)} 可用` : "空间未知"}</span>
+                  )}
+                  {!remote.reachable && <span className="remote-current-meta warn">{remote.error || "不可访问"}</span>}
+                  {remote.remote && remote.cacheBytes > 0 && (
+                    <button className="btn sm ghost" onClick={() => void clearRemoteCache()}>
+                      清理缓存 {bytes(remote.cacheBytes)}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="remote-form">
+                <label htmlFor="remote-path-input">网络位置或盘符</label>
+                <div className="remote-path-row">
+                  <input
+                    id="remote-path-input"
+                    value={remotePath}
+                    onChange={(e) => { setRemotePath(e.target.value); setRemoteProbe(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") void testRemote(); }}
+                    placeholder="\\NAS\share\TG Library 或 Z:\TG Library"
+                    spellCheck={false}
+                  />
+                  <button
+                    className="btn ghost"
+                    onClick={async () => {
+                      const picked = await pickFolder("remote-library", "选择网络位置或盘符");
+                      if (picked) { setRemotePath(picked); setRemoteProbe(null); }
+                    }}
+                  >
+                    <FolderOpen size={13} /> 浏览…
+                  </button>
+                </div>
+                <div className="remote-form-actions">
+                  <button className="btn" disabled={remoteTesting || !remotePath.trim()} onClick={() => void testRemote()}>
+                    {remoteTesting ? <Loader2 size={13} className="spin" /> : <Wifi size={13} />}
+                    {remoteTesting ? "正在测试…" : "测试连接"}
+                  </button>
+                  <button className="btn primary" disabled={!remoteProbe || !remoteProbe.reachable || !remoteProbe.writable} onClick={() => void useRemote()}>
+                    {remoteProbe?.reachable && remoteProbe.writable ? <CheckCircle2 size={13} /> : <WifiOff size={13} />}
+                    切换到此库
+                  </button>
+                </div>
+              </div>
+
+              {remoteProbe && (
+                <div className={`remote-probe ${remoteProbe.reachable && remoteProbe.writable ? "ok" : "bad"}`}>
+                  <span className="remote-probe-icon">
+                    {remoteProbe.reachable && remoteProbe.writable ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                  </span>
+                  <div>
+                    <b>{remoteProbe.reachable && remoteProbe.writable ? "连接正常，可以切换" : "还不可用"}</b>
+                    <span>{pathKindLabel(remoteProbe.kind)} · {remoteProbe.latencyMs} ms{remoteProbe.freeKnown ? ` · ${bytes(remoteProbe.freeBytes)} 可用` : " · 空间未知"}</span>
+                    {remoteProbe.error && <em>{remoteProbe.error}</em>}
+                  </div>
+                </div>
+              )}
+
+              <div className="remote-options-head">
+                <h3>没有挂载网络位置？</h3>
+                <p>以下工具会把远程存储挂载成本地盘符；挂载完成后回到上方选择该盘符即可。</p>
+              </div>
+              <div className="remote-options">
+                <div className="remote-option">
+                  <span className="remote-option-icon"><Cloud size={17} /></span>
+                  <div className="remote-option-main">
+                    <b>rclone + WinFsp <em>通用</em></b>
+                    <span>WebDAV、SFTP、S3、OneDrive、Google Drive 等几十种后端；适合非 SMB 的网盘或对象存储。</span>
+                    <div className="remote-tool-state">
+                      <em className={remoteTools?.rclone ? "ok" : ""}>rclone {remoteTools?.rclone ? "已安装" : "未检测到"}</em>
+                      <em className={remoteTools?.winFsp ? "ok" : ""}>WinFsp {remoteTools?.winFsp ? "已安装" : "未检测到"}</em>
+                    </div>
+                  </div>
+                  <button className="btn sm ghost" onClick={() => copyRemoteCommand("winget install Rclone.Rclone\nwinget install WinFsp.WinFsp")}>
+                    <Copy size={12} /> 复制安装命令
+                  </button>
+                </div>
+                <div className="remote-option">
+                  <span className="remote-option-icon"><Server size={17} /></span>
+                  <div className="remote-option-main">
+                    <b>SSHFS-Win <em>SSH / SFTP</em></b>
+                    <span>适合 Linux 服务器或 NAS 的 SSH；安装后映射 <code>\\sshfs\user@host</code> 即可。</span>
+                    <div className="remote-tool-state">
+                      <em className={remoteTools?.sshfs ? "ok" : ""}>SSHFS {remoteTools?.sshfs ? "已安装" : "未检测到"}</em>
+                      <em className={remoteTools?.winFsp ? "ok" : ""}>WinFsp {remoteTools?.winFsp ? "已安装" : "未检测到"}</em>
+                    </div>
+                  </div>
+                  <button className="btn sm ghost" onClick={() => copyRemoteCommand("winget install SSHFS-Win.SSHFS-Win")}>
+                    <Copy size={12} /> 复制安装命令
+                  </button>
+                </div>
+                <div className="remote-option muted">
+                  <span className="remote-option-icon"><Network size={17} /></span>
+                  <div className="remote-option-main">
+                    <b>原生 SFTP / Remote Agent <em>3.1 评估</em></b>
+                    <span>不依赖挂载：应用内镜像或 NAS 端 Agent 通过 HTTP 访问；需要额外的同步/冲突协议，放在 3.1 评估。</span>
+                  </div>
+                  <span className="remote-planned">规划中</span>
+                </div>
+              </div>
+              {rcloneOpen && (
+                <div className="rclone-form">
+                  <div className="rclone-form-head">
+                    <b>挂载 rclone remote</b>
+                    <span>选择一个已配置的 remote，挂载为盘符后即可作为档案库。</span>
+                  </div>
+                  <div className="rclone-fields">
+                    <div className="rclone-field grow">
+                      <span>Remote</span>
+                      <Select
+                        ariaLabel="选择 rclone remote"
+                        value={rcloneRemote}
+                        onChange={setRcloneRemote}
+                        options={(remoteTools?.rcloneRemotes || []).map((r) => ({ value: r, label: r }))}
+                      />
+                    </div>
+                    <div className="rclone-field grow">
+                      <span>子路径</span>
+                      <input value={rcloneSub} onChange={(e) => setRcloneSub(e.target.value)} placeholder="TG Library（可留空）" spellCheck={false} aria-label="rclone 子路径" />
+                    </div>
+                    <div className="rclone-field drive">
+                      <span>盘符</span>
+                      <input value={rcloneDrive} onChange={(e) => setRcloneDrive(e.target.value.slice(0, 2).toUpperCase())} placeholder="Z" maxLength={2} spellCheck={false} aria-label="rclone 挂载盘符" />
+                    </div>
+                    <button className="btn primary rclone-mount-btn" disabled={rcloneBusy || !rcloneRemote} onClick={() => void mountRclone()}>
+                      {rcloneBusy ? <Loader2 size={13} className="spin" /> : <Network size={13} />}
+                      {rcloneBusy ? "挂载中…" : "挂载并测试"}
+                    </button>
+                  </div>
+                  <p>挂载成功后会自动填入上方路径；TAK 退出时会结束自己启动的 rclone 进程。</p>
+                </div>
+              )}
+              <p className="remote-note">TAK 不保存 SMB 密码；网络共享使用 Windows 凭据管理器，rclone / SSHFS 由对应工具管理凭据。远程库的缩略图与视频播放缓存会在本机单独保存。</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detailChat && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailChat(null); }}>
@@ -2733,7 +3009,7 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
 
   const value = (label: string) => rows.find((r) => r.label === label)?.value ?? "--";
   const appLabels = ["版本", "程序目录", "配置文件", "档案库", "聊天数量", "媒体总数", "缺失媒体"];
-  const toolLabels = ["tdl", "tdl 版本", "tdl 会话目录", "会话文件", "Namespace", "FFmpeg", "磁盘剩余"];
+  const toolLabels = ["tdl", "tdl 版本", "tdl 会话目录", "会话文件", "Namespace", "FFmpeg", "磁盘剩余", "远程库", "远程缓存"];
   const visibleLogs = logs.filter((l) => l.name.toLowerCase().includes(query.trim().toLowerCase()));
   const activeLog = logs.find((l) => l.name === active);
 

@@ -7,6 +7,7 @@ import {
   House,
   Settings2,
   ListTodo,
+  MessagesSquare,
   Minus,
   Moon,
   PanelLeftClose,
@@ -23,6 +24,7 @@ import { call } from "./rpc";
 import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo, ViewerPrefs } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, Overview, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
+import { OnlineChatsPage } from "./OnlineChats";
 import { Select } from "./Select";
 
 type Theme = "light" | "dark";
@@ -30,6 +32,7 @@ const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" 
 
 const NAV = [
   { key: "home", label: "首页", desc: "档案总览与快速同步", icon: House },
+  { key: "online", label: "在线聊天", desc: "Telegram 实时会话与归档", icon: MessagesSquare },
   { key: "tasks", label: "任务中心", desc: "下载、导入与重建记录", icon: ListTodo },
   { key: "library", label: "档案管理", desc: "导入、批量管理与库切换", icon: Database },
   { key: "account", label: "账号管理", desc: "登录、资料与授权状态", icon: UserRound },
@@ -309,6 +312,7 @@ export default function App() {
   const commands = useMemo<Command[]>(() => {
     const nav: Command[] = [
       { id: "nav-home", label: "前往：首页", hint: "总览", section: "页面", run: () => go("home") },
+      { id: "nav-online", label: "前往：在线聊天", hint: "Telegram 实时会话", section: "页面", run: () => go("online") },
       { id: "nav-tasks", label: "前往：任务中心", hint: "下载与任务", section: "页面", run: () => go("tasks") },
       { id: "nav-library", label: "前往：档案管理", hint: "导入与管理", section: "页面", run: () => go("library") },
       { id: "nav-account", label: "前往：账号管理", hint: "登录与授权", section: "页面", run: () => go("account") },
@@ -589,7 +593,7 @@ export default function App() {
           <div className="side-head">
             {!sideCollapsed && (
               <>
-                <span className="side-title">聊天</span>
+                <span className="side-title">本地聊天</span>
                 <span className="side-count">{chats.length}</span>
                 <span className="spacer" />
                 <button className="side-manage" onClick={() => go("library")} title="打开档案管理" aria-label="打开档案管理">
@@ -636,6 +640,7 @@ export default function App() {
         <main className="main">
           <div className="scroll">
             {page === "home" && <Home ctx={ctx} />}
+            {page === "online" && <OnlineChatsPage ctx={ctx} />}
             {page === "overview" && <Overview ctx={ctx} />}
             {page === "chats" && <Chats ctx={ctx} />}
             {page === "library" && <Library ctx={ctx} />}
