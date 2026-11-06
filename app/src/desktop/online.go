@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +45,8 @@ type OnlineChat struct {
 	Unread          int    `json:"unread,omitempty"`
 	Pinned          bool   `json:"pinned,omitempty"`
 	Archived        bool   `json:"archived,omitempty"`
+	Contact         bool   `json:"contact,omitempty"`
+	Muted           bool   `json:"muted,omitempty"`
 	LocalSlug       string `json:"localSlug,omitempty"`
 	LocalMessages   int    `json:"localMessages,omitempty"`
 	LocalMedia      int    `json:"localMedia,omitempty"`
@@ -51,11 +54,22 @@ type OnlineChat struct {
 	ArchivedLocally bool   `json:"archivedLocally,omitempty"`
 }
 
+// OnlineFolder mirrors one of the user's own Telegram chat folders. Peers are
+// resolved keys from the current dialog snapshot, so the frontend can filter
+// without depending on the folder's rule flags.
+type OnlineFolder struct {
+	ID       int      `json:"id"`
+	Title    string   `json:"title"`
+	Emoticon string   `json:"emoticon,omitempty"`
+	Peers    []string `json:"peers"`
+}
+
 type OnlineChatsDTO struct {
-	Chats     []OnlineChat `json:"chats"`
-	FetchedAt int64        `json:"fetchedAt"`
-	Source    string       `json:"source,omitempty"`
-	Error     string       `json:"error,omitempty"`
+	Chats     []OnlineChat   `json:"chats"`
+	Folders   []OnlineFolder `json:"folders,omitempty"`
+	FetchedAt int64          `json:"fetchedAt"`
+	Source    string         `json:"source,omitempty"`
+	Error     string         `json:"error,omitempty"`
 }
 
 type avatarRef struct {
@@ -64,8 +78,20 @@ type avatarRef struct {
 }
 
 type onlineEnvelope struct {
-	Chats     []OnlineChat `json:"chats"`
-	FetchedAt int64        `json:"fetchedAt"`
+	Chats     []OnlineChat   `json:"chats"`
+	Folders   []OnlineFolder `json:"folders,omitempty"`
+	FetchedAt int64          `json:"fetchedAt"`
+}
+
+// preparedExport keeps the history pages fetched by the preview step so the
+// confirmed export does not hit Telegram a second time.
+type preparedExport struct {
+	ns        string
+	peer      string
+	chat      OnlineChat
+	messages  []map[string]any
+	media     int
+	createdAt time.Time
 }
 
 // OnlineService reads the tdl bbolt session without writing it back. It is
@@ -76,22 +102,30 @@ type OnlineService struct {
 	refs   map[string]avatarRef
 	refsNS string
 	chats  map[string]OnlineChat
+
+	prepMu   sync.Mutex
+	prepared map[string]preparedExport
 }
 
 func NewOnlineService(configDir string) *OnlineService {
-	return &OnlineService{dir: configDir, refs: make(map[string]avatarRef), chats: make(map[string]OnlineChat)}
+	return &OnlineService{
+		dir:      configDir,
+		refs:     make(map[string]avatarRef),
+		chats:    make(map[string]OnlineChat),
+		prepared: make(map[string]preparedExport),
+	}
 }
 
 func (s *OnlineService) path(ns string) string {
 	return filepath.Join(s.dir, "online-chats-"+profileKey(ns)+".json")
 }
 
-func (s *OnlineService) Ready(peer string) bool {
+func (s *OnlineService) ReadyFor(ns, peer string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, hasChat := s.chats[peer]
 	_, hasRef := s.refs[peer]
-	return hasChat && hasRef
+	return hasChat && hasRef && s.refsNS == ns
 }
 
 func (s *OnlineService) CachedChat(ns, peer string) (OnlineChat, bool) {
@@ -123,7 +157,7 @@ func (s *OnlineService) Cached(ns string) *OnlineChatsDTO {
 	if json.Unmarshal(b, &env) != nil || env.Chats == nil {
 		return nil
 	}
-	return &OnlineChatsDTO{Chats: env.Chats, FetchedAt: env.FetchedAt, Source: "cache"}
+	return &OnlineChatsDTO{Chats: env.Chats, Folders: env.Folders, FetchedAt: env.FetchedAt, Source: "cache"}
 }
 
 func (s *OnlineService) saveCache(ns string, dto OnlineChatsDTO) {
@@ -133,7 +167,7 @@ func (s *OnlineService) saveCache(ns string, dto OnlineChatsDTO) {
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return
 	}
-	b, err := json.MarshalIndent(onlineEnvelope{Chats: dto.Chats, FetchedAt: dto.FetchedAt}, "", "  ")
+	b, err := json.MarshalIndent(onlineEnvelope{Chats: dto.Chats, Folders: dto.Folders, FetchedAt: dto.FetchedAt}, "", "  ")
 	if err != nil {
 		return
 	}
@@ -174,6 +208,7 @@ func (s *OnlineService) Fetch(ctx context.Context, ns, proxy string, timeout tim
 
 	seen := make(map[string]bool)
 	chats := make([]OnlineChat, 0, 256)
+	folders := make([]OnlineFolder, 0, 8)
 	refs := make(map[string]avatarRef, 64)
 	err = client.Run(runCtx, func(ctx context.Context) error {
 		for _, folder := range []int{0, 1} {
@@ -206,6 +241,11 @@ func (s *OnlineService) Fetch(ctx context.Context, ns, proxy string, timeout tim
 			}
 			return chats[i].LastDate > chats[j].LastDate
 		})
+		// Folders are a separate request; a failure here must not hide the
+		// dialog list, so errors are intentionally ignored.
+		if filters, ferr := client.API().MessagesGetDialogFilters(ctx); ferr == nil && filters != nil {
+			folders = mapFolders(filters.Filters, chats)
+		}
 		return nil
 	})
 	if err != nil {
@@ -217,7 +257,90 @@ func (s *OnlineService) Fetch(ctx context.Context, ns, proxy string, timeout tim
 	for _, chat := range chats {
 		s.chats[chat.Peer] = chat
 	}
-	return OnlineChatsDTO{Chats: chats, FetchedAt: time.Now().UnixMilli(), Source: "live"}, nil
+	return OnlineChatsDTO{Chats: chats, Folders: folders, FetchedAt: time.Now().UnixMilli(), Source: "live"}, nil
+}
+
+// mapFolders converts Telegram dialog filters into peer key lists. Explicitly
+// included peers and the common rule flags are both supported; shared chat
+// lists and the implicit "all/archive" filters are skipped.
+func mapFolders(filters []tg.DialogFilterClass, chats []OnlineChat) []OnlineFolder {
+	out := make([]OnlineFolder, 0, len(filters))
+	seen := make(map[int]bool, len(filters))
+	for _, raw := range filters {
+		filter, ok := raw.(*tg.DialogFilter)
+		if !ok || filter.ID <= 1 || seen[filter.ID] {
+			continue
+		}
+		seen[filter.ID] = true
+		explicit := make(map[string]bool, len(filter.PinnedPeers)+len(filter.IncludePeers))
+		for _, p := range filter.PinnedPeers {
+			if key := inputPeerKey(p); key != "" {
+				explicit[key] = true
+			}
+		}
+		for _, p := range filter.IncludePeers {
+			if key := inputPeerKey(p); key != "" {
+				explicit[key] = true
+			}
+		}
+		excluded := make(map[string]bool, len(filter.ExcludePeers))
+		for _, p := range filter.ExcludePeers {
+			if key := inputPeerKey(p); key != "" {
+				excluded[key] = true
+			}
+		}
+		peers := make([]string, 0, len(explicit))
+		for _, chat := range chats {
+			if excluded[chat.Peer] {
+				continue
+			}
+			include := explicit[chat.Peer]
+			if !include && !folderRuleMatch(filter, chat) {
+				continue
+			}
+			if !include && filter.ExcludeArchived && chat.Archived {
+				continue
+			}
+			if !include && filter.ExcludeMuted && chat.Muted {
+				continue
+			}
+			peers = append(peers, chat.Peer)
+		}
+		title := strings.TrimSpace(filter.Title.Text)
+		if title == "" {
+			title = fmt.Sprintf("分组 %d", filter.ID)
+		}
+		out = append(out, OnlineFolder{ID: filter.ID, Title: title, Emoticon: filter.Emoticon, Peers: peers})
+	}
+	return out
+}
+
+func folderRuleMatch(filter *tg.DialogFilter, chat OnlineChat) bool {
+	switch chat.Type {
+	case "bot":
+		return filter.Bots
+	case "private":
+		return (filter.Contacts && chat.Contact) || (filter.NonContacts && !chat.Contact)
+	case "group":
+		return filter.Groups
+	case "channel":
+		return filter.Broadcasts
+	default:
+		return false
+	}
+}
+
+func inputPeerKey(peer tg.InputPeerClass) string {
+	switch p := peer.(type) {
+	case *tg.InputPeerUser:
+		return "user:" + strconv.FormatInt(p.UserID, 10)
+	case *tg.InputPeerChat:
+		return "chat:" + strconv.FormatInt(p.ChatID, 10)
+	case *tg.InputPeerChannel:
+		return "channel:" + strconv.FormatInt(p.ChannelID, 10)
+	default:
+		return ""
+	}
 }
 
 // FetchAvatars downloads a small set of profile photos in parallel. The list
@@ -329,6 +452,9 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 		Pinned: dialog.Pinned,
 		Unread: dialog.UnreadCount,
 	}
+	if dialog.NotifySettings.MuteUntil > int(time.Now().Unix()) {
+		out.Muted = true
+	}
 	if folder, ok := dialog.GetFolderID(); ok && folder == 1 {
 		out.Archived = true
 	}
@@ -345,6 +471,7 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 		out.ID = user.ID
 		out.Type = "private"
 		out.AccessHash = user.AccessHash
+		out.Contact = user.Contact
 		if user.Bot {
 			out.Type = "bot"
 		}

@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gotd/td/tg"
 )
@@ -84,6 +86,111 @@ func TestMapOnlineMedia(t *testing.T) {
 	kind, file, name, size, ok := mapOnlineMedia(media)
 	if !ok || kind != "video_file" || file != "clip.mp4" || name != "clip.mp4" || size != 123 {
 		t.Errorf("document mapping = %q %q %q %d %v", kind, file, name, size, ok)
+	}
+}
+
+func TestFriendlyOnlineError(t *testing.T) {
+	err := friendlyOnlineError(errors.New("callback: rpcDoRequest: rpc error code 420: FLOOD_WAIT (17)"))
+	if err.Error() != "Telegram 限流，请等待 17 秒后再试" {
+		t.Errorf("friendlyOnlineError = %q", err)
+	}
+	plain := errors.New("network down")
+	if got := friendlyOnlineError(plain); got != plain {
+		t.Errorf("plain error changed: %v", got)
+	}
+}
+
+func TestOnlineStats(t *testing.T) {
+	messages := []map[string]any{
+		{"id": "1", "type": "message", "media_type": "photo", "file_size": int64(100)},
+		{"id": "2", "type": "message", "media_type": "video_file", "file_size": int64(200)},
+		{"id": "3", "type": "message", "media_type": "video_message"},
+		{"id": "4", "type": "message", "media_type": "audio_file", "file_size": int64(300)},
+		{"id": "5", "type": "message", "media_type": "voice_message"},
+		{"id": "6", "type": "message", "media_type": "file", "file_size": int64(400)},
+		{"id": "7", "type": "message", "media_type": "sticker"},
+		{"id": "8", "type": "message", "media_type": "poll"},
+		{"id": "9", "type": "message"},
+		{"id": "10", "type": "service"},
+	}
+	service, images, videos, audio, files, other, media, size := onlineStats(messages)
+	if service != 1 || images != 1 || videos != 2 || audio != 2 || files != 2 || other != 1 || media != 8 {
+		t.Errorf("stats = service %d images %d videos %d audio %d files %d other %d media %d", service, images, videos, audio, files, other, media)
+	}
+	if size != 1000 {
+		t.Errorf("size = %d, want 1000", size)
+	}
+}
+
+func TestMapFolders(t *testing.T) {
+	chats := []OnlineChat{
+		{Peer: "channel:10", Type: "channel"},
+		{Peer: "user:20", Type: "private", Contact: true},
+		{Peer: "user:21", Type: "private"},
+		{Peer: "chat:30", Type: "group"},
+		{Peer: "chat:31", Type: "group", Archived: true},
+		{Peer: "chat:32", Type: "group", Archived: true},
+		{Peer: "user:40", Type: "bot"},
+	}
+	filters := []tg.DialogFilterClass{
+		&tg.DialogFilter{
+			ID: 3, Title: tg.TextWithEntities{Text: "反差"}, Emoticon: "🔥",
+			PinnedPeers:  []tg.InputPeerClass{&tg.InputPeerChannel{ChannelID: 10}},
+			IncludePeers: []tg.InputPeerClass{&tg.InputPeerUser{UserID: 20}},
+			ExcludePeers: []tg.InputPeerClass{&tg.InputPeerUser{UserID: 21}},
+		},
+		&tg.DialogFilter{
+			ID: 4, Title: tg.TextWithEntities{Text: "常用"},
+			Groups: true, Contacts: true, Bots: true, ExcludeArchived: true,
+			IncludePeers: []tg.InputPeerClass{&tg.InputPeerChat{ChatID: 32}},
+		},
+		&tg.DialogFilterDefault{},
+	}
+	folders := mapFolders(filters, chats)
+	if len(folders) != 2 {
+		t.Fatalf("folders = %#v", folders)
+	}
+	first := map[string]bool{}
+	for _, peer := range folders[0].Peers {
+		first[peer] = true
+	}
+	if folders[0].Title != "反差" || folders[0].Emoticon != "🔥" || len(first) != 2 || !first["channel:10"] || !first["user:20"] {
+		t.Errorf("explicit folder = %#v", folders[0])
+	}
+	second := map[string]bool{}
+	for _, peer := range folders[1].Peers {
+		second[peer] = true
+	}
+	if !second["chat:30"] || !second["user:20"] || !second["user:40"] || !second["chat:32"] {
+		t.Errorf("rule folder = %#v", folders[1])
+	}
+	if second["chat:31"] || second["user:21"] || second["channel:10"] {
+		t.Errorf("rule folder included excluded peers: %#v", folders[1])
+	}
+}
+
+func TestPreparedExportLifecycle(t *testing.T) {
+	svc := NewOnlineService(t.TempDir())
+	token := svc.Prepare("ns", "user:1", OnlineChat{Peer: "user:1"}, []map[string]any{{"id": "1"}}, 0)
+	if token == "" {
+		t.Fatal("empty token")
+	}
+	item, ok := svc.TakePrepared("ns", "user:1", token)
+	if !ok || item.peer != "user:1" || len(item.messages) != 1 {
+		t.Fatalf("prepared = %#v, ok = %v", item, ok)
+	}
+	if _, ok := svc.TakePrepared("ns", "user:1", token); ok {
+		t.Error("prepared token was reusable")
+	}
+
+	token = svc.Prepare("ns", "user:2", OnlineChat{Peer: "user:2"}, []map[string]any{{"id": "2"}}, 0)
+	svc.prepMu.Lock()
+	item = svc.prepared[token]
+	item.createdAt = time.Now().Add(-16 * time.Minute)
+	svc.prepared[token] = item
+	svc.prepMu.Unlock()
+	if _, ok := svc.TakePrepared("ns", "user:2", token); ok {
+		t.Error("expired prepared token was accepted")
 	}
 }
 

@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +21,7 @@ import (
 	"github.com/gotd/td/telegram/dcs"
 	tgpeer "github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 )
 
 type OnlineExportResult struct {
@@ -30,9 +34,113 @@ type OnlineExportResult struct {
 	UpToDate bool   `json:"upToDate,omitempty"`
 }
 
+type OnlineExportPreview struct {
+	Peer           string `json:"peer"`
+	Chat           string `json:"chat"`
+	Token          string `json:"token,omitempty"`
+	Existed        bool   `json:"existed"`
+	UpToDate       bool   `json:"upToDate,omitempty"`
+	Messages       int    `json:"messages"`
+	Service        int    `json:"service"`
+	Images         int    `json:"images"`
+	Videos         int    `json:"videos"`
+	Audio          int    `json:"audio"`
+	Files          int    `json:"files"`
+	Other          int    `json:"other"`
+	Media          int    `json:"media"`
+	Bytes          int64  `json:"bytes"`
+	LocalMessages  int    `json:"localMessages,omitempty"`
+	LocalMedia     int    `json:"localMedia,omitempty"`
+	LocalUpdatedAt string `json:"localUpdatedAt,omitempty"`
+}
+
+var floodWaitPattern = regexp.MustCompile(`FLOOD_WAIT[^0-9]*(\d+)`)
+
+// friendlyOnlineError turns rate limiting into an actionable message.
+func friendlyOnlineError(err error) error {
+	if d, ok := tgerr.AsFloodWait(err); ok {
+		seconds := int(d.Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		return fmt.Errorf("Telegram 限流，请等待 %d 秒后再试", seconds)
+	}
+	if m := floodWaitPattern.FindStringSubmatch(err.Error()); m != nil {
+		return fmt.Errorf("Telegram 限流，请等待 %s 秒后再试", m[1])
+	}
+	return err
+}
+
+// waitFlood keeps short rate limits invisible to the user by pausing the
+// current history walk instead of failing the whole archive.
+func waitFlood(ctx context.Context, err error) (bool, error) {
+	d, ok := tgerr.AsFloodWait(err)
+	if !ok {
+		return false, err
+	}
+	if d > 90*time.Second {
+		return false, friendlyOnlineError(err)
+	}
+	if d < time.Second {
+		d = time.Second
+	}
+	select {
+	case <-time.After(d + time.Second):
+		return true, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
 // ExportMessages reads a complete (or limited) history through gotd and turns
 // it into Telegram Desktop-compatible result.json messages. The downloader and
 // renderer then use the same pipeline as a manually imported export.
+func (s *OnlineService) Prepare(ns, peer string, chat OnlineChat, messages []map[string]any, media int) string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return ""
+	}
+	token := hex.EncodeToString(buf)
+	s.prepMu.Lock()
+	defer s.prepMu.Unlock()
+	now := time.Now()
+	for key, item := range s.prepared {
+		if now.Sub(item.createdAt) > 15*time.Minute {
+			delete(s.prepared, key)
+		}
+	}
+	s.prepared[token] = preparedExport{
+		ns: ns, peer: peer, chat: chat, messages: messages, media: media, createdAt: now,
+	}
+	return token
+}
+
+func (s *OnlineService) TakePrepared(ns, peer, token string) (preparedExport, bool) {
+	if token == "" {
+		return preparedExport{}, false
+	}
+	s.prepMu.Lock()
+	defer s.prepMu.Unlock()
+	item, ok := s.prepared[token]
+	if !ok {
+		return preparedExport{}, false
+	}
+	delete(s.prepared, token)
+	if item.ns != ns || item.peer != peer || time.Since(item.createdAt) > 15*time.Minute {
+		return preparedExport{}, false
+	}
+	return item, true
+}
+
+func (s *OnlineService) DropPrepared(token string) {
+	if token == "" {
+		return
+	}
+	s.prepMu.Lock()
+	delete(s.prepared, token)
+	s.prepMu.Unlock()
+}
+
 func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int) (OnlineChat, []map[string]any, int, error) {
 	ref := peerInputFromChat(chat)
 	if ref == nil {
@@ -68,14 +176,22 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, ch
 		offset := 0
 		pages := 0
 		for {
-			res, err := client.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
-				Peer:     ref,
-				OffsetID: offset,
-				MinID:    minID,
-				Limit:    100,
-			})
-			if err != nil {
-				return err
+			var res tg.MessagesMessagesClass
+			for {
+				var err error
+				res, err = client.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+					Peer:     ref,
+					OffsetID: offset,
+					MinID:    minID,
+					Limit:    100,
+				})
+				if err == nil {
+					break
+				}
+				retry, waitErr := waitFlood(ctx, err)
+				if !retry {
+					return waitErr
+				}
 			}
 			msgs := historyMessages(res)
 			if len(msgs) == 0 {
@@ -414,10 +530,11 @@ func entityName(peer tg.PeerClass, entities tgpeer.Entities) string {
 func mapOnlineMedia(media tg.MessageMediaClass) (kind, file, name string, size int64, ok bool) {
 	switch m := media.(type) {
 	case *tg.MessageMediaPhoto:
-		if _, ok := m.Photo.(*tg.Photo); !ok {
+		photo, ok := m.Photo.(*tg.Photo)
+		if !ok {
 			return "", "", "", 0, false
 		}
-		return "photo", "photo.jpg", "photo.jpg", 0, true
+		return "photo", "photo.jpg", "photo.jpg", photoBytes(photo), true
 	case *tg.MessageMediaDocument:
 		doc, ok := m.Document.(*tg.Document)
 		if !ok {
@@ -459,6 +576,27 @@ func mapOnlineMedia(media tg.MessageMediaClass) (kind, file, name string, size i
 	default:
 		return "", "", "", 0, false
 	}
+}
+
+// photoBytes returns the largest size Telegram advertises for a photo, which
+// is the file the downloader will actually fetch.
+func photoBytes(photo *tg.Photo) int64 {
+	var size int64
+	for _, raw := range photo.Sizes {
+		switch s := raw.(type) {
+		case *tg.PhotoSize:
+			if int64(s.Size) > size {
+				size = int64(s.Size)
+			}
+		case *tg.PhotoSizeProgressive:
+			if len(s.Sizes) > 0 {
+				if last := int64(s.Sizes[len(s.Sizes)-1]); last > size {
+					size = last
+				}
+			}
+		}
+	}
+	return size
 }
 
 func extensionForMime(mime, kind string) string {
@@ -507,21 +645,36 @@ func serviceText(action tg.MessageActionClass) string {
 	}
 }
 
-// OnlineExport merges a gotd export into the current library and starts the
-// normal media download + page build pipeline.
-func (b *Bridge) OnlineExport(peerKey string, timeout, limit int) (OnlineExportResult, error) {
+type localOnlineArchive struct {
+	slug      string
+	dir       string
+	existed   bool
+	messages  int
+	media     int
+	updatedAt string
+}
+
+func (b *Bridge) localOnlineArchive(chat OnlineChat) localOnlineArchive {
+	idText := strconv.FormatInt(chat.ID, 10)
+	for _, c := range b.facade.ListChats() {
+		if c.ID == idText {
+			return localOnlineArchive{
+				slug: c.Slug, dir: c.Dir, existed: true,
+				messages: c.Messages, media: c.Media, updatedAt: c.UpdatedAt,
+			}
+		}
+	}
+	return localOnlineArchive{}
+}
+
+// resolveOnlineChat accepts cached peers and fetches the live dialog list only
+// when the peer or its access hash is missing.
+func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (OnlineChat, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
-	exportTimeout := time.Duration(timeout) * time.Second
-	if exportTimeout <= 0 {
-		exportTimeout = 180 * time.Second
-	}
-	// The page may still be showing a cached snapshot while the live dialog
-	// list is refreshing. Resolve the peer once here instead of failing with a
-	// misleading "expired" error.
-	if !b.online.Ready(peerKey) {
-		if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, exportTimeout); err != nil {
-			return OnlineExportResult{}, fmt.Errorf("无法读取在线会话：%w", err)
+	if !b.online.ReadyFor(info.Namespace, peerKey) {
+		if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, timeout); err != nil {
+			return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", err))
 		}
 	}
 	chat, ok := b.online.Chat(peerKey)
@@ -533,46 +686,143 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int) (OnlineExportR
 	}
 	needsAccessHash := strings.HasPrefix(peerKey, "user:") || strings.HasPrefix(peerKey, "channel:")
 	if !ok || (needsAccessHash && chat.AccessHash == 0) {
-		if _, fetchErr := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, exportTimeout); fetchErr != nil {
+		if _, fetchErr := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, timeout); fetchErr != nil {
 			if !ok {
-				return OnlineExportResult{}, fmt.Errorf("无法读取在线会话：%w", fetchErr)
+				return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", fetchErr))
 			}
 			if needsAccessHash && chat.AccessHash == 0 {
-				return OnlineExportResult{}, fmt.Errorf("该会话缺少访问凭据，请在网络恢复后刷新在线列表：%w", fetchErr)
+				return OnlineChat{}, friendlyOnlineError(fmt.Errorf("该会话缺少访问凭据，请在网络恢复后刷新在线列表：%w", fetchErr))
 			}
 		} else {
 			chat, ok = b.online.Chat(peerKey)
 		}
 	}
 	if !ok {
-		return OnlineExportResult{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
+		return OnlineChat{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
 	}
-	existingSlug := ""
-	existed := false
-	idText := strconv.FormatInt(chat.ID, 10)
-	localDir := ""
-	local := b.facade.ListChats()
-	for _, c := range local {
-		if c.ID == idText {
-			existingSlug = c.Slug
-			localDir = c.Dir
-			existed = true
-			break
+	return chat, nil
+}
+
+func onlineStats(messages []map[string]any) (service, images, videos, audio, files, other, media int, size int64) {
+	for _, raw := range messages {
+		if raw["type"] == "service" {
+			service++
+			continue
+		}
+		kind, _ := raw["media_type"].(string)
+		if kind == "" {
+			continue
+		}
+		media++
+		switch kind {
+		case "photo":
+			images++
+		case "video_file", "video_message", "animation":
+			videos++
+		case "voice_message", "audio_file":
+			audio++
+		case "file", "sticker":
+			files++
+		default:
+			other++
+		}
+		if n, ok := raw["file_size"].(int64); ok && n > 0 {
+			size += n
 		}
 	}
+	return
+}
+
+// OnlineExportPreview counts what an archive run would add and keeps the
+// fetched messages so confirmation does not read the same history twice.
+func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int) (OnlineExportPreview, error) {
+	info := b.facade.AccountInfo()
+	settings := b.facade.GetSettings()
+	exportTimeout := time.Duration(timeout) * time.Second
+	if exportTimeout <= 0 {
+		exportTimeout = 180 * time.Second
+	}
+	chat, err := b.resolveOnlineChat(peerKey, exportTimeout)
+	if err != nil {
+		return OnlineExportPreview{}, err
+	}
+	local := b.localOnlineArchive(chat)
 	minID := 0
-	if existed && localDir != "" {
-		minID = localMaxMessageID(localDir)
+	if local.existed && local.dir != "" {
+		minID = localMaxMessageID(local.dir)
 	}
 	_, messages, media, err := b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, chat, exportTimeout, minID, limit)
 	if err != nil {
-		return OnlineExportResult{}, err
+		return OnlineExportPreview{}, friendlyOnlineError(err)
+	}
+	out := OnlineExportPreview{
+		Peer: peerKey, Chat: chat.Name, Existed: local.existed,
+		LocalMessages: local.messages, LocalMedia: local.media, LocalUpdatedAt: local.updatedAt,
 	}
 	if len(messages) == 0 {
 		if minID > 0 {
-			return OnlineExportResult{Chat: chat.Name, Slug: existingSlug, Existed: true, UpToDate: true}, nil
+			out.UpToDate = true
+			return out, nil
 		}
-		return OnlineExportResult{}, errors.New("该会话没有可导出的消息")
+		return OnlineExportPreview{}, errors.New("该会话没有可导出的消息")
+	}
+	service, images, videos, audio, files, other, _, size := onlineStats(messages)
+	out.Messages = len(messages)
+	out.Service = service
+	out.Images = images
+	out.Videos = videos
+	out.Audio = audio
+	out.Files = files
+	out.Other = other
+	out.Media = media
+	out.Bytes = size
+	out.Token = b.online.Prepare(info.Namespace, peerKey, chat, messages, media)
+	return out, nil
+}
+
+func (b *Bridge) OnlineExportDiscard(token string) {
+	b.online.DropPrepared(token)
+}
+
+// OnlineExport merges a gotd export into the current library and starts the
+// normal media download + page build pipeline.
+func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token string) (OnlineExportResult, error) {
+	info := b.facade.AccountInfo()
+	settings := b.facade.GetSettings()
+	exportTimeout := time.Duration(timeout) * time.Second
+	if exportTimeout <= 0 {
+		exportTimeout = 180 * time.Second
+	}
+	chat, err := b.resolveOnlineChat(peerKey, exportTimeout)
+	if err != nil {
+		return OnlineExportResult{}, err
+	}
+	local := b.localOnlineArchive(chat)
+	existingSlug := local.slug
+	existed := local.existed
+	idText := strconv.FormatInt(chat.ID, 10)
+
+	var messages []map[string]any
+	var media int
+	if prepared, ok := b.online.TakePrepared(info.Namespace, peerKey, token); ok {
+		chat = prepared.chat
+		messages = prepared.messages
+		media = prepared.media
+	} else {
+		minID := 0
+		if existed && local.dir != "" {
+			minID = localMaxMessageID(local.dir)
+		}
+		_, messages, media, err = b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, chat, exportTimeout, minID, limit)
+		if err != nil {
+			return OnlineExportResult{}, friendlyOnlineError(err)
+		}
+		if len(messages) == 0 {
+			if minID > 0 {
+				return OnlineExportResult{Chat: chat.Name, Slug: existingSlug, Existed: true, UpToDate: true}, nil
+			}
+			return OnlineExportResult{}, errors.New("该会话没有可导出的消息")
+		}
 	}
 	root := map[string]any{
 		"name":     chat.Name,

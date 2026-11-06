@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ChartPie,
+  Clock,
   Download,
   FileJson,
   FolderInput,
@@ -14,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  X,
   XCircle,
 } from "lucide-react";
 import { call } from "./rpc";
@@ -229,18 +231,20 @@ export function TasksPage({
   tasks,
   onRefresh,
   onClear,
+  onOpenDownload,
   toast,
 }: {
   tasks: TaskInfo[];
   onRefresh: () => void;
   onClear: () => void;
+  onOpenDownload: (task: TaskInfo) => void;
   toast: (msg: string, err?: boolean) => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(Date.now());
-  const [active, setActive] = useState<TaskDetail | null>(null);
+  const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -263,10 +267,14 @@ export function TasksPage({
   const done = tasks.filter((t) => t.state === "done").length;
 
   const openTask = async (task: TaskInfo) => {
+    if (kindMeta(task.kind).group === "download") {
+      onOpenDownload(task);
+      return;
+    }
     try {
-      setActive(await call<TaskDetail>("taskDetail", { id: task.id }));
+      setModalTask(await call<TaskDetail>("taskDetail", { id: task.id }));
     } catch (e) {
-      setActive({ ...task, series: [] });
+      setModalTask({ ...task, series: [] });
       toast((e as Error).message, true);
     }
   };
@@ -280,16 +288,12 @@ export function TasksPage({
       .catch((e: Error) => toast(e.message, true));
   };
 
-  if (active) {
-    return <TaskDetailView task={active} onBack={() => setActive(null)} toast={toast} />;
-  }
-
   return (
     <>
       <div className="page-head">
         <div>
           <h1>任务中心</h1>
-          <p>点击任意任务查看完整记录；下载任务保留速度曲线与逐项统计</p>
+          <p>下载任务打开专用下载页；其他任务弹窗查看详情</p>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={onRefresh}>
@@ -387,6 +391,33 @@ export function TasksPage({
           </table>
         )}
       </section>
+
+      {modalTask && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setModalTask(null); }}>
+          <div className="modal task-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
+            <div className="task-modal-head">
+              <div>
+                <h2 id="task-modal-title">{taskTitle(modalTask)}</h2>
+                <p className="modal-sub">{kindMeta(modalTask.kind).label} · {modalTask.chat || "无聊天"} · {statusLabel(modalTask.state)}</p>
+              </div>
+              <button className="icon-btn" aria-label="关闭任务详情" onClick={() => setModalTask(null)}>
+                <X size={15} />
+              </button>
+            </div>
+            <div className="account-rows task-detail-rows">
+              <div><span>开始时间</span><b>{dateTime(modalTask.startedAt)}</b></div>
+              <div><span>结束时间</span><b>{modalTask.finishedAt ? dateTime(modalTask.finishedAt) : "进行中"}</b></div>
+              <div><span>耗时</span><b>{fmtDuration(taskElapsed(modalTask.state === "running" ? { ...modalTask, finishedAt: now } : modalTask))}</b></div>
+              <div><span>进度</span><b>{modalTask.state === "done" ? "100%" : `${modalTask.percent}%`}</b></div>
+              <div><span>任务说明</span><b>{modalTask.detail || "--"}</b></div>
+              {modalTask.error && <div><span>错误</span><b className="danger-text">{modalTask.error}</b></div>}
+            </div>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setModalTask(null)}><X size={12} /> 关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

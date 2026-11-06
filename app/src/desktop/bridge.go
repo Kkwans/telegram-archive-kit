@@ -196,6 +196,7 @@ type apiParams struct {
 	Path     string              `json:"path"`
 	Drive    string              `json:"drive"`
 	Peer     string              `json:"peer"`
+	Token    string              `json:"token"`
 	Limit    int                 `json:"limit"`
 	Name     string              `json:"name"`
 	Title    string              `json:"title"`
@@ -398,8 +399,13 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.OnlineChatsCached(), nil
 	case "onlineAvatars":
 		return b.OnlineAvatars(p.Peers, p.Timeout)
+	case "onlineExportPreview":
+		return b.OnlineExportPreview(p.Peer, p.Timeout, p.Limit)
+	case "onlineExportDiscard":
+		b.OnlineExportDiscard(p.Token)
+		return nil, nil
 	case "onlineExport":
-		return b.OnlineExport(p.Peer, p.Timeout, p.Limit)
+		return b.OnlineExport(p.Peer, p.Timeout, p.Limit, p.Token)
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":

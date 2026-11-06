@@ -303,6 +303,8 @@ export interface OnlineChat {
   unread?: number;
   pinned?: boolean;
   archived?: boolean;
+  contact?: boolean;
+  muted?: boolean;
   localSlug?: string;
   localMessages?: number;
   localMedia?: number;
@@ -310,11 +312,39 @@ export interface OnlineChat {
   archivedLocally?: boolean;
 }
 
+export interface OnlineFolder {
+  id: number;
+  title: string;
+  emoticon?: string;
+  peers: string[];
+}
+
 export interface OnlineChats {
   chats: OnlineChat[];
+  folders?: OnlineFolder[];
   fetchedAt: number;
   source?: string;
   error?: string;
+}
+
+export interface OnlineExportPreview {
+  peer: string;
+  chat: string;
+  token?: string;
+  existed: boolean;
+  upToDate?: boolean;
+  messages: number;
+  service: number;
+  images: number;
+  videos: number;
+  audio: number;
+  files: number;
+  other: number;
+  media: number;
+  bytes: number;
+  localMessages?: number;
+  localMedia?: number;
+  localUpdatedAt?: string;
 }
 
 export interface OnlineExportResult {
