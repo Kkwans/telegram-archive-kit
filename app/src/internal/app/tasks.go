@@ -26,6 +26,7 @@ type TaskDTO struct {
 	Bytes      int64   `json:"bytes,omitempty"`
 	Done       int     `json:"done,omitempty"`
 	Total      int     `json:"total,omitempty"`
+	ETAMs      int64   `json:"etaMs,omitempty"`
 	ElapsedMs  int64   `json:"elapsedMs,omitempty"`
 	StartedAt  int64   `json:"startedAt"`
 	FinishedAt int64   `json:"finishedAt,omitempty"`
@@ -43,13 +44,17 @@ type SpeedPoint struct {
 // the 600ms state poll stays small.
 type TaskDetailDTO struct {
 	TaskDTO
-	Series []SpeedPoint `json:"series,omitempty"`
+	Series    []SpeedPoint   `json:"series,omitempty"`
+	Active    []TaskProgress `json:"active,omitempty"`
+	Completed []TaskProgress `json:"completed,omitempty"`
 }
 
 type backgroundTask struct {
 	mu           sync.Mutex
 	dto          TaskDTO
 	series       []SpeedPoint
+	active       []TaskProgress
+	completed    []TaskProgress
 	lastSampleAt time.Time
 }
 
@@ -106,6 +111,9 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	t.dto.Bytes = s.Bytes
 	t.dto.Done = s.Done
 	t.dto.Total = s.Total
+	t.dto.ETAMs = s.ETAMs
+	t.active = append([]TaskProgress(nil), s.Active...)
+	t.completed = append([]TaskProgress(nil), s.Completed...)
 	if s.ElapsedMs > 0 {
 		t.dto.ElapsedMs = s.ElapsedMs
 	}
@@ -128,7 +136,12 @@ func (t *backgroundTask) snapshot() TaskDTO {
 func (t *backgroundTask) detail() TaskDetailDTO {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return TaskDetailDTO{TaskDTO: t.dto, Series: append([]SpeedPoint{}, t.series...)}
+	return TaskDetailDTO{
+		TaskDTO:   t.dto,
+		Series:    append([]SpeedPoint{}, t.series...),
+		Active:    append([]TaskProgress{}, t.active...),
+		Completed: append([]TaskProgress{}, t.completed...),
+	}
 }
 
 func (t *backgroundTask) finish(err error) {
@@ -138,6 +151,8 @@ func (t *backgroundTask) finish(err error) {
 		return
 	}
 	t.dto.FinishedAt = time.Now().UnixMilli()
+	t.dto.ETAMs = 0
+	t.active = nil
 	if t.dto.ElapsedMs == 0 {
 		t.dto.ElapsedMs = t.dto.FinishedAt - t.dto.StartedAt
 	}
@@ -272,7 +287,7 @@ func (f *Facade) loadTasks() {
 				dto.FinishedAt = dto.StartedAt
 			}
 		}
-		f.tasks = append(f.tasks, &backgroundTask{dto: dto, series: detail.Series})
+		f.tasks = append(f.tasks, &backgroundTask{dto: dto, series: detail.Series, active: detail.Active, completed: detail.Completed})
 	}
 	f.taskMu.Unlock()
 }

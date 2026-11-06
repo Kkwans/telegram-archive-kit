@@ -21,7 +21,7 @@ import {
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type { TaskDetail, TaskInfo } from "./types";
-import { bytes, dateTime, dateTimePrecise, rate } from "./format";
+import { bytes, dateTime, dateTimePrecise, duration, rate } from "./format";
 
 const KIND_META: Record<string, { label: string; group: string; icon: typeof Download }> = {
   sync: { label: "下载", group: "download", icon: Download },
@@ -78,47 +78,44 @@ const STATUS_FILTERS = [
   ["failed", "失败"],
 ] as const;
 
-function ResultRing({ state }: { state: string }) {
-  const r = 27;
-  const c = 2 * Math.PI * r;
-  return (
-    <div className={`result-ring ${state}`}>
-      <svg viewBox="0 0 64 64" aria-hidden="true">
-        <circle className="result-ring-track" cx="32" cy="32" r={r} />
-        <circle
-          className="result-ring-fill"
-          cx="32"
-          cy="32"
-          r={r}
-          strokeDasharray={c}
-          strokeDashoffset={state === "running" ? c * 0.38 : 0}
-          transform="rotate(-90 32 32)"
-        />
-      </svg>
-      <span className="result-ring-icon">
-        {state === "running" ? <Loader2 size={20} className="spin" /> : state === "done" ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
-      </span>
-    </div>
-  );
+function clockText(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function fileKindLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    image: "图片", video: "视频", audio: "音频", file: "文件", voice: "语音", gif: "动图",
+  };
+  return labels[kind] || kind || "媒体";
 }
 
 function TaskSpeedChart({ task }: { task: TaskDetail }) {
   const samples = task.series ?? [];
   if (samples.length < 2) {
-    return <div className="task-chart-empty">旧任务未记录速度采样；新任务的下载过程会自动保留曲线。</div>;
+    return <div className="chart-empty">这个任务没有保留速度采样。</div>;
   }
-  const W = 960, H = 190, L = 64, R = 18, T = 14, B = 26;
+  const W = 960, H = 190, L = 64, R = 18, T = 14, B = 30;
   const plotW = W - L - R;
   const plotH = H - T - B;
   const max = Math.max(1, ...samples.flatMap((s) => [s.now, s.avg]));
   const points = (key: "now" | "avg") =>
     samples
       .map((s, i) => {
-        const x = L + (samples.length <= 1 ? 0 : (i / (samples.length - 1)) * plotW);
+        const x = L + (i / (samples.length - 1)) * plotW;
         const y = T + plotH - Math.min(1, s[key] / max) * plotH;
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       })
       .join(" ");
+  const first = samples[0].at || task.startedAt;
+  const last = samples[samples.length - 1].at || task.finishedAt || Date.now();
+  const span = Math.max(1, last - first);
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
+    x: L + f * plotW,
+    label: clockText(first + span * f),
+    anchor: (f === 0 ? "start" : f === 1 ? "end" : "middle") as "start" | "middle" | "end",
+  }));
   return (
     <div className="chart chart-axes task-chart">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="历史下载速度曲线">
@@ -127,12 +124,13 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
           return (
             <g key={f}>
               <line className="grid" x1={L} y1={y} x2={W - R} y2={y} />
-              <text className="axis-y" x={L - 8} y={y + 3} textAnchor="end">{rate(max * f)}</text>
+              <text className="axis-y" x={L - 9} y={y + 3} textAnchor="end">{rate(max * f)}</text>
             </g>
           );
         })}
-        <text className="axis-x" x={L} y={H - 7}>开始</text>
-        <text className="axis-x" x={W - R} y={H - 7} textAnchor="end">结束</text>
+        {xTicks.map((tick) => (
+          <text key={tick.x} className="axis-x" x={tick.x} y={H - 8} textAnchor={tick.anchor}>{tick.label}</text>
+        ))}
         <polyline className="avg" points={points("avg")} />
         <polyline className="now" points={points("now")} />
       </svg>
@@ -142,25 +140,28 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
 
 export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () => void; toast: (msg: string, err?: boolean) => void }) {
   const meta = kindMeta(task.kind);
-  const download = meta.group === "download";
+  const running = task.state === "running";
+  const failed = task.state === "failed";
   const noop = noNewMedia(task);
   const elapsed = taskElapsed(task);
+  const percent = task.state === "done" ? 100 : Math.max(0, Math.min(100, task.percent));
+  const series = task.series ?? [];
+  const active = task.active ?? [];
+  const completed = task.completed ?? [];
+  const speedNow = series.length > 0 ? series[series.length - 1].now : 0;
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
     : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : "任务失败"));
+  const ringStyle = running
+    ? { background: `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` }
+    : undefined;
 
   return (
     <>
-      <div className="page-head task-detail-head">
-        <div className="task-detail-title">
-          <button className="btn" onClick={onBack}>
-            <ArrowLeft size={14} /> 返回
-          </button>
-          <div>
-            <h1>下载详情</h1>
-            <p>{meta.label}{task.chat ? ` · ${task.chat}` : ""} · {statusLabel(task.state)}</p>
-          </div>
-        </div>
+      <div className="page-head download-detail-head">
+        <button className="btn" onClick={onBack}>
+          <ArrowLeft size={14} /> 返回任务中心
+        </button>
         <div className="actions">
           {task.slug && (
             <button
@@ -173,54 +174,126 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
         </div>
       </div>
 
-      <section className={`task-result-panel ${task.state}`}>
-        <ResultRing state={task.state} />
-        <div className="task-result-main">
-          <div className="task-result-title">
-            <h2>{taskTitle(task)}{task.chat ? ` · ${task.chat}` : ""}</h2>
-            <span className={`tag ${task.state === "failed" ? "bad" : ""}`}>{statusLabel(task.state)}</span>
+      <section className={`hero ${running ? "" : "idle"} ${failed ? "failed" : ""}`}>
+        <div
+          className={`ring ${running ? "" : "idle"}`}
+          role="progressbar"
+          aria-valuenow={Math.round(percent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          style={ringStyle}
+        >
+          {running ? <b>{Math.round(percent)}%</b> : failed ? <X size={22} /> : <CheckCircle2 size={24} />}
+        </div>
+        <div className="hero-main">
+          <div className="hero-title">
+            {taskTitle(task)}{task.chat ? ` · ${task.chat}` : ""}
+            <span className={`tag ${failed ? "bad" : ""}`}>{statusLabel(task.state)}</span>
           </div>
-          <p className="task-result-text">{result}</p>
-          <div className="task-result-meta">
-            <span>开始 <b>{dateTimePrecise(task.startedAt)}</b></span>
-            <span>{task.finishedAt ? "结束" : "已运行"} <b>{task.finishedAt ? dateTimePrecise(task.finishedAt) : fmtDuration(elapsed)}</b></span>
+          <div className="hero-stage" title={result}>{result}</div>
+          <div className="hero-meta">
+            <span>速度 <b>{rate(speedNow)}</b></span>
+            <span>平均 <b>{rate(task.avgSpeed ?? 0)}</b></span>
+            <span>已下载 <b>{bytes(task.bytes ?? 0)}</b></span>
+            <span>完成媒体 <b>{task.done ?? 0} / {task.total ?? 0}</b></span>
             <span>耗时 <b>{fmtDuration(elapsed)}</b></span>
           </div>
         </div>
       </section>
 
-      {download && !noop && (
-        <section className="stat-grid">
-          <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
-          <div className="stat"><span>峰值速度</span><div><b>{rate(task.peakSpeed ?? 0)}</b></div></div>
-          <div className="stat"><span>下载总量</span><div><b>{bytes(task.bytes ?? 0)}</b></div></div>
-          <div className="stat"><span>完成媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
-        </section>
-      )}
+      <section className="stat-grid">
+        <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>
+        <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
+        <div className="stat"><span>预计剩余</span><div><b>{running && (task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--"}</b></div></div>
+        <div className="stat"><span>本轮完成</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
+      </section>
 
-      {download && !noop && (
-        <section className="panel">
-          <div className="panel-head">
-            <h3><ChartPie size={14} /> 历史速度曲线</h3>
-            <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
+      <section className="panel">
+        <div className="panel-head">
+          <h3><ChartPie size={14} /> 速度曲线</h3>
+          <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
+        </div>
+        <TaskSpeedChart task={task} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>正在下载</h3>
+          <span className="meta">{active.length} 个文件</span>
+        </div>
+        {active.length > 0 ? (
+          <table className="table task-table download-table">
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th className="hide-sm">类型</th>
+                <th>进度</th>
+                <th>已传 / 期望</th>
+                <th>速度</th>
+                <th className="hide-sm">剩余</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((file) => (
+                <tr key={file.id}>
+                  <td className="name" title={file.name}>{file.name}</td>
+                  <td className="hide-sm"><span className={`kind-chip ${file.kind}`}>{fileKindLabel(file.kind)}</span></td>
+                  <td>
+                    <div className="progress-inline">
+                      <div className="mini"><i style={{ width: `${Math.max(0, Math.min(100, file.percent))}%` }} /></div>
+                      <span className={file.stalled ? "stalled" : ""}>{file.stalled ? "停滞" : file.percent >= 0 ? `${file.percent.toFixed(0)}%` : "—"}</span>
+                    </div>
+                  </td>
+                  <td>{bytes(file.transferred)}{file.expected > 0 ? ` / ${bytes(file.expected)}` : ""}</td>
+                  <td>{rate(file.speed)}</td>
+                  <td className="hide-sm">{file.etaMs > 0 ? fmtDuration(file.etaMs) : "--"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="chart-empty">{running ? "当前没有正在下载的文件。" : "任务已结束，没有正在下载的文件。"}</div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>最近完成</h3>
+          <span className="meta">{completed.length} 个</span>
+        </div>
+        {completed.length > 0 ? (
+          <div className="done-list">
+            {completed.map((file, index) => (
+              <div className="done-row" key={`${file.id}-${index}`}>
+                <CheckCircle2 size={14} color="var(--ok)" />
+                <span className={`kind-chip ${file.kind}`}>{fileKindLabel(file.kind)}</span>
+                <span className="nm" title={file.name}>{file.name}</span>
+                <span className="tm">{bytes(file.expected || file.transferred)}</span>
+                <span className="tm">{fmtDuration(file.elapsedMs)}</span>
+              </div>
+            ))}
           </div>
-          <TaskSpeedChart task={task} />
-        </section>
-      )}
+        ) : (
+          <div className="chart-empty">这个任务没有完成记录。</div>
+        )}
+      </section>
 
       <section className="panel">
         <div className="panel-head">
           <h3>任务信息</h3>
           <span className="meta">任务 {task.id}</span>
         </div>
-        <div className="account-rows task-detail-rows">
+        <div className="download-info-grid">
           <div><span>类型</span><b>{meta.label}</b></div>
           <div><span>聊天</span><b>{task.chat || "--"}</b></div>
+          <div><span>状态</span><b>{statusLabel(task.state)}</b></div>
           <div><span>开始时间</span><b>{dateTimePrecise(task.startedAt)}</b></div>
           <div><span>结束时间</span><b>{task.finishedAt ? dateTimePrecise(task.finishedAt) : "进行中"}</b></div>
           <div><span>耗时</span><b>{fmtDuration(elapsed)}</b></div>
-          <div><span>结果</span><b>{result}</b></div>
-          {task.error && <div><span>错误</span><b className="danger-text">{task.error}</b></div>}
+          <div><span>完成媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>
+          <div><span>任务 ID</span><b className="mono">{task.id}</b></div>
+          <div><span>峰值速度</span><b>{rate(task.peakSpeed ?? 0)}</b></div>
+          <div className="wide"><span>结果</span><b className={failed ? "danger-text" : ""}>{result}</b></div>
         </div>
       </section>
     </>
@@ -286,6 +359,22 @@ export function TasksPage({
       })
       .catch((e: Error) => toast(e.message, true));
   };
+
+  useEffect(() => {
+    if (!active || active.state !== "running") return;
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      call<TaskDetail>("taskDetail", { id: active.id })
+        .then((detail) => {
+          if (!cancelled) setActive((current) => current && current.id === detail.id ? detail : current);
+        })
+        .catch(() => undefined);
+    }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [active?.id, active?.state]);
 
   if (active) {
     return <TaskDetailView task={active} onBack={() => setActive(null)} toast={toast} />;

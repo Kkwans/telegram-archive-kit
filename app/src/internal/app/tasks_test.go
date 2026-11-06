@@ -37,15 +37,26 @@ func TestDownloadTaskHistoryPersists(t *testing.T) {
 	task.setSlug("chat-test")
 	task.updateDownload(DownloadSnapshot{
 		State: "正在下载", Percent: 25, Done: 1, Total: 4,
-		SpeedNow: 1024, SpeedAvg: 900, SpeedPeak: 1200, Bytes: 4096, ElapsedMs: 2000,
+		SpeedNow: 1024, SpeedAvg: 900, SpeedPeak: 1200, Bytes: 4096, ElapsedMs: 2000, ETAMs: 3000,
+		Active:    []TaskProgress{{ID: "2", Name: "clip.mp4", Kind: "video", Percent: 42, Transferred: 512, Expected: 1024, Speed: 512, ETAMs: 1500}},
+		Completed: []TaskProgress{{ID: "1", Name: "photo.jpg", Kind: "image", Done: true, Percent: 100, Expected: 2048, Transferred: 2048, ElapsedMs: 800}},
 	})
 	task.mu.Lock()
 	task.lastSampleAt = time.Now().Add(-2 * time.Second)
 	task.mu.Unlock()
 	task.updateDownload(DownloadSnapshot{
 		State: "正在下载", Percent: 50, Done: 2, Total: 4,
-		SpeedNow: 2048, SpeedAvg: 1500, SpeedPeak: 2048, Bytes: 8192, ElapsedMs: 4000,
+		SpeedNow: 2048, SpeedAvg: 1500, SpeedPeak: 2048, Bytes: 8192, ElapsedMs: 4000, ETAMs: 3000,
+		Active:    []TaskProgress{{ID: "3", Name: "song.mp3", Kind: "audio", Percent: 10, Transferred: 64, Expected: 640, Speed: 128, ETAMs: 1200}},
+		Completed: []TaskProgress{{ID: "1", Name: "photo.jpg", Kind: "image", Done: true, Percent: 100, Expected: 2048, Transferred: 2048, ElapsedMs: 800}},
 	})
+	running, err := f.TaskDetail(task.snapshot().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running.Active) != 1 || running.Active[0].Name != "song.mp3" || running.ETAMs != 3000 {
+		t.Fatalf("unexpected active media: %#v", running)
+	}
 	task.finish(nil)
 	f.saveTasks()
 
@@ -59,6 +70,9 @@ func TestDownloadTaskHistoryPersists(t *testing.T) {
 	if len(detail.Series) < 2 {
 		t.Fatalf("expected persisted speed samples, got %d", len(detail.Series))
 	}
+	if len(detail.Active) != 0 || len(detail.Completed) != 1 || detail.Completed[0].Name != "photo.jpg" {
+		t.Fatalf("unexpected media lists: active=%#v completed=%#v", detail.Active, detail.Completed)
+	}
 	f2 := &Facade{a: &App{ConfigDir: f.a.ConfigDir}}
 	f2.loadTasks()
 	d2, err := f2.TaskDetail(detail.ID)
@@ -67,5 +81,8 @@ func TestDownloadTaskHistoryPersists(t *testing.T) {
 	}
 	if len(d2.Series) < 2 || d2.Slug != "chat-test" {
 		t.Fatalf("history not restored: %#v", d2)
+	}
+	if len(d2.Completed) != 1 || d2.Completed[0].Name != "photo.jpg" {
+		t.Fatalf("media history not restored: %#v", d2.Completed)
 	}
 }

@@ -234,6 +234,7 @@ export interface TaskInfo {
   bytes?: number;
   done?: number;
   total?: number;
+  etaMs?: number;
   elapsedMs?: number;
   startedAt: number;
   finishedAt?: number;
@@ -248,6 +249,8 @@ export interface SpeedPoint {
 
 export interface TaskDetail extends TaskInfo {
   series?: SpeedPoint[];
+  active?: TaskRow[];
+  completed?: TaskRow[];
 }
 
 export interface ViewerPrefs {
