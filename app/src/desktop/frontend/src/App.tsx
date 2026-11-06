@@ -269,7 +269,7 @@ export default function App() {
       try {
         image = await Promise.race([
           call<string>("captureWindow"),
-          new Promise<string>((resolve) => window.setTimeout(() => resolve(""), 1500)),
+          new Promise<string>((resolve) => window.setTimeout(() => resolve(""), 3000)),
         ]);
       } catch {
         image = "";

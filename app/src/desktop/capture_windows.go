@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"syscall"
 	"unsafe"
 
@@ -66,6 +67,24 @@ func (b *Bridge) CaptureWindow() (string, error) {
 			dst[x*4+2] = src[x*4+0]
 			dst[x*4+3] = 255
 		}
+	}
+	// The glass layer is blurred, so a smaller snapshot is visually identical
+	// but much faster to encode and transfer on 2K/4K windows.
+	const maxWidth, maxHeight = 1600, 1200
+	if width > maxWidth || height > maxHeight {
+		scale := math.Min(float64(maxWidth)/float64(width), float64(maxHeight)/float64(height))
+		scaledWidth := max(1, int(float64(width)*scale))
+		scaledHeight := max(1, int(float64(height)*scale))
+		scaled := image.NewRGBA(image.Rect(0, 0, scaledWidth, scaledHeight))
+		for y := 0; y < scaledHeight; y++ {
+			sourceY := y * height / scaledHeight
+			destination := scaled.Pix[y*scaled.Stride:]
+			for x := 0; x < scaledWidth; x++ {
+				source := img.PixOffset(x*width/scaledWidth, sourceY)
+				copy(destination[x*4:x*4+4], img.Pix[source:source+4])
+			}
+		}
+		img = scaled
 	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
