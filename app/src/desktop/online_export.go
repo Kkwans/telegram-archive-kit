@@ -672,11 +672,6 @@ func (b *Bridge) localOnlineArchive(chat OnlineChat) localOnlineArchive {
 func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (OnlineChat, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
-	if !b.online.ReadyFor(info.Namespace, peerKey) {
-		if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, timeout); err != nil {
-			return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", err))
-		}
-	}
 	chat, ok := b.online.Chat(peerKey)
 	if !ok {
 		if cached, found := b.online.CachedChat(info.Namespace, peerKey); found {
@@ -685,22 +680,30 @@ func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (Onlin
 		}
 	}
 	needsAccessHash := strings.HasPrefix(peerKey, "user:") || strings.HasPrefix(peerKey, "channel:")
-	if !ok || (needsAccessHash && chat.AccessHash == 0) {
-		if _, fetchErr := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, timeout); fetchErr != nil {
-			if !ok {
-				return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", fetchErr))
-			}
-			if needsAccessHash && chat.AccessHash == 0 {
-				return OnlineChat{}, friendlyOnlineError(fmt.Errorf("该会话缺少访问凭据，请在网络恢复后刷新在线列表：%w", fetchErr))
-			}
-		} else {
-			chat, ok = b.online.Chat(peerKey)
+	// A cached snapshot carries access hashes, so exporting while the list is
+	// refreshing must not trigger a second full getDialogs request.
+	if ok && (!needsAccessHash || chat.AccessHash != 0) {
+		return chat, nil
+	}
+	if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, timeout); err != nil {
+		if !ok {
+			return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", err))
 		}
+		return OnlineChat{}, friendlyOnlineError(fmt.Errorf("该会话缺少访问凭据，请在网络恢复后刷新在线列表：%w", err))
 	}
-	if !ok {
-		return OnlineChat{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
+	if chat, ok = b.online.Chat(peerKey); ok {
+		if needsAccessHash && chat.AccessHash == 0 {
+			return OnlineChat{}, errors.New("该会话缺少访问凭据，请重新登录或稍后刷新在线列表")
+		}
+		return chat, nil
 	}
-	return chat, nil
+	if cached, found := b.online.CachedChat(info.Namespace, peerKey); found {
+		if needsAccessHash && cached.AccessHash == 0 {
+			return OnlineChat{}, errors.New("该会话缺少访问凭据，请重新登录或稍后刷新在线列表")
+		}
+		return cached, nil
+	}
+	return OnlineChat{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
 }
 
 func onlineStats(messages []map[string]any) (service, images, videos, audio, files, other, media int, size int64) {
