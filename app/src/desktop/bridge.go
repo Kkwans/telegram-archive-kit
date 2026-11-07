@@ -35,6 +35,10 @@ type Bridge struct {
 	notice  *Notice
 	dialog  *PickedDialog
 	seq     int64
+
+	previewMu       sync.Mutex
+	previewProgress OnlineExportProgress
+	previewCancel   context.CancelFunc
 }
 
 // SessionCheckReply adds the live Telegram profile to the existing check result.
@@ -403,6 +407,11 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.OnlineAvatars(p.Peers, p.Timeout)
 	case "onlineExportPreview":
 		return b.OnlineExportPreview(p.Peer, p.Timeout, p.Limit)
+	case "onlineExportPreviewProgress":
+		return b.OnlineExportPreviewProgress(), nil
+	case "onlineExportPreviewCancel":
+		b.OnlineExportPreviewCancel()
+		return nil, nil
 	case "onlineExportDiscard":
 		b.OnlineExportDiscard(p.Token)
 		return nil, nil

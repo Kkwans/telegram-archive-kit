@@ -6,16 +6,21 @@ import {
   Check,
   CheckCircle2,
   ChartPie,
+  ChevronRight,
   Download,
   FileJson,
+  FileText,
   FolderInput,
   FolderOpen,
   GitMerge,
+  Image as ImageIcon,
   ListTodo,
   Loader2,
+  Music,
   RefreshCw,
   Search,
   Trash2,
+  Video,
   X,
   XCircle,
 } from "lucide-react";
@@ -90,6 +95,35 @@ function fileKindLabel(kind: string): string {
     image: "图片", video: "视频", audio: "音频", file: "文件", voice: "语音", gif: "动图",
   };
   return labels[kind] || kind || "媒体";
+}
+
+function mediaGroup(kind: string): "image" | "video" | "audio" | "file" {
+  if (kind === "image" || kind === "gif") return "image";
+  if (kind === "video") return "video";
+  if (kind === "audio" || kind === "voice") return "audio";
+  return "file";
+}
+
+const MEDIA_GROUPS = [
+  { key: "image", label: "图片", icon: ImageIcon },
+  { key: "video", label: "视频", icon: Video },
+  { key: "audio", label: "音频", icon: Music },
+  { key: "file", label: "文件", icon: FileText },
+] as const;
+
+function speedParts(n: number): { value: string; unit: string } {
+  if (!n || n <= 0 || !Number.isFinite(n)) return { value: "0", unit: "B/s" };
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = n;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index++;
+  }
+  return {
+    value: value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1),
+    unit: `${units[index]}/s`,
+  };
 }
 
 function TaskSpeedChart({ task }: { task: TaskDetail }) {
@@ -170,6 +204,7 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
 }
 
 export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () => void; toast: (msg: string, err?: boolean) => void }) {
+  const [showAll, setShowAll] = useState(false);
   const meta = kindMeta(task.kind);
   const running = task.state === "running";
   const failed = task.state === "failed";
@@ -180,9 +215,29 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
   const active = task.active ?? [];
   const completed = task.completed ?? [];
   const speedNow = series.length > 0 ? series[series.length - 1].now : 0;
+  const speed = speedParts(speedNow);
+  const recorded = [...completed, ...active];
+  const mediaTotals = MEDIA_GROUPS.map((group) => {
+    let count = 0;
+    let size = 0;
+    for (const file of recorded) {
+      if (mediaGroup(file.kind) !== group.key) continue;
+      count++;
+      size += file.expected > 0 ? file.expected : file.transferred;
+    }
+    return { ...group, count, size };
+  });
+  const recordedCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
+  const incompleteRecords = !running && !task.recordsComplete && recordedCount > 0;
+  const recent = completed.slice(0, 5);
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
     : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : "任务失败"));
+  const sparkValues = series.slice(-28).map((sample) => sample.now);
+  const sparkMax = Math.max(1, ...sparkValues);
+  const sparkPoints = sparkValues.map((value, index) =>
+    `${(index / Math.max(1, sparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / sparkMax) * 24).toFixed(2)}`
+  ).join(" ");
 
   return (
     <>
@@ -220,13 +275,44 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             <span className={`tag ${failed ? "bad" : ""}`}>{statusLabel(task.state)}</span>
           </div>
           <p className="download-hero-desc" title={result}>{result}</p>
-          <div className="download-hero-meta">
-            <span>速度 <b>{rate(speedNow)}</b></span>
-            <span>平均 <b>{rate(task.avgSpeed ?? 0)}</b></span>
-            <span>已下载 <b>{bytes(task.bytes ?? 0)}</b></span>
-            <span>完成媒体 <b>{task.done ?? 0} / {task.total ?? 0}</b></span>
-            <span>耗时 <b>{fmtDuration(elapsed)}</b></span>
+          <div className="download-hero-facts">
+            <div>
+              <span>已下载</span>
+              <b>{bytes(task.bytes ?? 0)}</b>
+            </div>
+            <div>
+              <span>{task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
+              <b>{task.totalBytes ? bytes(task.totalBytes) : "--"}</b>
+            </div>
+            <div>
+              <span>完成媒体</span>
+              <b>{task.done ?? 0}<em> / {task.total ?? 0}</em></b>
+            </div>
+            <div>
+              <span>耗时</span>
+              <b>{fmtDuration(elapsed)}</b>
+            </div>
           </div>
+        </div>
+        <div className={`download-hero-meter ${running ? "running" : failed ? "failed" : "done"}`}>
+          {running ? (
+            <>
+              <span className="download-meter-label"><i />实时速度</span>
+              <div className="download-meter-value"><b>{speed.value}</b><em>{speed.unit}</em></div>
+              {sparkValues.length > 1 && (
+                <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+                  <polygon points={`0,28 ${sparkPoints} 100,28`} />
+                  <polyline points={sparkPoints} vectorEffect="non-scaling-stroke" />
+                </svg>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="download-meter-label">{failed ? "任务已停止" : "任务已完成"}</span>
+              <div className="download-meter-value"><b>{bytes(task.bytes ?? 0)}</b></div>
+              <span className="download-meter-foot">本次下载总量</span>
+            </>
+          )}
         </div>
         {!running && (
           <span className="download-hero-watermark" aria-hidden="true">
@@ -236,10 +322,42 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
       </section>
 
       <section className="stat-grid download-stats">
-        <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>
+        <div className="stat"><span>实时速度</span><div><b>{running ? rate(speedNow) : "--"}</b></div></div>
         <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
-        <div className="stat"><span>预计剩余</span><div><b>{running && (task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--"}</b></div></div>
+        <div className="stat">
+          <span>{task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
+          <div><b>{task.totalBytes ? bytes(task.totalBytes) : "--"}</b></div>
+        </div>
         <div className="stat"><span>本轮完成</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
+        <div className="stat">
+          <span>{running ? "预计剩余" : "任务耗时"}</span>
+          <div><b>{running ? ((task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--") : fmtDuration(elapsed)}</b></div>
+        </div>
+      </section>
+
+      <section className="panel download-media-panel">
+        <div className="panel-head">
+          <h3><ChartPie size={14} /> 本次媒体构成</h3>
+          <span className="meta">{recordedCount} 个已记录</span>
+        </div>
+        <div className="download-media-grid">
+          {mediaTotals.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div className={`download-media-card ${item.key}`} key={item.key}>
+                <span className="download-media-icon"><Icon size={15} /></span>
+                <div>
+                  <span>{item.label}</span>
+                  <b>{item.count.toLocaleString()} <em>个</em></b>
+                  <small>{item.size > 0 ? bytes(item.size) : "—"}</small>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {incompleteRecords && (
+          <p className="download-record-note">旧任务没有保存全部逐项记录；以上为当前可读取的完成记录。</p>
+        )}
       </section>
 
       <section className="panel">
@@ -250,65 +368,83 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
         <TaskSpeedChart task={task} />
       </section>
 
+      {running && (
+        <section className="panel">
+          <div className="panel-head">
+            <h3>正在下载</h3>
+            <span className="meta">{active.length} 个文件</span>
+          </div>
+          {active.length > 0 ? (
+            <table className="table task-files-table download-table">
+              <thead>
+                <tr>
+                  <th className="col-file">文件</th>
+                  <th className="col-kind center">类型</th>
+                  <th className="col-progress">进度</th>
+                  <th className="col-transfer">已传 / 期望</th>
+                  <th className="col-speed">速度</th>
+                  <th className="col-eta">剩余</th>
+                </tr>
+              </thead>
+              <tbody>
+                {active.map((file, index) => (
+                  <tr key={`${file.id || file.name}-${index}`}>
+                    <td className="col-file" title={file.name}>{file.name}</td>
+                    <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
+                    <td className="col-progress">
+                      <div className="progress-inline">
+                        <div className="mini"><i style={{ width: `${Math.max(0, Math.min(100, file.percent))}%` }} /></div>
+                        <span className={file.stalled ? "stalled" : ""}>{file.stalled ? "停滞" : file.percent >= 0 ? `${file.percent.toFixed(0)}%` : "—"}</span>
+                      </div>
+                    </td>
+                    <td className="col-transfer">{bytes(file.transferred)}{file.expected > 0 ? ` / ${bytes(file.expected)}` : ""}</td>
+                    <td className="col-speed">{rate(file.speed)}</td>
+                    <td className="col-eta">{file.etaMs > 0 ? fmtDuration(file.etaMs) : "--"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="download-empty"><Download size={14} /> 当前没有正在下载的文件。</div>
+          )}
+        </section>
+      )}
+
       <section className="panel">
         <div className="panel-head">
-          <h3>正在下载</h3>
-          <span className="meta">{active.length} 个文件</span>
+          <h3>最近完成</h3>
+          <div className="panel-head-actions">
+            <span className="meta">{completed.length} 个</span>
+            {completed.length > 0 && (
+              <button className="btn sm ghost" onClick={() => setShowAll(true)}>
+                查看全部 <ChevronRight size={12} />
+              </button>
+            )}
+          </div>
         </div>
-        {active.length > 0 ? (
-          <table className="table task-table download-table">
+        {recent.length > 0 ? (
+          <table className="table task-files-table download-table completed-table">
             <thead>
               <tr>
-                <th>文件</th>
-                <th className="hide-sm">类型</th>
-                <th>进度</th>
-                <th>已传 / 期望</th>
-                <th>速度</th>
-                <th className="hide-sm">剩余</th>
+                <th className="col-file">文件</th>
+                <th className="col-kind center">类型</th>
+                <th className="col-size">大小</th>
+                <th className="col-elapsed">耗时</th>
               </tr>
             </thead>
             <tbody>
-              {active.map((file) => (
-                <tr key={file.id}>
-                  <td className="name" title={file.name}>{file.name}</td>
-                  <td className="hide-sm"><span className={`kind-chip ${file.kind}`}>{fileKindLabel(file.kind)}</span></td>
-                  <td>
-                    <div className="progress-inline">
-                      <div className="mini"><i style={{ width: `${Math.max(0, Math.min(100, file.percent))}%` }} /></div>
-                      <span className={file.stalled ? "stalled" : ""}>{file.stalled ? "停滞" : file.percent >= 0 ? `${file.percent.toFixed(0)}%` : "—"}</span>
-                    </div>
-                  </td>
-                  <td>{bytes(file.transferred)}{file.expected > 0 ? ` / ${bytes(file.expected)}` : ""}</td>
-                  <td>{rate(file.speed)}</td>
-                  <td className="hide-sm">{file.etaMs > 0 ? fmtDuration(file.etaMs) : "--"}</td>
+              {recent.map((file, index) => (
+                <tr key={`${file.id || file.name}-${index}`}>
+                  <td className="col-file" title={file.name}>{file.name}</td>
+                  <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
+                  <td className="col-size">{bytes(file.expected || file.transferred)}</td>
+                  <td className="col-elapsed">{file.elapsedMs > 0 ? fmtDuration(file.elapsedMs) : "--"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <div className="download-empty"><Download size={14} /> {running ? "当前没有正在下载的文件。" : "任务已结束，没有正在下载的文件。"}</div>
-        )}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h3>最近完成</h3>
-          <span className="meta">{completed.length} 个</span>
-        </div>
-        {completed.length > 0 ? (
-          <div className="done-list">
-            {completed.map((file, index) => (
-              <div className="done-row" key={`${file.id}-${index}`}>
-                <CheckCircle2 size={14} color="var(--ok)" />
-                <span className={`kind-chip ${file.kind}`}>{fileKindLabel(file.kind)}</span>
-                <span className="nm" title={file.name}>{file.name}</span>
-                <span className="tm">{bytes(file.expected || file.transferred)}</span>
-                <span className="tm">{fmtDuration(file.elapsedMs)}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="download-empty"><CheckCircle2 size={14} /> 旧任务没有保存逐项媒体记录；新任务会显示最近完成的文件。</div>
+          <div className="download-empty"><CheckCircle2 size={14} /> {running ? "还没有完成的文件。" : "旧任务没有保存逐项媒体记录；新任务会保留全部完成记录。"}</div>
         )}
       </section>
 
@@ -330,6 +466,55 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
           <div className="wide"><span>结果</span><b className={failed ? "danger-text" : ""}>{result}</b></div>
         </div>
       </section>
+
+      {showAll && createPortal(
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowAll(false); }}>
+          <div className="modal task-records-modal" role="dialog" aria-modal="true" aria-labelledby="task-records-title">
+            <div className="task-modal-head">
+              <div>
+                <h2 id="task-records-title">全部下载记录</h2>
+                <p className="modal-sub">{taskTitle(task)} · {completed.length} 个媒体</p>
+              </div>
+              <button className="icon-btn" aria-label="关闭下载记录" onClick={() => setShowAll(false)}>
+                <X size={15} />
+              </button>
+            </div>
+            {incompleteRecords && (
+              <p className="download-record-note">该任务来自旧版本，未保存全部逐项记录；以下为可用记录。</p>
+            )}
+            <div className="task-records-scroll">
+              {completed.length > 0 ? (
+                <table className="table task-files-table download-table">
+                  <thead>
+                    <tr>
+                      <th className="col-file">文件</th>
+                      <th className="col-kind center">类型</th>
+                      <th className="col-size">大小</th>
+                      <th className="col-elapsed">耗时</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {completed.map((file, index) => (
+                      <tr key={`${file.id || file.name}-${index}`}>
+                        <td className="col-file" title={file.name}>{file.name}</td>
+                        <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
+                        <td className="col-size">{bytes(file.expected || file.transferred)}</td>
+                        <td className="col-elapsed">{file.elapsedMs > 0 ? fmtDuration(file.elapsedMs) : "--"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="download-empty"><CheckCircle2 size={14} /> 没有可显示的文件记录。</div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setShowAll(false)}>关闭</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowDownToLine,
@@ -205,7 +205,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <Sparkles size={12} /> TELEGRAM ARCHIVE KIT
           </span>
           <h1>你的离线档案库，一眼掌握</h1>
-          <p className="home-lede">把 Telegram 的聊天、图片和视频整理成本地可浏览的档案；下载、构建与检索都在这里完成。</p>
+          <p className="home-lede">把 Telegram 的聊天、图片和视频整理成离线档案；下载、构建与检索都在这里完成。</p>
           <div className="home-cta">
             <button className="btn primary" onClick={importJSON} disabled={loading}>
               <Download size={14} /> 导入 result.json
@@ -1196,9 +1196,10 @@ const ArtVideo = forwardRef<VideoApi, {
   poster?: string;
   maxVolume: number;
   frameAspect: string;
+  knownRatio: number;
   hasNext: boolean;
   onNext: () => void;
-}>(function ArtVideo({ src, poster, maxVolume, frameAspect, hasNext, onNext }, ref) {
+}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, onNext }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const fitRef = useRef<() => void>(() => undefined);
@@ -1212,7 +1213,7 @@ const ArtVideo = forwardRef<VideoApi, {
   const audioCtx = useRef<AudioContext | null>(null);
   const gainNode = useRef<GainNode | null>(null);
   const [ready, setReady] = useState(false);
-  const [framed, setFramed] = useState(false);
+  const [framed, setFramed] = useState(knownRatio > 0 || frameAspect === "16:9" || frameAspect === "4:3");
   const [fit, setFit] = useState<"" | "compact" | "tiny">("");
 
   const showNotice = (text: string) => {
@@ -1343,7 +1344,7 @@ const ArtVideo = forwardRef<VideoApi, {
     },
   }), [maxVolume]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!box.current) return;
     setReady(false);
     Artplayer.PLAYBACK_RATE = PLAY_RATES;
@@ -1366,39 +1367,40 @@ const ArtVideo = forwardRef<VideoApi, {
       theme: "#2f6bff",
       lang: "zh-cn",
       moreVideoAttr: { playsInline: true, preload: "auto" } as never,
-      settings: [
-        {
-          name: "tak-precise-speed",
-          html: "精确倍速",
-          tooltip: "1.00×",
-          range: [1, 0.1, 10, 0.01],
-          onChange(item) {
-            const next = Number((item as unknown as { range: number[] }).range[0]);
-            const value = Math.max(0.1, Math.min(10, Math.round(next * 100) / 100));
-            rateRef.current = value;
-            boostRef.current = false;
-            this.playbackRate = value;
-            updateRateLabel(value);
-            return `${value.toFixed(2)}×`;
-          },
-        },
-        {
-          name: "tak-screenshot",
-          html: "截图",
-          onClick() {
-            void this.screenshot();
-          },
-        },
-        {
-          name: "tak-pip",
-          html: "画中画",
-          onClick() {
-            this.pip = !this.pip;
-          },
-        },
-      ],
     });
     playerRef.current = player;
+    player.setting.add({
+      name: "tak-precise-speed",
+      html: "精确倍速",
+      icon: player.icons.playbackRate.outerHTML,
+      tooltip: "1.00×",
+      range: [1, 0.1, 10, 0.01],
+      onChange(item) {
+        const next = Number((item as unknown as { range: number[] }).range[0]);
+        const value = Math.max(0.1, Math.min(10, Math.round(next * 100) / 100));
+        rateRef.current = value;
+        boostRef.current = false;
+        this.playbackRate = value;
+        updateRateLabel(value);
+        return `${value.toFixed(2)}×`;
+      },
+    });
+    player.setting.add({
+      name: "tak-screenshot",
+      html: "截图",
+      icon: player.icons.screenshot.outerHTML,
+      onClick() {
+        void this.screenshot();
+      },
+    });
+    player.setting.add({
+      name: "tak-pip",
+      html: "画中画",
+      icon: player.icons.pip.outerHTML,
+      onClick() {
+        this.pip = !this.pip;
+      },
+    });
     const fitFrame = () => {
       const el = box.current;
       const stage = wrap.current?.parentElement;
@@ -1410,7 +1412,11 @@ const ArtVideo = forwardRef<VideoApi, {
       const availH = Math.max(120, stage.clientHeight - padY);
       const vw = player.video.videoWidth;
       const vh = player.video.videoHeight;
-      let ratio = frameAspect === "16:9" ? 16 / 9 : frameAspect === "4:3" ? 4 / 3 : (vw > 0 && vh > 0 ? vw / vh : posterRatio.current || 16 / 9);
+      let ratio = frameAspect === "16:9" ? 16 / 9
+        : frameAspect === "4:3" ? 4 / 3
+        : knownRatio > 0 ? knownRatio
+        : vw > 0 && vh > 0 ? vw / vh
+        : posterRatio.current || 16 / 9;
       if (!Number.isFinite(ratio) || ratio <= 0) ratio = 16 / 9;
       let w = availW;
       let h = w / ratio;
@@ -1529,7 +1535,7 @@ const ArtVideo = forwardRef<VideoApi, {
       player.destroy(false);
       playerRef.current = null;
     };
-  }, [src, poster, frameAspect, hasNext]);
+  }, [src, poster, frameAspect, knownRatio, hasNext]);
 
   return (
     <>
@@ -1574,6 +1580,7 @@ function MediaViewer({
   const isVideo = item.kind === "video";
   const src = mediaURL(chat.slug, item.rel);
   const poster = item.thumb ? thumbURL(chat.slug, item.thumb) : "";
+  const knownRatio = item.width && item.height ? item.width / item.height : 0;
   const ambient = item.thumb ? thumbURL(chat.slug, item.thumb) : isVideo ? poster : src;
   const modal = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
@@ -1637,11 +1644,6 @@ function MediaViewer({
   };
 
   const toggleFullscreen = () => {
-    if (stateRef.current.kind === "video") {
-      const p = api.current;
-      if (p) p.setFullscreen(!p.isFullscreen());
-      return;
-    }
     if (document.fullscreenElement) void document.exitFullscreen();
     else void modal.current?.requestFullscreen();
   };
@@ -1816,15 +1818,15 @@ function MediaViewer({
 
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
-      {prefs.backdrop !== "frosted" && (
-        <div
-          className={`viewer-ambient ${prefs.backdrop}`}
-          style={prefs.backdrop === "ambient" && ambient
-            ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .26), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .22), transparent 66%), url(${ambient})` }
-            : prefs.backdrop === "solid" ? { background: tone } : undefined}
-          aria-hidden="true"
-        />
-      )}
+      <div
+        className={`viewer-ambient ${prefs.backdrop === "solid" ? "solid" : "ambient"}`}
+        style={prefs.backdrop === "ambient" && ambient
+          ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .26), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .22), transparent 66%), url(${ambient})` }
+          : prefs.backdrop === "solid" ? { background: tone }
+          : ambient ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .2), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .16), transparent 66%), url(${ambient})` }
+          : undefined}
+        aria-hidden="true"
+      />
       <header className="media-modal-head viewer-head">
         <span className="media-modal-name" title={item.name}>{item.name}</span>
         <span className="media-modal-count">{index + 1} / {items.length} · {bytes(item.size)}</span>
@@ -1840,11 +1842,9 @@ function MediaViewer({
         <button className="btn sm ghost" onClick={() => onReveal(item)}>
           <LocateFixed size={12} /> 定位文件
         </button>
-        {!isVideo && (
-          <button className="btn sm ghost" onClick={enterImmersive}>
-            <Eye size={12} /> 沉浸模式
-          </button>
-        )}
+        <button className="btn sm ghost" onClick={enterImmersive}>
+          <Eye size={12} /> 沉浸模式
+        </button>
         <button className="btn sm ghost" onClick={toggleFullscreen}>
           <Maximize2 size={12} /> 全屏
         </button>
@@ -1862,6 +1862,7 @@ function MediaViewer({
             poster={poster || ""}
             maxVolume={prefs.maxVolume}
             frameAspect={prefs.videoFrameAspect}
+            knownRatio={knownRatio}
             hasNext={index < items.length - 1}
             onNext={() => onIndex(index + 1)}
           />

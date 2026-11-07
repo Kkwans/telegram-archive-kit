@@ -127,3 +127,22 @@ func TestCompletedTaskBackfillsRecentWorkspaceMedia(t *testing.T) {
 		t.Fatalf("unexpected backfill entry: %#v", detail.Completed[1])
 	}
 }
+
+func TestTaskKeepsCompletedRecordsAcrossPasses(t *testing.T) {
+	task := &backgroundTask{dto: TaskDTO{State: "running"}}
+	task.updateDownload(DownloadSnapshot{Pass: 1, Completed: []TaskProgress{
+		{ID: "2", Name: "two.jpg", Done: true},
+		{ID: "1", Name: "one.jpg", Done: true},
+	}})
+	task.updateDownload(DownloadSnapshot{Pass: 2, Completed: []TaskProgress{
+		{ID: "3", Name: "three.jpg", Done: true},
+		{ID: "2", Name: "two.jpg", Done: true},
+	}})
+	detail := task.detail()
+	if len(detail.Completed) != 3 {
+		t.Fatalf("completed records = %#v", detail.Completed)
+	}
+	if detail.Completed[0].ID != "3" || detail.Completed[1].ID != "2" || detail.Completed[2].ID != "1" {
+		t.Fatalf("completed order = %#v", detail.Completed)
+	}
+}

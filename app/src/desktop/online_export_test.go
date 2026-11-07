@@ -73,7 +73,7 @@ func TestLocalMaxMessageID(t *testing.T) {
 
 func TestMapOnlineMedia(t *testing.T) {
 	photo := &tg.MessageMediaPhoto{Photo: &tg.Photo{}}
-	kind, file, _, _, ok := mapOnlineMedia(photo)
+	kind, file, _, _, _, _, ok := mapOnlineMedia(photo)
 	if !ok || kind != "photo" || file == "" {
 		t.Errorf("photo mapping = %q %q %v", kind, file, ok)
 	}
@@ -83,9 +83,9 @@ func TestMapOnlineMedia(t *testing.T) {
 		&tg.DocumentAttributeVideo{},
 	}}
 	media := &tg.MessageMediaDocument{Document: doc}
-	kind, file, name, size, ok := mapOnlineMedia(media)
-	if !ok || kind != "video_file" || file != "clip.mp4" || name != "clip.mp4" || size != 123 {
-		t.Errorf("document mapping = %q %q %q %d %v", kind, file, name, size, ok)
+	kind, file, name, size, width, height, ok := mapOnlineMedia(media)
+	if !ok || kind != "video_file" || file != "clip.mp4" || name != "clip.mp4" || size != 123 || width != 0 || height != 0 {
+		t.Errorf("document mapping = %q %q %q %d %dx%d %v", kind, file, name, size, width, height, ok)
 	}
 }
 

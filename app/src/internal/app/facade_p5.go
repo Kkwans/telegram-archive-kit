@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"telegramarchivekit/internal/archive"
+	"telegramarchivekit/internal/media"
 )
 
 // MediaItemDTO is one locally stored media/document file for the desktop
@@ -24,6 +25,8 @@ type MediaItemDTO struct {
 	ModTime int64  `json:"modTime"`
 	Rel     string `json:"rel"`
 	Thumb   string `json:"thumb,omitempty"`
+	Width   int    `json:"width,omitempty"`
+	Height  int    `json:"height,omitempty"`
 }
 
 func mediaKindFromExt(ext string) string {
@@ -212,6 +215,24 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 	root := f.a.workspaceDir(slug)
 	items := make([]MediaItemDTO, 0, 256)
 	seen := make(map[string]bool)
+	dimensions := map[string][2]int{}
+	if data, err := os.ReadFile(filepath.Join(root, "source", "result.json")); err == nil {
+		var source struct {
+			Messages []struct {
+				ID     json.RawMessage `json:"id"`
+				Width  int             `json:"width"`
+				Height int             `json:"height"`
+			} `json:"messages"`
+		}
+		if json.Unmarshal(data, &source) == nil {
+			for _, m := range source.Messages {
+				id := strings.Trim(strings.TrimSpace(string(m.ID)), `"`)
+				if id != "" && m.Width > 0 && m.Height > 0 {
+					dimensions[id] = [2]int{m.Width, m.Height}
+				}
+			}
+		}
+	}
 
 	add := func(id, name, kind, rel, thumb string, size int64, modTime int64) {
 		rel = strings.ReplaceAll(rel, "\\", "/")
@@ -236,18 +257,29 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 				}
 			}
 		}
-		thumbRel := ""
+		thumbRel, thumbAbs := "", ""
 		if thumb != "" {
-			if _, tClean, err := f.mediaRelAbs(slug, thumb); err == nil {
-				thumbRel = tClean
+			if tAbs, tClean, err := f.mediaRelAbs(slug, thumb); err == nil {
+				thumbRel, thumbAbs = tClean, tAbs
 			}
 		}
 		if id == "" {
 			id = mediaMessageID(name)
 		}
+		width, height := 0, 0
+		if dim, ok := dimensions[id]; ok {
+			width, height = dim[0], dim[1]
+		}
+		if (width <= 0 || height <= 0) && kind == "video" {
+			width, height = media.VideoDimensions(abs)
+			if (width <= 0 || height <= 0) && thumbAbs != "" {
+				width, height = media.ImageDimensions(thumbAbs)
+			}
+		}
 		seen[rel] = true
 		items = append(items, MediaItemDTO{
 			ID: id, Name: name, Kind: kind, Size: size, ModTime: modTime, Rel: clean, Thumb: thumbRel,
+			Width: width, Height: height,
 		})
 	}
 

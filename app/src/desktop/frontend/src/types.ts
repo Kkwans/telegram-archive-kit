@@ -174,6 +174,8 @@ export interface MediaItem {
   modTime: number;
   rel: string;
   thumb?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface PendingInput {
@@ -232,6 +234,8 @@ export interface TaskInfo {
   avgSpeed?: number;
   peakSpeed?: number;
   bytes?: number;
+  totalBytes?: number;
+  totalBytesEstimated?: boolean;
   done?: number;
   total?: number;
   etaMs?: number;
@@ -239,6 +243,7 @@ export interface TaskInfo {
   startedAt: number;
   finishedAt?: number;
   error?: string;
+  recordsComplete?: boolean;
 }
 
 export interface SpeedPoint {
@@ -328,6 +333,15 @@ export interface OnlineChats {
   fetchedAt: number;
   source?: string;
   error?: string;
+}
+
+export interface OnlineExportProgress {
+  active: boolean;
+  stage?: string;
+  detail?: string;
+  percent: number;
+  messages: number;
+  media: number;
 }
 
 export interface OnlineExportPreview {

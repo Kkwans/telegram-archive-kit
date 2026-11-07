@@ -34,6 +34,25 @@ type OnlineExportResult struct {
 	UpToDate bool   `json:"upToDate,omitempty"`
 }
 
+// ExportProgress is the live state of one history walk. Hashing it out to the
+// desktop lets the preview dialog show a moving bar instead of a bare spinner.
+type ExportProgress struct {
+	Stage    string  `json:"stage"`
+	Detail   string  `json:"detail,omitempty"`
+	Percent  float64 `json:"percent"`
+	Messages int     `json:"messages"`
+	Media    int     `json:"media"`
+}
+
+type OnlineExportProgress struct {
+	Active   bool    `json:"active"`
+	Stage    string  `json:"stage,omitempty"`
+	Detail   string  `json:"detail,omitempty"`
+	Percent  float64 `json:"percent"`
+	Messages int     `json:"messages"`
+	Media    int     `json:"media"`
+}
+
 type OnlineExportPreview struct {
 	Peer           string `json:"peer"`
 	Chat           string `json:"chat"`
@@ -142,6 +161,16 @@ func (s *OnlineService) DropPrepared(token string) {
 }
 
 func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int) (OnlineChat, []map[string]any, int, error) {
+	return s.exportMessages(ctx, ns, proxy, chat, timeout, minID, limit, nil)
+}
+
+func (s *OnlineService) ExportMessagesProgress(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int, report func(ExportProgress)) (OnlineChat, []map[string]any, int, error) {
+	return s.exportMessages(ctx, ns, proxy, chat, timeout, minID, limit, report)
+}
+
+func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int, report func(ExportProgress)) (OnlineChat, []map[string]any, int, error) {
+	baseID := minID
+	reportExport(report, ExportProgress{Stage: "连接 Telegram", Percent: 2})
 	ref := peerInputFromChat(chat)
 	if ref == nil {
 		return OnlineChat{}, nil, 0, errors.New("该会话缺少访问凭据，请刷新在线列表后重试")
@@ -172,6 +201,10 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, ch
 
 	out := make([]map[string]any, 0, 256)
 	mediaCount := 0
+	scanned := 0
+	highID := chat.LastMessageID
+	totalEstimate := 0
+	lastPercent := 2.0
 	err = client.Run(runCtx, func(ctx context.Context) error {
 		offset := 0
 		pages := 0
@@ -188,6 +221,17 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, ch
 				if err == nil {
 					break
 				}
+				if d, ok := tgerr.AsFloodWait(err); ok {
+					seconds := int(d.Seconds())
+					if seconds < 1 {
+						seconds = 1
+					}
+					reportExport(report, ExportProgress{
+						Stage:   fmt.Sprintf("Telegram 限流，等待 %d 秒", seconds),
+						Detail:  fmt.Sprintf("已读取 %d 条消息 · %d 个媒体", scanned, mediaCount),
+						Percent: lastPercent, Messages: scanned, Media: mediaCount,
+					})
+				}
 				retry, waitErr := waitFlood(ctx, err)
 				if !retry {
 					return waitErr
@@ -198,14 +242,17 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, ch
 				break
 			}
 			entities := historyEntities(res)
-			minID := 0
+			pageLowID := 0
 			for _, msg := range msgs {
 				id := messageID(msg)
 				if id == 0 {
 					continue
 				}
-				if minID == 0 || id < minID {
-					minID = id
+				if id > highID {
+					highID = id
+				}
+				if pageLowID == 0 || id < pageLowID {
+					pageLowID = id
 				}
 				raw, hasMedia, ok := convertOnlineMessage(msg, chat, entities)
 				if !ok {
@@ -219,13 +266,43 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, ch
 					break
 				}
 			}
+			scanned += len(msgs)
+			if baseID > 0 {
+				if highID > baseID {
+					totalEstimate = highID - baseID
+				}
+			} else if totalEstimate == 0 {
+				if count := historyCount(res); count > 0 {
+					totalEstimate = count
+				}
+				if totalEstimate == 0 && highID > baseID {
+					totalEstimate = highID - baseID
+				}
+			}
+			if limit > 0 {
+				lastPercent = float64(len(out)) * 100 / float64(limit)
+			} else if totalEstimate > 0 {
+				processed := highID - pageLowID
+				if processed < 0 {
+					processed = 0
+				}
+				lastPercent = float64(processed) * 100 / float64(totalEstimate)
+			}
+			if lastPercent > 99 {
+				lastPercent = 99
+			}
+			reportExport(report, ExportProgress{
+				Stage:   "读取历史消息",
+				Detail:  fmt.Sprintf("已读取 %d 条消息 · 发现 %d 个媒体", scanned, mediaCount),
+				Percent: lastPercent, Messages: scanned, Media: mediaCount,
+			})
 			if limit > 0 && len(out) >= limit {
 				break
 			}
-			if len(msgs) < 100 || minID == 0 {
+			if len(msgs) < 100 || pageLowID == 0 {
 				break
 			}
-			offset = minID
+			offset = pageLowID
 			pages++
 			if pages%5 == 0 {
 				select {
@@ -245,7 +322,28 @@ func (s *OnlineService) ExportMessages(ctx context.Context, ns, proxy string, ch
 		aj, _ := strconv.Atoi(fmt.Sprint(out[j]["id"]))
 		return ai < aj
 	})
+	reportExport(report, ExportProgress{
+		Stage: "整理消息与媒体", Detail: fmt.Sprintf("已读取 %d 条消息 · 发现 %d 个媒体", scanned, mediaCount),
+		Percent: 100, Messages: scanned, Media: mediaCount,
+	})
 	return chat, out, mediaCount, nil
+}
+
+func reportExport(report func(ExportProgress), p ExportProgress) {
+	if report != nil {
+		report(p)
+	}
+}
+
+func historyCount(res tg.MessagesMessagesClass) int {
+	switch page := res.(type) {
+	case *tg.MessagesMessagesSlice:
+		return page.Count
+	case *tg.MessagesChannelMessages:
+		return page.Count
+	default:
+		return 0
+	}
 }
 
 func historyEntities(res tg.MessagesMessagesClass) tgpeer.Entities {
@@ -337,11 +435,15 @@ func convertOnlineMessage(msg tg.MessageClass, chat OnlineChat, entities tgpeer.
 		}
 		hasMedia := false
 		if m.Media != nil {
-			if kind, file, name, size, ok := mapOnlineMedia(m.Media); ok {
+			if kind, file, name, size, width, height, ok := mapOnlineMedia(m.Media); ok {
 				hasMedia = true
 				raw["media_type"] = kind
 				if size > 0 {
 					raw["file_size"] = size
+				}
+				if width > 0 && height > 0 {
+					raw["width"] = width
+					raw["height"] = height
 				}
 				if kind == "photo" {
 					raw["photo"] = file
@@ -527,18 +629,19 @@ func entityName(peer tg.PeerClass, entities tgpeer.Entities) string {
 	return ""
 }
 
-func mapOnlineMedia(media tg.MessageMediaClass) (kind, file, name string, size int64, ok bool) {
+func mapOnlineMedia(media tg.MessageMediaClass) (kind, file, name string, size int64, width, height int, ok bool) {
 	switch m := media.(type) {
 	case *tg.MessageMediaPhoto:
 		photo, ok := m.Photo.(*tg.Photo)
 		if !ok {
-			return "", "", "", 0, false
+			return "", "", "", 0, 0, 0, false
 		}
-		return "photo", "photo.jpg", "photo.jpg", photoBytes(photo), true
+		width, height = photoDimensions(photo)
+		return "photo", "photo.jpg", "photo.jpg", photoBytes(photo), width, height, true
 	case *tg.MessageMediaDocument:
 		doc, ok := m.Document.(*tg.Document)
 		if !ok {
-			return "", "", "", 0, false
+			return "", "", "", 0, 0, 0, false
 		}
 		kind = "file"
 		fileName := ""
@@ -548,6 +651,7 @@ func mapOnlineMedia(media tg.MessageMediaClass) (kind, file, name string, size i
 			case *tg.DocumentAttributeFilename:
 				fileName = a.FileName
 			case *tg.DocumentAttributeVideo:
+				width, height = a.W, a.H
 				if a.RoundMessage {
 					kind = "video_message"
 					round = true
@@ -572,10 +676,26 @@ func mapOnlineMedia(media tg.MessageMediaClass) (kind, file, name string, size i
 			fileName = "media" + ext
 		}
 		fileName = filepath.Base(fileName)
-		return kind, fileName, fileName, doc.Size, true
+		return kind, fileName, fileName, doc.Size, width, height, true
 	default:
-		return "", "", "", 0, false
+		return "", "", "", 0, 0, 0, false
 	}
+}
+
+func photoDimensions(photo *tg.Photo) (width, height int) {
+	for _, raw := range photo.Sizes {
+		switch s := raw.(type) {
+		case *tg.PhotoSize:
+			if s.W*s.H > width*height {
+				width, height = s.W, s.H
+			}
+		case *tg.PhotoSizeProgressive:
+			if s.W*s.H > width*height {
+				width, height = s.W, s.H
+			}
+		}
+	}
+	return width, height
 }
 
 // photoBytes returns the largest size Telegram advertises for a photo, which
@@ -745,6 +865,20 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int) (Online
 	if exportTimeout <= 0 {
 		exportTimeout = 180 * time.Second
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	b.previewMu.Lock()
+	if b.previewCancel != nil {
+		b.previewCancel()
+	}
+	b.previewCancel = cancel
+	b.previewMu.Unlock()
+	defer func() {
+		cancel()
+		b.previewMu.Lock()
+		b.previewCancel = nil
+		b.previewMu.Unlock()
+	}()
+	b.setPreviewProgress(OnlineExportProgress{Active: true, Stage: "解析在线会话", Percent: 1})
 	chat, err := b.resolveOnlineChat(peerKey, exportTimeout)
 	if err != nil {
 		return OnlineExportPreview{}, err
@@ -754,7 +888,13 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int) (Online
 	if local.existed && local.dir != "" {
 		minID = localMaxMessageID(local.dir)
 	}
-	_, messages, media, err := b.online.ExportMessages(context.Background(), info.Namespace, settings.Proxy, chat, exportTimeout, minID, limit)
+	b.setPreviewProgress(OnlineExportProgress{Active: true, Stage: "读取历史消息", Percent: 3})
+	_, messages, media, err := b.online.ExportMessagesProgress(ctx, info.Namespace, settings.Proxy, chat, exportTimeout, minID, limit, func(p ExportProgress) {
+		b.setPreviewProgress(OnlineExportProgress{
+			Active: true, Stage: p.Stage, Detail: p.Detail,
+			Percent: p.Percent, Messages: p.Messages, Media: p.Media,
+		})
+	})
 	if err != nil {
 		return OnlineExportPreview{}, friendlyOnlineError(err)
 	}
@@ -781,6 +921,31 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int) (Online
 	out.Bytes = size
 	out.Token = b.online.Prepare(info.Namespace, peerKey, chat, messages, media)
 	return out, nil
+}
+
+func (b *Bridge) setPreviewProgress(p OnlineExportProgress) {
+	b.previewMu.Lock()
+	b.previewProgress = p
+	b.previewMu.Unlock()
+}
+
+func (b *Bridge) OnlineExportPreviewProgress() OnlineExportProgress {
+	b.previewMu.Lock()
+	defer b.previewMu.Unlock()
+	return b.previewProgress
+}
+
+func (b *Bridge) OnlineExportPreviewCancel() {
+	b.previewMu.Lock()
+	cancel := b.previewCancel
+	if b.previewProgress.Active {
+		b.previewProgress.Stage = "正在取消统计"
+		b.previewProgress.Detail = "正在停止历史读取"
+	}
+	b.previewMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (b *Bridge) OnlineExportDiscard(token string) {

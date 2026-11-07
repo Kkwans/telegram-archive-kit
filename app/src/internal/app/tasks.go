@@ -16,24 +16,27 @@ import (
 
 // TaskDTO is one background operation shown in the desktop task center.
 type TaskDTO struct {
-	ID         string  `json:"id"`
-	Kind       string  `json:"kind"`
-	Title      string  `json:"title"`
-	Chat       string  `json:"chat,omitempty"`
-	Slug       string  `json:"slug,omitempty"`
-	Detail     string  `json:"detail,omitempty"`
-	State      string  `json:"state"` // running|done|failed
-	Percent    int     `json:"percent"`
-	AvgSpeed   float64 `json:"avgSpeed,omitempty"`
-	PeakSpeed  float64 `json:"peakSpeed,omitempty"`
-	Bytes      int64   `json:"bytes,omitempty"`
-	Done       int     `json:"done,omitempty"`
-	Total      int     `json:"total,omitempty"`
-	ETAMs      int64   `json:"etaMs,omitempty"`
-	ElapsedMs  int64   `json:"elapsedMs,omitempty"`
-	StartedAt  int64   `json:"startedAt"`
-	FinishedAt int64   `json:"finishedAt,omitempty"`
-	Error      string  `json:"error,omitempty"`
+	ID                  string  `json:"id"`
+	Kind                string  `json:"kind"`
+	Title               string  `json:"title"`
+	Chat                string  `json:"chat,omitempty"`
+	Slug                string  `json:"slug,omitempty"`
+	Detail              string  `json:"detail,omitempty"`
+	State               string  `json:"state"` // running|done|failed
+	Percent             int     `json:"percent"`
+	AvgSpeed            float64 `json:"avgSpeed,omitempty"`
+	PeakSpeed           float64 `json:"peakSpeed,omitempty"`
+	Bytes               int64   `json:"bytes,omitempty"`
+	TotalBytes          int64   `json:"totalBytes,omitempty"`
+	TotalBytesEstimated bool    `json:"totalBytesEstimated,omitempty"`
+	Done                int     `json:"done,omitempty"`
+	Total               int     `json:"total,omitempty"`
+	ETAMs               int64   `json:"etaMs,omitempty"`
+	ElapsedMs           int64   `json:"elapsedMs,omitempty"`
+	StartedAt           int64   `json:"startedAt"`
+	FinishedAt          int64   `json:"finishedAt,omitempty"`
+	Error               string  `json:"error,omitempty"`
+	RecordsComplete     bool    `json:"recordsComplete,omitempty"`
 }
 
 // SpeedPoint is one persisted sample of a download task's speed curve.
@@ -58,6 +61,7 @@ type backgroundTask struct {
 	series       []SpeedPoint
 	active       []TaskProgress
 	completed    []TaskProgress
+	lastPass     int
 	lastSampleAt time.Time
 }
 
@@ -111,12 +115,22 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	if s.SpeedNow > t.dto.PeakSpeed {
 		t.dto.PeakSpeed = s.SpeedNow
 	}
+	t.dto.RecordsComplete = true
 	t.dto.Bytes = s.Bytes
+	t.dto.TotalBytes = s.TotalBytes
+	t.dto.TotalBytesEstimated = s.TotalBytesEstimated
 	t.dto.Done = s.Done
 	t.dto.Total = s.Total
 	t.dto.ETAMs = s.ETAMs
 	t.active = append([]TaskProgress(nil), s.Active...)
-	t.completed = append([]TaskProgress(nil), s.Completed...)
+	if t.lastPass == 0 || s.Pass == t.lastPass {
+		t.completed = append([]TaskProgress(nil), s.Completed...)
+	} else {
+		t.completed = mergeTaskProgress(s.Completed, t.completed)
+	}
+	if s.Pass > 0 {
+		t.lastPass = s.Pass
+	}
 	if s.ElapsedMs > 0 {
 		t.dto.ElapsedMs = s.ElapsedMs
 	}
@@ -166,6 +180,32 @@ func (t *backgroundTask) finish(err error) {
 	}
 	t.dto.State = "done"
 	t.dto.Percent = 100
+}
+
+// mergeTaskProgress prepends records from a newer repair pass while keeping
+// earlier completions, so the task detail can show the whole run. Both inputs
+// use newest-first order.
+func mergeTaskProgress(newer, older []TaskProgress) []TaskProgress {
+	key := func(p TaskProgress) string {
+		if p.ID != "" {
+			return p.ID + "\x00" + p.Name
+		}
+		return p.Name
+	}
+	seen := make(map[string]bool, len(older))
+	for _, p := range older {
+		seen[key(p)] = true
+	}
+	out := make([]TaskProgress, 0, len(newer)+len(older))
+	for _, p := range newer {
+		k := key(p)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, p)
+	}
+	return append(out, older...)
 }
 
 // createTask registers a running task without starting a goroutine. One-click
@@ -231,8 +271,25 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 			continue
 		}
 		f.taskMu.Unlock()
-		if len(d.Completed) == 0 && d.State != "running" && d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
-			d.Completed = f.recentWorkspaceMedia(d.Slug, 5)
+		if d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
+			if len(d.Completed) == 0 && d.State != "running" {
+				d.Completed = f.recentWorkspaceMedia(d.Slug, 5)
+			}
+			if d.TotalBytes == 0 {
+				if plan, err := loadDownloadPlan(f.a.sourcePath(d.Slug)); err == nil {
+					if total, estimated := estimatedTotalBytes(plan); total > 0 {
+						d.TotalBytes = total
+						d.TotalBytesEstimated = estimated
+					}
+				}
+			}
+			if d.TotalBytes > 0 && d.Bytes > 0 && d.State != "done" {
+				pct := float64(d.Bytes) * 100 / float64(d.TotalBytes)
+				if pct > 100 {
+					pct = 100
+				}
+				d.Percent = int(pct + 0.5)
+			}
 		}
 		return d, nil
 	}

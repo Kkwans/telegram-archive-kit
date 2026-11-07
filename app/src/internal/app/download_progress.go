@@ -173,9 +173,6 @@ func (c *progressCapture) updateTask(clean string, keep bool) {
 		}
 		c.completed = append(c.completed, taskView{ID: id, Done: true, Elapsed: formatDuration(elapsed), Name: "", Transferred: humanBytes(c.doneBytes[id]), Percent: "完成"})
 		c.completedElapsed[id] = elapsed
-		if len(c.completed) > 5 {
-			c.completed = c.completed[len(c.completed)-5:]
-		}
 		delete(c.etas, id)
 		delete(c.taskStart, id)
 		delete(c.lastLine, id)
@@ -305,7 +302,7 @@ func (c *progressCapture) dashboardTasks(plan downloadPlan) (active, completed [
 		}
 		active = append(active, v)
 	}
-	for i := len(c.completed) - 1; i >= 0; i-- {
+	for i := len(c.completed) - 1; i >= 0 && len(completed) < 5; i-- {
 		v := c.completed[i]
 		v.Name = plan.Names[v.ID]
 		if v.Name == "" {
@@ -538,10 +535,9 @@ func estimateOverallETA(plan downloadPlan, done int, bytes int64, speed float64,
 	}
 	// file_size coverage is often very high in Telegram JSON. Extrapolate the unknown
 	// tail from the known average, then use smoothed aggregate throughput.
-	if speed > 0 && plan.KnownCount > 0 && plan.KnownBytes > 0 {
-		avg := float64(plan.KnownBytes) / float64(plan.KnownCount)
-		estTotal := float64(plan.KnownBytes) + float64(plan.Total-plan.KnownCount)*avg
-		remaining := estTotal - float64(bytes)
+	if speed > 0 {
+		estTotal, _ := estimatedTotalBytes(plan)
+		remaining := float64(estTotal) - float64(bytes)
 		if remaining > 0 {
 			eta := time.Duration(remaining/speed) * time.Second
 			if eta > 0 && eta < 30*24*time.Hour {

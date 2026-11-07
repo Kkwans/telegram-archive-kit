@@ -21,8 +21,9 @@ import {
 import { call } from "./rpc";
 import { bytes, dateTime } from "./format";
 import { Select } from "./Select";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { PageCtx } from "./pages";
-import type { OnlineChat, OnlineChats, OnlineExportPreview, OnlineExportResult } from "./types";
+import type { OnlineChat, OnlineChats, OnlineExportPreview, OnlineExportProgress, OnlineExportResult } from "./types";
 
 const TYPE_META: Record<string, { label: string; tone: string }> = {
   private: { label: "私聊", tone: "private" },
@@ -90,6 +91,8 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [preview, setPreview] = useState<OnlineExportPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [previewProgress, setPreviewProgress] = useState<OnlineExportProgress | null>(null);
+  const [closeConfirm, setCloseConfirm] = useState(false);
   const [floodUntil, setFloodUntil] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const request = useRef(0);
@@ -236,14 +239,45 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
 
   const closePreview = () => {
     if (exporting) return;
+    if (previewLoading) void call("onlineExportPreviewCancel").catch(() => undefined);
     previewSeq.current++;
     const token = preview?.token;
     setPreviewPeer(null);
     setPreview(null);
     setPreviewError("");
+    setPreviewProgress(null);
     setPreviewLoading(false);
+    setCloseConfirm(false);
     if (token) void call("onlineExportDiscard", { token }).catch(() => undefined);
   };
+
+  const requestClosePreview = () => {
+    if (exporting) return;
+    if (previewLoading) {
+      setCloseConfirm(true);
+      return;
+    }
+    closePreview();
+  };
+
+  useEffect(() => {
+    if (!previewLoading) {
+      setPreviewProgress(null);
+      return;
+    }
+    let alive = true;
+    const poll = () => {
+      call<OnlineExportProgress>("onlineExportPreviewProgress")
+        .then((progress) => { if (alive) setPreviewProgress(progress); })
+        .catch(() => undefined);
+    };
+    poll();
+    const timer = window.setInterval(poll, 400);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [previewLoading]);
 
   const beginPreview = async (chat: OnlineChat) => {
     if (previewLoading || exporting || floodLeft > 0) return;
@@ -251,6 +285,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
     setPreviewPeer(chat);
     setPreview(null);
     setPreviewError("");
+    setPreviewProgress({ active: true, stage: "准备统计", detail: "正在连接 Telegram", percent: 1, messages: 0, media: 0 });
     setPreviewLoading(true);
     try {
       const res = await call<OnlineExportPreview>("onlineExportPreview", { peer: chat.peer, timeout: 300 });
@@ -574,7 +609,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
         <div
           className="modal-backdrop"
           role="presentation"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) closePreview(); }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) requestClosePreview(); }}
         >
           <div className="modal export-preview-modal" role="dialog" aria-modal="true" aria-labelledby="export-preview-title">
             <div className="export-preview-head">
@@ -591,10 +626,22 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
             </div>
 
             {previewLoading ? (
-              <div className="export-preview-loading">
-                <Loader2 size={18} className="spin" />
-                <b>正在读取消息并统计媒体…</b>
-                <span>首次统计会读取完整历史；遇到 Telegram 限流会自动等待后继续。</span>
+              <div className="export-preview-loading export-preview-progress">
+                <div className="export-loading-head">
+                  <span className="export-loading-spinner"><Loader2 size={18} className="spin" /></span>
+                  <div className="export-loading-copy">
+                    <b>{previewProgress?.stage || "正在读取消息并统计媒体…"}</b>
+                    <span>{previewProgress?.detail || "首次统计会读取完整历史；遇到 Telegram 限流会自动等待后继续。"}</span>
+                  </div>
+                  <strong className="export-loading-percent">{Math.round(previewProgress?.percent ?? 0)}<em>%</em></strong>
+                </div>
+                <div className="export-loading-track">
+                  <i style={{ width: `${Math.max(2, Math.min(100, previewProgress?.percent ?? 0))}%` }} />
+                </div>
+                <div className="export-loading-meta">
+                  <span>已读取 <b>{(previewProgress?.messages ?? 0).toLocaleString()}</b> 条消息</span>
+                  <span>发现 <b>{(previewProgress?.media ?? 0).toLocaleString()}</b> 个媒体</span>
+                </div>
               </div>
             ) : preview ? (
               <>
@@ -646,7 +693,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
             )}
 
             <div className="modal-actions">
-              <button className="btn ghost" disabled={!!exporting} onClick={closePreview}>
+              <button className="btn ghost" disabled={!!exporting} onClick={requestClosePreview}>
                 {preview ? "取消" : "关闭"}
               </button>
               {preview ? (
@@ -665,6 +712,17 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
         </div>,
         document.body
       )}
+
+      <ConfirmDialog
+        open={closeConfirm}
+        title="停止统计并关闭？"
+        message="媒体统计仍在读取完整历史。现在关闭会中断统计，下次需要重新开始并重新等待。"
+        confirmLabel="关闭预览"
+        cancelLabel="继续等待"
+        danger
+        onConfirm={() => { setCloseConfirm(false); closePreview(); }}
+        onCancel={() => setCloseConfirm(false)}
+      />
     </>
   );
 }
