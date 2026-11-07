@@ -52,14 +52,14 @@ func newApp() (*App, error) {
 	if root := strings.TrimSpace(os.Getenv("TAK_LIBRARY_ROOT")); root != "" {
 		a.Settings.LibraryRoot = root
 	}
-	a.migrateLegacyWorkspaceNames()
+	a.migrateWorkspaceNames()
 	return a, nil
 }
 
-// migrateLegacyWorkspaceNames renames old provisional "legacy" workspaces to
-// the dated naming scheme. Workspaces with a result.json are left untouched so
-// persisted task slugs keep resolving.
-func (a *App) migrateLegacyWorkspaceNames() bool {
+// migrateWorkspaceNames moves existing workspaces to the human-friendly
+// chat_<name>_<latest message date>_<id> scheme and updates task slugs in the
+// same pass so paused tasks remain resumable.
+func (a *App) migrateWorkspaceNames() bool {
 	if err := a.guardWritable(); err != nil {
 		return false
 	}
@@ -67,16 +67,13 @@ func (a *App) migrateLegacyWorkspaceNames() bool {
 	if err != nil {
 		return false
 	}
-	changed := false
+	renamed := map[string]string{}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.Contains(entry.Name(), "__legacy_") {
+		if !entry.IsDir() || isDatedSlug(entry.Name()) {
 			continue
 		}
 		meta, err := a.readWorkspaceMeta(entry.Name())
 		if err != nil || strings.TrimSpace(meta.Chat.Name) == "" {
-			continue
-		}
-		if fileExists(filepath.Join(a.workspaceDir(entry.Name()), "source", "result.json")) {
 			continue
 		}
 		lastTS := meta.LastTS
@@ -104,16 +101,46 @@ func (a *App) migrateLegacyWorkspaceNames() bool {
 		meta.Slug = want
 		meta.LastTS = lastTS
 		_ = writeJSON(a.workspaceMetaPath(want), meta)
+		renamed[entry.Name()] = want
 		if a.Settings.LastWorkspaceSlug == entry.Name() {
 			a.Settings.LastWorkspaceSlug = want
 		}
-		changed = true
 	}
-	if changed {
-		_ = a.saveSettings()
-		_ = a.buildLibrary()
+	if len(renamed) == 0 {
+		return false
 	}
-	return changed
+	a.rewriteTaskSlugs(renamed)
+	_ = a.saveSettings()
+	_ = a.buildLibrary()
+	return true
+}
+
+func (a *App) rewriteTaskSlugs(renamed map[string]string) {
+	path := filepath.Join(a.ConfigDir, "tasks.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var tasks []TaskDetailDTO
+	if json.Unmarshal(b, &tasks) != nil {
+		return
+	}
+	changed := false
+	for i := range tasks {
+		if next, ok := renamed[tasks[i].Slug]; ok {
+			tasks[i].Slug = next
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if out, err := json.MarshalIndent(tasks, "", "  "); err == nil {
+		tmp := path + ".tmp"
+		if os.WriteFile(tmp, out, 0644) == nil {
+			_ = os.Rename(tmp, path)
+		}
+	}
 }
 
 func (a *App) loadSettings() error {
