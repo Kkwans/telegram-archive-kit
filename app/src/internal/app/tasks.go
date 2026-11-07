@@ -131,7 +131,9 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	if s.Pass > 0 {
 		t.lastPass = s.Pass
 	}
-	if s.ElapsedMs > 0 {
+	if t.dto.StartedAt > 0 {
+		t.dto.ElapsedMs = time.Now().UnixMilli() - t.dto.StartedAt
+	} else if s.ElapsedMs > 0 {
 		t.dto.ElapsedMs = s.ElapsedMs
 	}
 	now := time.Now()
@@ -170,7 +172,7 @@ func (t *backgroundTask) finish(err error) {
 	t.dto.FinishedAt = time.Now().UnixMilli()
 	t.dto.ETAMs = 0
 	t.active = nil
-	if t.dto.ElapsedMs == 0 {
+	if t.dto.FinishedAt > t.dto.StartedAt {
 		t.dto.ElapsedMs = t.dto.FinishedAt - t.dto.StartedAt
 	}
 	if err != nil {
@@ -274,6 +276,7 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 		if d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
 			if len(d.Completed) == 0 && d.State != "running" {
 				d.Completed = f.recentWorkspaceMedia(d.Slug, 5)
+				d.RecordsComplete = false
 			}
 			if d.TotalBytes == 0 {
 				if plan, err := loadDownloadPlan(f.a.sourcePath(d.Slug)); err == nil {
@@ -395,6 +398,9 @@ func (f *Facade) loadTasks() {
 			if dto.FinishedAt == 0 {
 				dto.FinishedAt = dto.StartedAt
 			}
+		}
+		if len(detail.Completed) == 0 && dto.Done > 0 {
+			dto.RecordsComplete = false
 		}
 		f.tasks = append(f.tasks, &backgroundTask{dto: dto, series: detail.Series, active: detail.Active, completed: detail.Completed})
 	}

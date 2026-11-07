@@ -76,7 +76,7 @@ import type {
   TaskInfo,
   ViewerPrefs,
 } from "./types";
-import { bytes, dateTime, duration, rate } from "./format";
+import { bytes, dateTime, duration, rate, rateParts } from "./format";
 
 export interface PageCtx {
   boot: Bootstrap | null;
@@ -92,6 +92,8 @@ export interface PageCtx {
   refresh: () => void;
   toast: (msg: string, err?: boolean) => void;
   go: (page: string) => void;
+  openOnline: (filter?: string) => void;
+  onlineRequest: { filter: string; seq: number } | null;
   pickFiles: (purpose: string) => Promise<string[]>;
   pickFolder: (purpose: string, title: string) => Promise<string>;
   tasks: TaskInfo[];
@@ -450,6 +452,13 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
   };
 
   const idle = !running && !dl && !op;
+  const downloading = running && !!dl;
+  const dlSpeed = rateParts(dl?.speedNow ?? 0);
+  const dlSparkValues = samples.slice(-28).map((s) => s.now);
+  const dlSparkMax = Math.max(1, ...dlSparkValues);
+  const dlSparkPoints = dlSparkValues.map((value, index) =>
+    `${(index / Math.max(1, dlSparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / dlSparkMax) * 24).toFixed(2)}`
+  ).join(" ");
   const title = running
     ? dl
       ? `正在同步：${current?.name || dl.chat || "聊天"}`
@@ -523,10 +532,7 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
           <div className="hero-stage" title={stageText}>{stageText}</div>
           {dl && (
             <div className="hero-meta">
-              <span>速度 <b>{rate(dl.speedNow)}</b></span>
-              <span>平均 <b>{rate(dl.speedAvg)}</b></span>
-              <span>已下载 <b>{bytes(dl.bytes)}</b>{dl.knownBytes > 0 ? ` / ${bytes(dl.knownBytes)}` : ""}</span>
-              <span>剩余 <b>{duration(dl.etaMs)}</b></span>
+              <span>已下载 <b>{bytes(dl.bytes)}</b>{dl.totalBytes > 0 ? ` / ${bytes(dl.totalBytes)}` : ""}</span>
               <span>并发 <b>{dl.concurrent}</b> × <b>{dl.threads}</b></span>
               <span>第 <b>{dl.pass}</b> 轮</span>
             </div>
@@ -538,24 +544,38 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
             </div>
           )}
         </div>
+        {downloading && (
+          <div className="download-hero-meter running">
+            <span className="download-meter-label"><i />实时速度</span>
+            <div className="download-meter-value"><b>{dlSpeed.value}</b><em>{dlSpeed.unit}</em></div>
+            {dlSparkValues.length > 1 && (
+              <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+                <polygon points={`0,28 ${dlSparkPoints} 100,28`} />
+                <polyline points={dlSparkPoints} vectorEffect="non-scaling-stroke" />
+              </svg>
+            )}
+          </div>
+        )}
       </section>
 
-      <section className="stat-grid">
-        <div className="stat">
-          <span>实时速度</span>
-          <div><b>{rate(dl?.speedNow ?? 0)}</b></div>
-        </div>
+      <section className={`stat-grid ${downloading ? "" : "three"}`}>
+        {downloading && (
+          <div className="stat">
+            <span>实时速度</span>
+            <div><b>{rate(dl?.speedNow ?? 0)}</b></div>
+          </div>
+        )}
         <div className="stat">
           <span>平均速度</span>
           <div><b>{rate(dl?.speedAvg ?? 0)}</b></div>
         </div>
         <div className="stat">
-          <span>预计剩余</span>
-          <div><b>{duration(dl?.etaMs ?? 0)}</b></div>
-        </div>
-        <div className="stat">
           <span>本轮完成</span>
           <div><b>{dl?.done ?? 0}</b><em>/ {dl?.total ?? 0}</em></div>
+        </div>
+        <div className="stat">
+          <span>预计剩余</span>
+          <div><b>{duration(dl?.etaMs ?? 0)}</b></div>
         </div>
       </section>
 
@@ -2366,6 +2386,14 @@ export function Library({ ctx }: { ctx: PageCtx }) {
             </span>
             <ChevronRight size={16} />
           </button>
+          <button className="action-card" disabled={!boot?.hasSession} onClick={() => ctx.openOnline("local")} title={!boot?.hasSession ? "请先在账号页登录 Telegram" : undefined}>
+            <span className="action-icon"><MessagesSquare size={18} /></span>
+            <span className="action-text">
+              <b>从在线聊天更新</b>
+              <em>{boot?.hasSession ? "筛选本地已有档案，统计后确认更新" : "登录 Telegram 后可用"}</em>
+            </span>
+            <ChevronRight size={16} />
+          </button>
           <button className="action-card" disabled={busy === "analyze"} onClick={analyzeOfficial}>
             <span className="action-icon"><FolderOpen size={18} /></span>
             <span className="action-text">
@@ -2428,7 +2456,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
           <button className="btn sm danger" disabled={busy === "bulk" || sel.size === 0} onClick={deleteSelected}>
             <Trash2 size={12} /> 删除
           </button>
-          <button className="btn sm ghost" onClick={() => setSel(new Set())} style={{ visibility: sel.size > 0 ? "visible" : "hidden" }}>
+          <button className="btn sm ghost" disabled={busy === "bulk" || sel.size === 0} onClick={() => setSel(new Set())}>
             <X size={12} /> 取消选择
           </button>
         </div>

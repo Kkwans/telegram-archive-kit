@@ -205,13 +205,11 @@ func (f *Facade) VerifyChat(slug string) (StatsDTO, error) {
 }
 
 func (f *Facade) RefreshWeb(slug string) error {
-	if _, err := f.a.organizeDocumentFiles(slug); err != nil {
-		return err
-	}
-	if err := f.a.refreshWorkspaceWeb(slug); err != nil {
-		return err
-	}
-	return f.a.buildLibrary()
+	// A failed download can end before the viewer data and thumbnails are
+	// written. Rebuilding from source handles both cases and fills missing
+	// video covers instead of only re-rendering an old data file.
+	_, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), slug, true, nil)
+	return err
 }
 
 func (f *Facade) RefreshAllWeb() (ok, skipped int, err error) {

@@ -53,3 +53,18 @@ export function dateTimePrecise(value?: number, fallback = "--"): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
+
+export function rateParts(n: number): { value: string; unit: string } {
+  if (!n || n <= 0 || !Number.isFinite(n)) return { value: "0", unit: "B/s" };
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = n;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index++;
+  }
+  return {
+    value: value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1),
+    unit: `${units[index]}/s`,
+  };
+}

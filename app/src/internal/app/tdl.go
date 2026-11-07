@@ -138,6 +138,11 @@ func classifyTdlFailure(raw string, runErr error, logPath string) *TdlFailure {
 		code = ee.ExitCode()
 	}
 	f := &TdlFailure{Kind: tdlFailureUnknown, Summary: summarizeTdlError(clean), Detail: clean, LogPath: logPath, ExitCode: code}
+	if containsAny(low, "no space left on device", "not enough space", "disk full", "there is not enough space", "磁盘空间不足", "空间不足") {
+		f.Kind = tdlFailureContent
+		f.Summary = "磁盘空间不足，下载已停止；请清理空间后继续下载"
+		return f
+	}
 	if containsAny(low, "not authorized", "auth_key_unregistered", "session_revoked", "auth_key_duplicated", "please login first") {
 		f.Kind = tdlFailureAuth
 		f.Summary = "Telegram 授权不可用，需要重新登录"

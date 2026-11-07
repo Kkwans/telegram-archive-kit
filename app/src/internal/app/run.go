@@ -1201,6 +1201,13 @@ func (a *App) smartSyncCtx(ctx context.Context, slug string, rep Reporter) error
 		if missing == 0 {
 			return nil
 		}
+		if plan, planErr := loadDownloadPlan(path); planErr == nil && plan.KnownBytes > 0 {
+			free := int64(platform.FreeSpaceBytes(a.workspaceDir(slug)))
+			const reserve = int64(256 << 20)
+			if free > 0 && free < plan.KnownBytes+reserve {
+				return fmt.Errorf("磁盘空间不足：本轮仍需下载约 %s，当前可用 %s。请清理空间或更换档案库位置后再点击“继续下载”", humanBytes(plan.KnownBytes), humanBytes(free))
+			}
+		}
 		dctx, ui, done := rep.BeginDownload(ctx, downloadMeta{
 			Slug: slug, Chat: meta.Chat.Name, Pass: pass, PassMax: a.Settings.MaxRepairPasses,
 		})
@@ -1216,9 +1223,35 @@ func (a *App) smartSyncCtx(ctx context.Context, slug string, rep Reporter) error
 		return err
 	}
 	if arc.Stats.MissingMedia > 0 {
-		return fmt.Errorf("仍有 %d 条媒体未匹配；可稍后再次一键同步", arc.Stats.MissingMedia)
+		if _, path, e := a.generateMissingJSON(slug); e == nil {
+			if ids := downloadPlanIDList(path, 8); ids != "" {
+				return fmt.Errorf("仍有 %d 条媒体未匹配（Message ID: %s）；可点击“继续下载”再次补齐", arc.Stats.MissingMedia, ids)
+			}
+		}
+		return fmt.Errorf("仍有 %d 条媒体未匹配；可点击“继续下载”再次补齐", arc.Stats.MissingMedia)
 	}
 	return nil
+}
+
+func downloadPlanIDList(path string, limit int) string {
+	plan, err := loadDownloadPlan(path)
+	if err != nil || limit <= 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(plan.IDs))
+	for id := range plan.IDs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		ai, _ := strconv.Atoi(ids[i])
+		aj, _ := strconv.Atoi(ids[j])
+		return ai < aj
+	})
+	if len(ids) > limit {
+		ids = ids[:limit]
+		return strings.Join(ids, ", ") + " …"
+	}
+	return strings.Join(ids, ", ")
 }
 
 func (a *App) actionSyncAll() {

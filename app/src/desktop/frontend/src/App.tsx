@@ -362,10 +362,15 @@ export default function App() {
     };
   }, []);
 
+  const [onlineRequest, setOnlineRequest] = useState<{ filter: string; seq: number } | null>(null);
   const go = (next: string) => {
     setSideTip(null);
     setAppTip(null);
     setPage(next);
+  };
+  const openOnline = (filter = "all") => {
+    setOnlineRequest({ filter, seq: Date.now() });
+    go("online");
   };
   const ctx: PageCtx = useMemo(
     () => ({
@@ -382,6 +387,8 @@ export default function App() {
       refresh,
       toast,
       go,
+      openOnline,
+      onlineRequest,
       pickFiles,
       pickFolder,
       tasks,
@@ -389,7 +396,7 @@ export default function App() {
       prefs,
       applyPrefs: setPrefs,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest]
   );
 
   useEffect(() => {

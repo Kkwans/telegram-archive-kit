@@ -146,3 +146,11 @@ func TestTaskKeepsCompletedRecordsAcrossPasses(t *testing.T) {
 		t.Fatalf("completed order = %#v", detail.Completed)
 	}
 }
+
+func TestTaskFinishUsesWallClockElapsed(t *testing.T) {
+	task := &backgroundTask{dto: TaskDTO{State: "running", StartedAt: 1000, ElapsedMs: 10}}
+	task.finish(nil)
+	if task.dto.ElapsedMs <= 10 || task.dto.ElapsedMs != task.dto.FinishedAt-1000 {
+		t.Fatalf("elapsed = %d, finished-start = %d", task.dto.ElapsedMs, task.dto.FinishedAt-1000)
+	}
+}

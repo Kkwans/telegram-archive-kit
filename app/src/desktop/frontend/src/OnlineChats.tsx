@@ -75,6 +75,7 @@ const FILTERS = [
   { key: "group", label: "群组" },
   { key: "channel", label: "频道" },
   { key: "archived", label: "归档夹" },
+  { key: "local", label: "本地已有" },
 ] as const;
 
 export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
@@ -174,6 +175,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
       group: chats.filter((c) => c.type === "group").length,
       channel: chats.filter((c) => c.type === "channel").length,
       archived: chats.filter((c) => c.archived).length,
+      local: chats.filter((c) => c.archivedLocally).length,
     }),
     [chats]
   );
@@ -186,6 +188,12 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
     if (folderId != null && data && !folders.some((f) => f.id === folderId)) setFolderId(null);
   }, [data, folders, folderId]);
 
+  useEffect(() => {
+    if (!ctx.onlineRequest) return;
+    setFolderId(null);
+    setFilter(ctx.onlineRequest.filter as (typeof FILTERS)[number]["key"]);
+  }, [ctx.onlineRequest?.seq]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = chats.filter((c) => {
@@ -196,6 +204,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
         if (filter === "private" && c.type !== "private" && c.type !== "bot") return false;
         if (filter === "group" && c.type !== "group") return false;
         if (filter === "channel" && c.type !== "channel") return false;
+        if (filter === "local" && !c.archivedLocally) return false;
       }
       if (!q) return true;
       return (

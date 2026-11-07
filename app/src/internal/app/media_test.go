@@ -43,3 +43,38 @@ func TestChatMediaExcludesVideoThumbnails(t *testing.T) {
 		t.Fatalf("thumbnail leaked into media summary: %#v", summary)
 	}
 }
+
+func TestChatMediaFindsGeneratedThumbByMessageID(t *testing.T) {
+	root := t.TempDir()
+	slug := "chat-thumb"
+	workspace := filepath.Join(root, "chats", slug)
+	for _, dir := range []string{"data", "media", "thumbs"} {
+		if err := os.MkdirAll(filepath.Join(workspace, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "workspace.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "media", "clip.mp4"), []byte("video"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "thumbs", "thumb_42_abcdef.jpg"), []byte("thumb"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	data := `window.__ARCHIVE__ = {"messages":[{"id":"42","media":[` +
+		`{"path":"media/clip.mp4","name":"clip.mp4","kind":"video"}` +
+		`]}]}`
+	if err := os.WriteFile(filepath.Join(workspace, "data", "archive-data.js"), []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	f.a.Settings.LibraryRoot = root
+	items, err := f.ChatMedia(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Thumb != "thumbs/thumb_42_abcdef.jpg" {
+		t.Fatalf("generated thumb not attached: %#v", items)
+	}
+}

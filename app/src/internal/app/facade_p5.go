@@ -216,6 +216,18 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 	items := make([]MediaItemDTO, 0, 256)
 	seen := make(map[string]bool)
 	dimensions := map[string][2]int{}
+	thumbsByID := map[string]string{}
+	if entries, err := os.ReadDir(filepath.Join(root, "thumbs")); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if id := mediaMessageID(name); id != "" {
+				thumbsByID[id] = name
+			}
+		}
+	}
 	if data, err := os.ReadFile(filepath.Join(root, "source", "result.json")); err == nil {
 		var source struct {
 			Messages []struct {
@@ -265,6 +277,12 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 		if id == "" {
 			id = mediaMessageID(name)
+		}
+		if thumbRel == "" {
+			if thumbName, ok := thumbsByID[id]; ok {
+				thumbRel = "thumbs/" + thumbName
+				thumbAbs = filepath.Join(root, "thumbs", thumbName)
+			}
 		}
 		width, height := 0, 0
 		if dim, ok := dimensions[id]; ok {

@@ -71,6 +71,8 @@ export interface DownloadState {
   total: number;
   percent: number;
   bytes: number;
+  totalBytes: number;
+  totalBytesEstimated: boolean;
   knownBytes: number;
   knownCount: number;
   speedNow: number;

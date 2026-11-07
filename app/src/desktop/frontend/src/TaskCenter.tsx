@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   ChartPie,
+  ChevronLeft,
   ChevronRight,
   Download,
   FileJson,
@@ -17,6 +18,7 @@ import {
   ListTodo,
   Loader2,
   Music,
+  Play,
   RefreshCw,
   Search,
   Trash2,
@@ -27,7 +29,7 @@ import {
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type { TaskDetail, TaskInfo } from "./types";
-import { bytes, dateTime, dateTimePrecise, duration, rate } from "./format";
+import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
 
 const KIND_META: Record<string, { label: string; group: string; icon: typeof Download }> = {
   sync: { label: "下载", group: "download", icon: Download },
@@ -69,8 +71,8 @@ function fmtDuration(ms: number): string {
 }
 
 function taskElapsed(task: TaskInfo): number {
-  const span = task.finishedAt ? task.finishedAt - task.startedAt : Date.now() - task.startedAt;
-  return Math.max(0, task.elapsedMs || span);
+  const span = Math.max(0, (task.finishedAt || Date.now()) - task.startedAt);
+  return span > 0 ? span : Math.max(0, task.elapsedMs || 0);
 }
 
 function noNewMedia(task: TaskInfo | TaskDetail): boolean {
@@ -111,20 +113,6 @@ const MEDIA_GROUPS = [
   { key: "file", label: "文件", icon: FileText },
 ] as const;
 
-function speedParts(n: number): { value: string; unit: string } {
-  if (!n || n <= 0 || !Number.isFinite(n)) return { value: "0", unit: "B/s" };
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = n;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index++;
-  }
-  return {
-    value: value >= 100 || index === 0 ? value.toFixed(0) : value.toFixed(1),
-    unit: `${units[index]}/s`,
-  };
-}
 
 function TaskSpeedChart({ task }: { task: TaskDetail }) {
   const samples = task.series ?? [];
@@ -198,13 +186,14 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
           )}
         </div>
       </div>
-      <div className="speed-hint">悬停查看对应时间点的实时与平均速度</div>
     </div>
   );
 }
 
 export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
+  const [recordPage, setRecordPage] = useState(1);
+  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild">("");
   const meta = kindMeta(task.kind);
   const running = task.state === "running";
   const failed = task.state === "failed";
@@ -215,7 +204,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
   const active = task.active ?? [];
   const completed = task.completed ?? [];
   const speedNow = series.length > 0 ? series[series.length - 1].now : 0;
-  const speed = speedParts(speedNow);
+  const speed = rateParts(speedNow);
   const recorded = [...completed, ...active];
   const mediaTotals = MEDIA_GROUPS.map((group) => {
     let count = 0;
@@ -228,8 +217,12 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
     return { ...group, count, size };
   });
   const recordedCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
-  const incompleteRecords = !running && !task.recordsComplete && recordedCount > 0;
+  const showComposition = running || !!task.recordsComplete;
   const recent = completed.slice(0, 5);
+  const pageSize = 10;
+  const recordPages = Math.max(1, Math.ceil(completed.length / pageSize));
+  const safePage = Math.min(recordPage, recordPages);
+  const pageRecords = completed.slice((safePage - 1) * pageSize, safePage * pageSize);
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
     : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : "任务失败"));
@@ -239,6 +232,33 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
     `${(index / Math.max(1, sparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / sparkMax) * 24).toFixed(2)}`
   ).join(" ");
 
+  const resume = async () => {
+    if (!task.slug || busyAction) return;
+    setBusyAction("resume");
+    try {
+      await call("startOneClick", { slug: task.slug });
+      toast("已继续下载：只补齐缺失媒体，已完成文件会保留");
+      onBack();
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const rebuild = async () => {
+    if (!task.slug || busyAction) return;
+    setBusyAction("rebuild");
+    try {
+      await call("startRefreshWeb", { slug: task.slug });
+      toast("重建任务已加入任务中心，将补齐封面与网页");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   return (
     <>
       <div className="page-head download-detail-head">
@@ -246,6 +266,18 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
           <ArrowLeft size={14} /> 返回任务中心
         </button>
         <div className="actions">
+          {task.slug && failed && (
+            <button className="btn primary" disabled={!!busyAction} onClick={() => void resume()}>
+              {busyAction === "resume" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
+              继续下载
+            </button>
+          )}
+          {task.slug && (
+            <button className="btn ghost" disabled={!!busyAction} onClick={() => void rebuild()} title="重新生成数据、网页与缺失的视频封面">
+              {busyAction === "rebuild" ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
+              重建网页
+            </button>
+          )}
           {task.slug && (
             <button
               className="btn ghost"
@@ -274,46 +306,25 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             {task.chat && <span className="download-hero-chat">{task.chat}</span>}
             <span className={`tag ${failed ? "bad" : ""}`}>{statusLabel(task.state)}</span>
           </div>
-          <p className="download-hero-desc" title={result}>{result}</p>
-          <div className="download-hero-facts">
-            <div>
-              <span>已下载</span>
-              <b>{bytes(task.bytes ?? 0)}</b>
+          <p className={`download-hero-desc ${failed ? "bad" : ""}`} title={result}>{failed ? `失败原因：${result}` : result}</p>
+          {running && (
+            <div className="download-hero-progress" aria-hidden="true">
+              <i style={{ width: `${percent}%` }} />
             </div>
-            <div>
-              <span>{task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
-              <b>{task.totalBytes ? bytes(task.totalBytes) : "--"}</b>
-            </div>
-            <div>
-              <span>完成媒体</span>
-              <b>{task.done ?? 0}<em> / {task.total ?? 0}</em></b>
-            </div>
-            <div>
-              <span>耗时</span>
-              <b>{fmtDuration(elapsed)}</b>
-            </div>
-          </div>
-        </div>
-        <div className={`download-hero-meter ${running ? "running" : failed ? "failed" : "done"}`}>
-          {running ? (
-            <>
-              <span className="download-meter-label"><i />实时速度</span>
-              <div className="download-meter-value"><b>{speed.value}</b><em>{speed.unit}</em></div>
-              {sparkValues.length > 1 && (
-                <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
-                  <polygon points={`0,28 ${sparkPoints} 100,28`} />
-                  <polyline points={sparkPoints} vectorEffect="non-scaling-stroke" />
-                </svg>
-              )}
-            </>
-          ) : (
-            <>
-              <span className="download-meter-label">{failed ? "任务已停止" : "任务已完成"}</span>
-              <div className="download-meter-value"><b>{bytes(task.bytes ?? 0)}</b></div>
-              <span className="download-meter-foot">本次下载总量</span>
-            </>
           )}
         </div>
+        {running && (
+          <div className="download-hero-meter running">
+            <span className="download-meter-label"><i />实时速度</span>
+            <div className="download-meter-value"><b>{speed.value}</b><em>{speed.unit}</em></div>
+            {sparkValues.length > 1 && (
+              <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+                <polygon points={`0,28 ${sparkPoints} 100,28`} />
+                <polyline points={sparkPoints} vectorEffect="non-scaling-stroke" />
+              </svg>
+            )}
+          </div>
+        )}
         {!running && (
           <span className="download-hero-watermark" aria-hidden="true">
             {failed ? <X size={132} strokeWidth={1.4} /> : <Check size={144} strokeWidth={1.4} />}
@@ -321,12 +332,12 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
         )}
       </section>
 
-      <section className="stat-grid download-stats">
-        <div className="stat"><span>实时速度</span><div><b>{running ? rate(speedNow) : "--"}</b></div></div>
+      <section className={`stat-grid download-stats ${running ? "five" : "four"}`}>
+        {running && <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>}
         <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
         <div className="stat">
-          <span>{task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
-          <div><b>{task.totalBytes ? bytes(task.totalBytes) : "--"}</b></div>
+          <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
+          <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
         </div>
         <div className="stat"><span>本轮完成</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
         <div className="stat">
@@ -335,6 +346,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
         </div>
       </section>
 
+      {showComposition && (
       <section className="panel download-media-panel">
         <div className="panel-head">
           <h3><ChartPie size={14} /> 本次媒体构成</h3>
@@ -355,10 +367,8 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             );
           })}
         </div>
-        {incompleteRecords && (
-          <p className="download-record-note">旧任务没有保存全部逐项记录；以上为当前可读取的完成记录。</p>
-        )}
       </section>
+      )}
 
       <section className="panel">
         <div className="panel-head">
@@ -413,14 +423,11 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
       <section className="panel">
         <div className="panel-head">
           <h3>最近完成</h3>
-          <div className="panel-head-actions">
-            <span className="meta">{completed.length} 个</span>
-            {completed.length > 0 && (
-              <button className="btn sm ghost" onClick={() => setShowAll(true)}>
-                查看全部 <ChevronRight size={12} />
-              </button>
-            )}
-          </div>
+          {completed.length > 0 && (
+            <button className="task-more-link" onClick={() => { setRecordPage(1); setShowAll(true); }}>
+              全部记录 <span>{completed.length}</span> <ChevronRight size={12} />
+            </button>
+          )}
         </div>
         {recent.length > 0 ? (
           <table className="table task-files-table download-table completed-table">
@@ -444,7 +451,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
             </tbody>
           </table>
         ) : (
-          <div className="download-empty"><CheckCircle2 size={14} /> {running ? "还没有完成的文件。" : "旧任务没有保存逐项媒体记录；新任务会保留全部完成记录。"}</div>
+          <div className="download-empty"><CheckCircle2 size={14} /> {running ? "还没有完成的文件。" : "还没有完成记录。"}</div>
         )}
       </section>
 
@@ -479,9 +486,6 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
                 <X size={15} />
               </button>
             </div>
-            {incompleteRecords && (
-              <p className="download-record-note">该任务来自旧版本，未保存全部逐项记录；以下为可用记录。</p>
-            )}
             <div className="task-records-scroll">
               {completed.length > 0 ? (
                 <table className="table task-files-table download-table">
@@ -494,7 +498,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
                     </tr>
                   </thead>
                   <tbody>
-                    {completed.map((file, index) => (
+                    {pageRecords.map((file, index) => (
                       <tr key={`${file.id || file.name}-${index}`}>
                         <td className="col-file" title={file.name}>{file.name}</td>
                         <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
@@ -508,7 +512,16 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
                 <div className="download-empty"><CheckCircle2 size={14} /> 没有可显示的文件记录。</div>
               )}
             </div>
-            <div className="modal-actions">
+            <div className="task-records-footer">
+              <span>共 {completed.length} 条 · 第 {safePage}/{recordPages} 页</span>
+              <div className="task-records-pager">
+                <button className="icon-btn" aria-label="上一页" disabled={safePage <= 1} onClick={() => setRecordPage((page) => Math.max(1, page - 1))}>
+                  <ChevronLeft size={14} />
+                </button>
+                <button className="icon-btn" aria-label="下一页" disabled={safePage >= recordPages} onClick={() => setRecordPage((page) => Math.min(recordPages, page + 1))}>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
               <button className="btn ghost" onClick={() => setShowAll(false)}>关闭</button>
             </div>
           </div>
