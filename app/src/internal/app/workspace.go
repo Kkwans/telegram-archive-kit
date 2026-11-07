@@ -52,7 +52,68 @@ func newApp() (*App, error) {
 	if root := strings.TrimSpace(os.Getenv("TAK_LIBRARY_ROOT")); root != "" {
 		a.Settings.LibraryRoot = root
 	}
+	a.migrateLegacyWorkspaceNames()
 	return a, nil
+}
+
+// migrateLegacyWorkspaceNames renames old provisional "legacy" workspaces to
+// the dated naming scheme. Workspaces with a result.json are left untouched so
+// persisted task slugs keep resolving.
+func (a *App) migrateLegacyWorkspaceNames() bool {
+	if err := a.guardWritable(); err != nil {
+		return false
+	}
+	entries, err := os.ReadDir(a.chatsDir())
+	if err != nil {
+		return false
+	}
+	changed := false
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.Contains(entry.Name(), "__legacy_") {
+			continue
+		}
+		meta, err := a.readWorkspaceMeta(entry.Name())
+		if err != nil || strings.TrimSpace(meta.Chat.Name) == "" {
+			continue
+		}
+		if fileExists(filepath.Join(a.workspaceDir(entry.Name()), "source", "result.json")) {
+			continue
+		}
+		lastTS := meta.LastTS
+		if lastTS == 0 {
+			for _, ex := range meta.OfficialExports {
+				root := filepath.FromSlash(ex.Root)
+				if !filepath.IsAbs(root) {
+					root = filepath.Join(a.workspaceDir(entry.Name()), root)
+				}
+				if ts := archive.OfficialExportLastTimestamp(root); ts > lastTS {
+					lastTS = ts
+				}
+			}
+		}
+		want := datedSlug(meta.Chat, lastTS)
+		if want == entry.Name() {
+			continue
+		}
+		if _, err := os.Stat(a.workspaceDir(want)); err == nil {
+			continue
+		}
+		if err := os.Rename(a.workspaceDir(entry.Name()), a.workspaceDir(want)); err != nil {
+			continue
+		}
+		meta.Slug = want
+		meta.LastTS = lastTS
+		_ = writeJSON(a.workspaceMetaPath(want), meta)
+		if a.Settings.LastWorkspaceSlug == entry.Name() {
+			a.Settings.LastWorkspaceSlug = want
+		}
+		changed = true
+	}
+	if changed {
+		_ = a.saveSettings()
+		_ = a.buildLibrary()
+	}
+	return changed
 }
 
 func (a *App) loadSettings() error {

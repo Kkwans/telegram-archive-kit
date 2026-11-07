@@ -1873,6 +1873,9 @@ html[data-theme="dark"] .palette {
 .task-table tbody tr:hover { background: var(--surface-2); }
 .task-col-state { width: 100px; }
 .task-col-kind { width: 130px; }
+.task-col-actions { width: 72px; text-align: center !important; }
+.task-col-actions .icon-btn { margin: 0 auto; }
+.task-col-actions .icon-btn[disabled] { opacity: .28; cursor: default; }
 .task-state { justify-content: center; }
 .task-main { max-width: 220px; }
 .task-main b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { call } from "./rpc";
 import { Select } from "./Select";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { TaskDetail, TaskInfo } from "./types";
 import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
 
@@ -799,6 +800,7 @@ export function TasksPage({
   onFocusHandled,
   onRefresh,
   onClear,
+  onDelete,
   toast,
 }: {
   tasks: TaskInfo[];
@@ -806,6 +808,7 @@ export function TasksPage({
   onFocusHandled?: () => void;
   onRefresh: () => void;
   onClear: () => void;
+  onDelete: (ids: string[]) => void;
   toast: (msg: string, err?: boolean) => void;
 }) {
   const [filter, setFilter] = useState("all");
@@ -814,6 +817,7 @@ export function TasksPage({
   const [now, setNow] = useState(Date.now());
   const [active, setActive] = useState<TaskDetail | null>(null);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
+  const [clearConfirm, setClearConfirm] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -859,11 +863,25 @@ export function TasksPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTaskId]);
 
-  const clear = () => {
-    call("clearTasks")
+  const clearAll = () => {
+    call("clearAllTasks")
       .then(() => {
         onClear();
-        toast("已清除完成与失败的任务");
+        setClearConfirm(false);
+        toast("已删除全部任务记录，下载文件未受影响");
+      })
+      .catch((e: Error) => toast(e.message, true));
+  };
+
+  const removeRecord = (task: TaskInfo) => {
+    if (task.state === "running") {
+      toast("进行中的任务不能删除记录，请先暂停或结束任务", true);
+      return;
+    }
+    call("deleteTask", { id: task.id })
+      .then(() => {
+        onDelete([task.id]);
+        toast("已删除任务记录，下载文件未受影响");
       })
       .catch((e: Error) => toast(e.message, true));
   };
@@ -903,8 +921,8 @@ export function TasksPage({
           <button className="btn ghost" onClick={onRefresh}>
             <RefreshCw size={13} /> 刷新状态
           </button>
-          <button className="btn ghost" disabled={done + failed === 0} onClick={clear}>
-            <Trash2 size={13} /> 清除已完成
+          <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}>
+            <Trash2 size={13} /> 全部删除
           </button>
         </div>
       </div>
@@ -956,6 +974,7 @@ export function TasksPage({
                 <th>开始时间</th>
                 <th>耗时</th>
                 <th>进度</th>
+                <th className="task-col-actions">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -1003,6 +1022,17 @@ export function TasksPage({
                         <span>{t.state === "done" ? "100%" : `${t.percent}%`}</span>
                       </div>
                     </td>
+                    <td className="task-col-actions">
+                      <button
+                        className="icon-btn danger"
+                        title={t.state === "running" ? "进行中的任务不能删除记录" : "删除任务记录（不删除下载文件）"}
+                        aria-label={`删除任务记录 ${t.title}`}
+                        disabled={t.state === "running"}
+                        onClick={(e) => { e.stopPropagation(); removeRecord(t); }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1038,6 +1068,16 @@ export function TasksPage({
         </div>,
         document.body
       )}
+
+      <ConfirmDialog
+        open={clearConfirm}
+        title="删除全部任务记录？"
+        message="将删除全部已完成、失败、暂停和已终止的任务记录，进行中的任务会保留。只删除记录，不会删除任何已下载文件或档案库内容。"
+        confirmLabel="全部删除"
+        danger
+        onConfirm={clearAll}
+        onCancel={() => setClearConfirm(false)}
+      />
     </>
   );
 }

@@ -785,6 +785,7 @@ export default function App() {
                 onFocusHandled={() => setTaskFocus("")}
                 onRefresh={refresh}
                 onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))}
+                onDelete={(ids) => setTasks((list) => list.filter((t) => !ids.includes(t.id)))}
                 toast={toast}
               />
             )}

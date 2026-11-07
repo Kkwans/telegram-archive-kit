@@ -118,6 +118,29 @@ func ResolveOfficialHref(root, raw string) (string, bool) {
 	return absFull, true
 }
 
+// OfficialExportLastTimestamp reads only the date headers, so legacy workspace
+// names can be repaired without re-indexing every media file.
+func OfficialExportLastTimestamp(root string) int64 {
+	pages, err := ListOfficialHTMLPages(root)
+	if err != nil {
+		return 0
+	}
+	var last int64
+	for _, page := range pages {
+		b, er := os.ReadFile(page)
+		if er != nil {
+			continue
+		}
+		for _, dm := range officialDateRE.FindAllStringSubmatch(string(b), -1) {
+			t, er := time.ParseInLocation("02.01.2006 15:04:05", dm[1], time.Local)
+			if er == nil && t.Unix() > last {
+				last = t.Unix()
+			}
+		}
+	}
+	return last
+}
+
 func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta, map[string][]Media, error) {
 	pages, err := ListOfficialHTMLPages(root)
 	if err != nil {

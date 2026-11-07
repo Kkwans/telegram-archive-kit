@@ -297,6 +297,11 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "clearTasks":
 		b.facade.ClearFinishedTasks()
 		return nil, nil
+	case "clearAllTasks":
+		b.facade.ClearAllTasks()
+		return nil, nil
+	case "deleteTask":
+		return nil, b.facade.DeleteTask(p.ID)
 	case "revealMedia":
 		return nil, b.facade.RevealMedia(p.Slug, p.Path)
 	case "openMedia":

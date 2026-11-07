@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -452,6 +453,50 @@ func (f *Facade) ClearFinishedTasks() {
 	f.tasks = kept
 	f.taskMu.Unlock()
 	f.saveTasks()
+}
+
+// ClearAllTasks removes all task records except currently running work. Archive
+// files and workspace data are untouched.
+func (f *Facade) ClearAllTasks() {
+	f.taskMu.Lock()
+	kept := f.tasks[:0]
+	for _, t := range f.tasks {
+		if t.snapshot().State == "running" {
+			kept = append(kept, t)
+		}
+	}
+	f.tasks = kept
+	f.taskMu.Unlock()
+	f.saveTasks()
+}
+
+// DeleteTask removes one finished task record. It never touches archive files.
+func (f *Facade) DeleteTask(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("缺少任务标识")
+	}
+	f.taskMu.Lock()
+	kept := f.tasks[:0]
+	removed := false
+	for _, t := range f.tasks {
+		dto := t.snapshot()
+		if dto.ID == id {
+			if dto.State == "running" {
+				f.taskMu.Unlock()
+				return errors.New("进行中的任务不能删除记录，请先暂停或结束任务")
+			}
+			removed = true
+			continue
+		}
+		kept = append(kept, t)
+	}
+	f.tasks = kept
+	f.taskMu.Unlock()
+	if !removed {
+		return errors.New("找不到任务")
+	}
+	f.saveTasks()
+	return nil
 }
 
 func (f *Facade) taskStorePath() string {
