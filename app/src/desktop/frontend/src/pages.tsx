@@ -307,7 +307,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel storage-panel">
           <div className="panel-head">
             <h3><HardDrive size={14} /> 档案库存储</h3>
             <span className="meta" title={boot?.libraryRoot || "未配置"}>{boot?.libraryRoot || "未配置"}</span>

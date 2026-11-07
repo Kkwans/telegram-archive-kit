@@ -387,8 +387,8 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           </div>
           {running ? (
             <div className="download-hero-configline">
-              <span>并发 <b>{concurrent}</b> 个文件</span>
-              <span>每文件 <b>{threads}</b> 线程</span>
+              <span className="download-config-chip">并发 <b>{concurrent}</b> 个文件</span>
+              <span className="download-config-chip">每文件 <b>{threads}</b> 线程</span>
             </div>
           ) : (
             <p className={`download-hero-desc ${failed ? "bad" : warning ? "warn" : ""}`} title={result}>{displayResult}</p>

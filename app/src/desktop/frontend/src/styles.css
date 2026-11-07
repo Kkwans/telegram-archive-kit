@@ -777,6 +777,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .home-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .home-grid .panel-head h3 { display: inline-flex; align-items: center; gap: 6px; }
 .home-grid .panel-head h3 svg { color: var(--faint); }
+.storage-panel .panel-head h3 { flex: 0 0 auto; white-space: nowrap; }
+.storage-panel .panel-head .meta {
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-align: right;
+}
 .kind-list { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; }
 .kind-row { display: flex; align-items: center; gap: 9px; font-size: 12px; }
 .kind-row > i { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
@@ -2426,8 +2431,13 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 .download-hero-title { gap: 9px; }
 .download-hero-title h2 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 760; letter-spacing: -.025em; }
 .download-hero-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.download-hero-configline { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; color: var(--faint); font-size: 10px; line-height: 1.5; }
-.download-hero-configline b { color: var(--muted); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.download-hero-configline { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.download-config-chip {
+  display: inline-flex; align-items: baseline; gap: 3px; padding: 2px 8px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
+  color: var(--muted); font-size: 10.5px; font-weight: 550;
+}
+.download-config-chip b { color: var(--text); font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .download-config-panel .panel-head { border-bottom: 0; }
 .download-config-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0 14px 14px; }
 .download-config-grid > div {
