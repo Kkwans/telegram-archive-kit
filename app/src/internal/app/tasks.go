@@ -194,6 +194,7 @@ func (t *backgroundTask) pause() {
 	}
 	t.closeRunning()
 	t.dto.State = "paused"
+	t.dto.Detail = "任务已暂停，可继续下载"
 	t.dto.Error = "任务已暂停，可继续下载"
 }
 
