@@ -65,6 +65,8 @@ type backgroundTask struct {
 	completed    []TaskProgress
 	lastPass     int
 	lastSampleAt time.Time
+	activeBaseMs int64
+	activeSince  time.Time
 }
 
 func (t *backgroundTask) setChat(chat string) {
@@ -135,9 +137,9 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	if s.Pass > 0 {
 		t.lastPass = s.Pass
 	}
-	if t.dto.StartedAt > 0 {
-		t.dto.ElapsedMs = time.Now().UnixMilli() - t.dto.StartedAt
-	} else if s.ElapsedMs > 0 {
+	if !t.activeSince.IsZero() {
+		t.dto.ElapsedMs = t.activeBaseMs + time.Since(t.activeSince).Milliseconds()
+	} else if t.dto.ElapsedMs <= 0 && s.ElapsedMs > 0 {
 		t.dto.ElapsedMs = s.ElapsedMs
 	}
 	now := time.Now()
@@ -208,12 +210,39 @@ func (t *backgroundTask) partial(err error) {
 }
 
 func (t *backgroundTask) closeRunning() {
-	t.dto.FinishedAt = time.Now().UnixMilli()
+	now := time.Now()
+	if !t.activeSince.IsZero() {
+		t.activeBaseMs += now.Sub(t.activeSince).Milliseconds()
+		t.activeSince = time.Time{}
+	}
+	t.dto.FinishedAt = now.UnixMilli()
 	t.dto.ETAMs = 0
 	t.active = nil
-	if t.dto.FinishedAt > t.dto.StartedAt {
-		t.dto.ElapsedMs = t.dto.FinishedAt - t.dto.StartedAt
+	t.dto.ElapsedMs = t.activeBaseMs
+}
+
+// resume reuses one logical task after a pause or a recoverable failure. The
+// accumulated elapsed time contains active download time only.
+func (t *backgroundTask) resume() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch t.dto.State {
+	case "paused", "failed", "partial":
+	default:
+		return false
 	}
+	if t.activeBaseMs <= 0 && t.dto.ElapsedMs > 0 {
+		t.activeBaseMs = t.dto.ElapsedMs
+	}
+	t.dto.State = "running"
+	t.dto.Error = ""
+	t.dto.FinishedAt = 0
+	t.dto.ETAMs = 0
+	t.active = nil
+	if t.activeSince.IsZero() {
+		t.activeSince = time.Now()
+	}
+	return true
 }
 
 // mergeTaskProgress prepends records from a newer repair pass while keeping
@@ -249,10 +278,13 @@ func (f *Facade) createTask(kind, title, chat string) *backgroundTask {
 	f.taskMu.Lock()
 	f.taskSeq++
 	id := fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), f.taskSeq)
-	task := &backgroundTask{dto: TaskDTO{
-		ID: id, Kind: kind, Title: title, Chat: chat, State: "running",
-		StartedAt: time.Now().UnixMilli(),
-	}}
+	task := &backgroundTask{
+		dto: TaskDTO{
+			ID: id, Kind: kind, Title: title, Chat: chat, State: "running",
+			StartedAt: time.Now().UnixMilli(),
+		},
+		activeSince: time.Now(),
+	}
 	f.tasks = append([]*backgroundTask{task}, f.tasks...)
 	if len(f.tasks) > 50 {
 		f.tasks = f.tasks[:50]
@@ -260,6 +292,21 @@ func (f *Facade) createTask(kind, title, chat string) *backgroundTask {
 	f.taskMu.Unlock()
 	f.saveTasks()
 	return task
+}
+
+func (f *Facade) pausedTaskForSlug(slug string) *backgroundTask {
+	if slug == "" {
+		return nil
+	}
+	f.taskMu.Lock()
+	defer f.taskMu.Unlock()
+	for _, task := range f.tasks {
+		dto := task.snapshot()
+		if dto.State == "paused" && dto.Kind == "sync" && dto.Slug == slug {
+			return task
+		}
+	}
+	return nil
 }
 
 func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error) string {
@@ -428,6 +475,8 @@ func (f *Facade) loadTasks() {
 		return
 	}
 	f.taskMu.Lock()
+	seenPaused := map[string]bool{}
+	changed := false
 	for _, detail := range stored {
 		dto := detail.TaskDTO
 		if dto.State == "running" {
@@ -437,12 +486,31 @@ func (f *Facade) loadTasks() {
 				dto.FinishedAt = dto.StartedAt
 			}
 		}
+		// Older builds created a fresh paused task each time a download was
+		// resumed. Keep only the newest paused row per chat so the list reflects
+		// one logical download.
+		if dto.State == "paused" && dto.Slug != "" {
+			if seenPaused[dto.Slug] {
+				changed = true
+				continue
+			}
+			seenPaused[dto.Slug] = true
+		}
 		if len(detail.Completed) == 0 && dto.Done > 0 {
 			dto.RecordsComplete = false
 		}
-		f.tasks = append(f.tasks, &backgroundTask{dto: dto, series: detail.Series, active: detail.Active, completed: detail.Completed})
+		f.tasks = append(f.tasks, &backgroundTask{
+			dto:          dto,
+			series:       detail.Series,
+			active:       detail.Active,
+			completed:    detail.Completed,
+			activeBaseMs: dto.ElapsedMs,
+		})
 	}
 	f.taskMu.Unlock()
+	if changed {
+		f.saveTasks()
+	}
 }
 
 func (f *Facade) StartImportJSON(paths []string) (string, error) {

@@ -78,8 +78,9 @@ function fmtDuration(ms: number): string {
 }
 
 function taskElapsed(task: TaskInfo): number {
-  const span = Math.max(0, (task.finishedAt || Date.now()) - task.startedAt);
-  return span > 0 ? span : Math.max(0, task.elapsedMs || 0);
+  const measured = Math.max(0, task.elapsedMs || 0);
+  if (measured > 0) return measured;
+  return Math.max(0, (task.finishedAt || task.startedAt) - task.startedAt);
 }
 
 function noNewMedia(task: TaskInfo | TaskDetail): boolean {
@@ -199,13 +200,29 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
   );
 }
 
+interface DownloadConfigDraft {
+  concurrent: number;
+  threads: number;
+  stallTimeoutSeconds: number;
+  stalledFileRetries: number;
+  networkRetryMinutes: number;
+  unknownRetryCount: number;
+  maxRepairPasses: number;
+  transferAdjustment: string;
+  reconnectTimeout: string;
+}
+
 export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "config">("");
   const [configOpen, setConfigOpen] = useState(false);
-  const [configDraft, setConfigDraft] = useState({ concurrent: task.concurrent ?? 4, threads: task.threads ?? 4 });
-  const [transfer, setTransfer] = useState<{ transferAdjustment?: string; stallTimeoutSeconds?: number } | null>(null);
+  const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
+    concurrent: task.concurrent ?? 4, threads: task.threads ?? 4,
+    stallTimeoutSeconds: 60, stalledFileRetries: 3, networkRetryMinutes: 30,
+    unknownRetryCount: 2, maxRepairPasses: 3, transferAdjustment: "increase", reconnectTimeout: "60s",
+  });
+  const [transfer, setTransfer] = useState<DownloadConfigDraft | null>(null);
   const meta = kindMeta(task.kind);
   const running = task.state === "running";
   const failed = task.state === "failed";
@@ -259,23 +276,41 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
 
   useEffect(() => {
     if (!running) return;
-    call<{ transferAdjustment?: string; stallTimeoutSeconds?: number }>("getSettings")
-      .then(setTransfer)
+    call<Partial<DownloadConfigDraft>>("getSettings")
+      .then((settings) => {
+        setTransfer({
+          concurrent: task.concurrent ?? settings.concurrent ?? 4,
+          threads: task.threads ?? settings.threads ?? 4,
+          stallTimeoutSeconds: settings.stallTimeoutSeconds ?? 60,
+          stalledFileRetries: settings.stalledFileRetries ?? 3,
+          networkRetryMinutes: settings.networkRetryMinutes ?? 30,
+          unknownRetryCount: settings.unknownRetryCount ?? 2,
+          maxRepairPasses: settings.maxRepairPasses ?? 3,
+          transferAdjustment: settings.transferAdjustment ?? "increase",
+          reconnectTimeout: settings.reconnectTimeout ?? "60s",
+        });
+      })
       .catch(() => undefined);
-  }, [running]);
+  }, [running, task.id, task.concurrent, task.threads]);
 
-  useEffect(() => {
-    if (!running) return;
-    setConfigDraft({ concurrent, threads });
-  }, [running, concurrent, threads]);
+  const openConfig = () => {
+    const base = transfer ?? configDraft;
+    setConfigDraft({ ...base, concurrent, threads });
+    setConfigOpen(true);
+  };
+
+  const setConfigField = <K extends keyof DownloadConfigDraft>(key: K, value: DownloadConfigDraft[K]) => {
+    setConfigDraft((draft) => ({ ...draft, [key]: value }));
+  };
 
   const applyConfig = async () => {
     if (busyAction) return;
     setBusyAction("config");
     try {
       const nextTask = await call<string>("setDownloadConfig", configDraft);
+      setTransfer(configDraft);
       setConfigOpen(false);
-      if (nextTask && nextTask !== task.id) {
+      if (nextTask) {
         toast("下载配置已更新，正在按新配置继续");
         onOpenTask(nextTask);
       } else {
@@ -336,7 +371,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         </button>
         <div className="actions">
           {running && (
-            <button className="btn ghost" onClick={() => setConfigOpen(true)}>
+            <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
             </button>
           )}
@@ -434,11 +469,10 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         <section className="panel download-config-panel">
           <div className="panel-head">
             <h3><SlidersHorizontal size={14} /> 下载配置</h3>
-            <button className="btn sm ghost" onClick={() => setConfigOpen(true)}>调整配置</button>
           </div>
           <div className="download-config-grid">
-            <div><span>并发文件任务</span><b>{concurrent}<em> 个</em></b></div>
-            <div><span>单文件线程</span><b>{threads}<em> 条</em></b></div>
+            <div><span>并发文件任务</span><b>{transfer?.concurrent ?? concurrent}<em> 个</em></b></div>
+            <div><span>单文件线程</span><b>{transfer?.threads ?? threads}<em> 条</em></b></div>
             <div><span>卡住判定</span><b>{transfer?.stallTimeoutSeconds ?? 60}<em> 秒</em></b></div>
             <div><span>重试策略</span><b>{retryLabel[transfer?.transferAdjustment ?? "increase"] ?? "逐步增加线程"}</b></div>
           </div>
@@ -594,29 +628,70 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
               <label>
                 <span>并发文件任务</span>
                 <small>同时下载多少个媒体文件（1–8）</small>
-                <input
-                  type="number"
-                  min={1}
-                  max={8}
-                  value={configDraft.concurrent}
-                  onChange={(e) => setConfigDraft((draft) => ({ ...draft, concurrent: Math.max(1, Math.min(8, Number(e.target.value) || 1)) }))}
-                />
+                <input type="number" min={1} max={8} value={configDraft.concurrent}
+                  onChange={(e) => setConfigField("concurrent", Math.max(1, Math.min(8, Number(e.target.value) || 1)))} />
               </label>
               <label>
                 <span>单文件线程</span>
                 <small>一个文件内部的并行分片数（1–16）</small>
-                <input
-                  type="number"
-                  min={1}
-                  max={16}
-                  value={configDraft.threads}
-                  onChange={(e) => setConfigDraft((draft) => ({ ...draft, threads: Math.max(1, Math.min(16, Number(e.target.value) || 1)) }))}
+                <input type="number" min={1} max={16} value={configDraft.threads}
+                  onChange={(e) => setConfigField("threads", Math.max(1, Math.min(16, Number(e.target.value) || 1)))} />
+              </label>
+              <label>
+                <span>卡住判定（秒）</span>
+                <small>多久没有真实进度就暂缓文件（30–600）</small>
+                <input type="number" min={30} max={600} value={configDraft.stallTimeoutSeconds}
+                  onChange={(e) => setConfigField("stallTimeoutSeconds", Math.max(30, Math.min(600, Number(e.target.value) || 30)))} />
+              </label>
+              <label>
+                <span>疑难文件重试</span>
+                <small>反复卡住的文件最多重试几次（1–10）</small>
+                <input type="number" min={1} max={10} value={configDraft.stalledFileRetries}
+                  onChange={(e) => setConfigField("stalledFileRetries", Math.max(1, Math.min(10, Number(e.target.value) || 1)))} />
+              </label>
+              <label>
+                <span>网络恢复窗口（分钟）</span>
+                <small>断网后持续尝试多长时间（1–180）</small>
+                <input type="number" min={1} max={180} value={configDraft.networkRetryMinutes}
+                  onChange={(e) => setConfigField("networkRetryMinutes", Math.max(1, Math.min(180, Number(e.target.value) || 1)))} />
+              </label>
+              <label>
+                <span>未知错误重试</span>
+                <small>非网络错误的自动重试次数（0–10）</small>
+                <input type="number" min={0} max={10} value={configDraft.unknownRetryCount}
+                  onChange={(e) => setConfigField("unknownRetryCount", Math.max(0, Math.min(10, Number(e.target.value) || 0)))} />
+              </label>
+              <label>
+                <span>最大修复轮数</span>
+                <small>一次同步中最多补漏几轮（1–10）</small>
+                <input type="number" min={1} max={10} value={configDraft.maxRepairPasses}
+                  onChange={(e) => setConfigField("maxRepairPasses", Math.max(1, Math.min(10, Number(e.target.value) || 1)))} />
+              </label>
+              <label>
+                <span>重连超时</span>
+                <small>tdl 连接重建等待，例如 5m</small>
+                <input type="text" value={configDraft.reconnectTimeout}
+                  onChange={(e) => setConfigField("reconnectTimeout", e.target.value)} />
+              </label>
+              <label className="wide">
+                <span>重试传输策略</span>
+                <small>反复卡住时如何调整并发参数</small>
+                <Select
+                  ariaLabel="重试传输策略"
+                  value={configDraft.transferAdjustment}
+                  onChange={(v) => setConfigField("transferAdjustment", v)}
+                  options={[
+                    { value: "increase", label: "逐步增加线程（推荐）" },
+                    { value: "increase-both", label: "线程和并发一起增加（试验）" },
+                    { value: "decrease", label: "逐步降低线程" },
+                    { value: "keep", label: "保持原配置" },
+                  ]}
                 />
               </label>
             </div>
             <div className="download-config-note">
               <SlidersHorizontal size={14} />
-              <span>并发越高不一定越快；Telegram 限流或磁盘较慢时，保持默认更稳。</span>
+              <span>保存后会短暂停下并按新配置从已完成文件继续；暂停时间不计入任务耗时。</span>
             </div>
             <div className="modal-actions">
               <button className="btn ghost" disabled={!!busyAction} onClick={() => setConfigOpen(false)}>取消</button>

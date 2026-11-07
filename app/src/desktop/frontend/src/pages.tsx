@@ -499,9 +499,25 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const backfillJSON = async () => {
+    if (!current) return;
+    try {
+      const taskID = await call<string>("startOneClick", { slug: current.slug });
+      toast("已按 result.json 开始补全：只处理本地 JSON 中的缺失媒体");
+      openTask(taskID);
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+
   const copyPath = () => {
     if (!current) return;
     navigator.clipboard?.writeText(current.dir).then(() => toast("目录已复制")).catch(() => toast("复制失败", true));
+  };
+  const jsonPath = current ? `${current.dir.replace(/[\\/]+$/, "")}\\source\\result.json` : "";
+  const copyJSONPath = () => {
+    if (!jsonPath) return;
+    navigator.clipboard?.writeText(jsonPath).then(() => toast("result.json 路径已复制")).catch(() => toast("复制失败", true));
   };
 
   if (!current) {
@@ -562,35 +578,50 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <div className="fact"><span>最近更新</span><b>{dateTime(current.updatedAt)}</b></div>
           <div className="fact wide">
             <span>归档目录</span>
-            <code title={current.dir}>{wrapPath(current.dir)}</code>
+            <code title={current.dir}>{current.dir}</code>
             <button className="icon-btn" data-tip="复制目录" aria-label="复制目录" onClick={copyPath}>
               <Copy size={13} />
             </button>
           </div>
+          {current.hasSource && (
+            <div className="fact wide">
+              <span>result.json</span>
+              <code title={jsonPath}>{jsonPath}</code>
+              <button className="icon-btn" data-tip="复制 result.json 路径" aria-label="复制 result.json 路径" onClick={copyJSONPath}>
+                <Copy size={13} />
+              </button>
+            </div>
+          )}
         </div>
         <div className="chat-actions">
-          <button className="btn sm" disabled={busy === "verify"} onClick={verify}>
-            <ShieldCheck size={12} /> {busy === "verify" ? "核对中…" : "核对完整性"}
-          </button>
-          <button className="btn sm ghost" onClick={() => call("revealChat", { slug: current.slug })}>
-            <FolderOpen size={12} /> 打开目录
-          </button>
-          <button className="btn sm ghost" onClick={() => call("openLibrary", { slug: current.slug })}>
-            <ArrowUpRight size={12} /> 打开归档库
-          </button>
-          <button className="btn sm ghost" onClick={exportChat}>
-            <ArrowDownToLine size={12} /> 导出到另一库
-          </button>
-          <span className="spacer" />
-          <button className="btn sm danger" disabled={busy === "delete"} onClick={remove}>
-            <Trash2 size={12} /> 删除本地归档
-          </button>
-          <button className="btn sm ghost" onClick={rebuild} title="重新生成离线网页，并补齐缺失的图片与视频封面缩略图">
-            <RefreshCw size={12} /> 补齐封面与网页
-          </button>
-          <button className="btn sm primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
-            {onlineLoading ? <Loader2 size={12} className="spin" /> : <CloudDownload size={12} />} {onlineLoading ? "正在读取会话…" : "拉取最新消息"}
-          </button>
+          <div className="chat-actions-main">
+            <button className="btn sm" disabled={busy === "verify"} onClick={verify}>
+              <ShieldCheck size={12} /> {busy === "verify" ? "核对中…" : "核对完整性"}
+            </button>
+            <button className="btn sm ghost" onClick={() => call("revealChat", { slug: current.slug })}>
+              <FolderOpen size={12} /> 打开目录
+            </button>
+            <button className="btn sm ghost" onClick={() => call("openLibrary", { slug: current.slug })}>
+              <ArrowUpRight size={12} /> 打开归档库
+            </button>
+            <button className="btn sm ghost" onClick={exportChat}>
+              <ArrowDownToLine size={12} /> 导出到另一库
+            </button>
+            <button className="btn sm ghost" onClick={rebuild} title="重新生成离线网页，并补齐缺失的图片与视频封面缩略图">
+              <RefreshCw size={12} /> 补齐封面与网页
+            </button>
+            <button className="btn sm ghost" onClick={() => void backfillJSON()} disabled={!current.hasSource} title="只按本地 result.json 补齐缺失媒体并重建，不访问 Telegram 在线消息">
+              <FileText size={12} /> 按 result.json 补全
+            </button>
+          </div>
+          <div className="chat-actions-primary">
+            <button className="btn sm danger" disabled={busy === "delete"} onClick={remove}>
+              <Trash2 size={12} /> 删除本地归档
+            </button>
+            <button className="btn sm primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
+              {onlineLoading ? <Loader2 size={12} className="spin" /> : <CloudDownload size={12} />} {onlineLoading ? "正在读取会话…" : "拉取最新消息"}
+            </button>
+          </div>
         </div>
         {stats && (
           <div className="chat-verify">
@@ -976,13 +1007,18 @@ const ArtVideo = forwardRef<VideoApi, {
   frameAspect: string;
   knownRatio: number;
   hasNext: boolean;
+  autoNext: boolean;
   onNext: () => void;
-}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, onNext }, ref) {
+}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, onNext }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const fitRef = useRef<() => void>(() => undefined);
   const posterRatio = useRef(0);
   const playerRef = useRef<Artplayer | null>(null);
+  const autoNextRef = useRef(autoNext);
+  const onNextRef = useRef(onNext);
+  autoNextRef.current = autoNext;
+  onNextRef.current = onNext;
   const rateRef = useRef(1);
   const resumeRate = useRef(1);
   const boostRef = useRef(false);
@@ -1204,6 +1240,9 @@ const ArtVideo = forwardRef<VideoApi, {
     playerBox.addEventListener("pointerenter", onPointerEnter);
     playerBox.addEventListener("pointerleave", onPointerLeave);
     player.on("video:play", hideControls);
+    player.on("video:ended", () => {
+      if (autoNextRef.current) onNextRef.current();
+    });
     player.setting.add({
       name: "tak-precise-speed",
       html: "精确倍速",
@@ -1522,16 +1561,27 @@ function MediaViewer({
 
   useEffect(() => {
     const controller = new AbortController();
-    for (const near of [items[index + 1], items[index - 1]]) {
-      if (near?.kind !== "video") continue;
-      fetch(mediaURL(chat.slug, near.rel), {
-        headers: { Range: "bytes=0-65535" },
+    const next = items[index + 1];
+    const prev = items[index - 1];
+    const range = (target: MediaItem, bytes: number) =>
+      fetch(mediaURL(chat.slug, target.rel), {
+        headers: { Range: `bytes=0-${bytes}` },
         signal: controller.signal,
         cache: "force-cache",
       }).catch(() => undefined);
+    if (next?.kind === "video") {
+      if (item.kind === "video" && next.size > 0 && next.size <= 64 * 1024 * 1024) {
+        // Prime the next clip completely so automatic continuation starts at once.
+        fetch(mediaURL(chat.slug, next.rel), { signal: controller.signal, cache: "force-cache" })
+          .then((res) => res.arrayBuffer())
+          .catch(() => undefined);
+      } else {
+        void range(next, 4 * 1024 * 1024);
+      }
     }
+    if (prev?.kind === "video") void range(prev, 2 * 1024 * 1024);
     return () => controller.abort();
-  }, [chat.slug, items, index]);
+  }, [chat.slug, items, index, item.kind]);
 
   useEffect(() => {
     active.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
@@ -1557,20 +1607,36 @@ function MediaViewer({
   const beginFullscreenSwitch = () => {
     setFsSwitching(true);
     if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
-    fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 600);
+    // Safety net if fullscreenchange never arrives in this WebView.
+    fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 1800);
+  };
+
+  const settleFullscreenSwitch = () => {
+    if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 220);
+      });
+    });
   };
 
   const toggleFullscreen = () => {
+    const entering = !document.fullscreenElement;
     beginFullscreenSwitch();
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
+    // Let the breathing cover paint before the window/viewport changes.
+    window.setTimeout(() => {
+      if (entering) void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
+      else void document.exitFullscreen();
+    }, 70);
   };
 
   const enterImmersive = () => {
     setImmersive(true);
     if (!document.fullscreenElement) {
       beginFullscreenSwitch();
-      void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
+      window.setTimeout(() => {
+        void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
+      }, 70);
     }
   };
 
@@ -1578,15 +1644,18 @@ function MediaViewer({
     setImmersive(false);
     if (document.fullscreenElement) {
       beginFullscreenSwitch();
-      void document.exitFullscreen();
+      window.setTimeout(() => void document.exitFullscreen(), 70);
     }
   };
 
   useEffect(() => {
     const onFullscreen = () => {
-      if (!document.fullscreenElement) setImmersive(false);
-      if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
-      fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 220);
+      if (!document.fullscreenElement) {
+        setImmersive(false);
+        // Native Esc can exit fullscreen without going through our button.
+        setFsSwitching(true);
+      }
+      settleFullscreenSwitch();
     };
     document.addEventListener("fullscreenchange", onFullscreen);
     return () => {
@@ -1623,7 +1692,10 @@ function MediaViewer({
         return;
       }
       if (e.key === "Escape") {
-        if (document.fullscreenElement) void document.exitFullscreen();
+        if (document.fullscreenElement) {
+          beginFullscreenSwitch();
+          window.setTimeout(() => void document.exitFullscreen(), 70);
+        }
         else if (st.kind === "video" && api.current?.isFullscreen()) api.current.setFullscreen(false);
         else if (immersiveRef.current) setImmersive(false);
         else st.onClose();
@@ -1747,6 +1819,12 @@ function MediaViewer({
 
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""} ${fsSwitching ? "switching-fullscreen" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
+      {fsSwitching && (
+        <div className="viewer-fs-cover" role="status" aria-live="polite">
+          <span className="viewer-fs-breathe"><Maximize2 size={22} /></span>
+          <span>正在切换全屏</span>
+        </div>
+      )}
       <div
         className={`viewer-ambient ${prefs.backdrop === "solid" ? "solid" : "ambient"}`}
         style={prefs.backdrop === "ambient" && ambient
@@ -1763,11 +1841,9 @@ function MediaViewer({
         <button className="btn sm ghost" onClick={() => setShowKeys((v) => !v)}>
           <Keyboard size={12} /> 快捷键
         </button>
-        {isVideo && (
-          <button className="btn sm ghost" onClick={() => onOpen(item)}>
-            <ExternalLink size={12} /> 系统播放器
-          </button>
-        )}
+        <button className="btn sm ghost" onClick={() => onOpen(item)}>
+          <ExternalLink size={12} /> {isVideo ? "系统播放器" : "系统图片查看器"}
+        </button>
         <button className="btn sm ghost" onClick={() => onReveal(item)}>
           <LocateFixed size={12} /> 定位文件
         </button>
@@ -1793,6 +1869,7 @@ function MediaViewer({
             frameAspect={prefs.videoFrameAspect}
             knownRatio={knownRatio}
             hasNext={index < items.length - 1}
+            autoNext={items[index + 1]?.kind === "video"}
             onNext={() => onIndex(index + 1)}
           />
         ) : (

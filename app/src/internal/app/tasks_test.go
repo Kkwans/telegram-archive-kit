@@ -148,11 +148,35 @@ func TestTaskKeepsCompletedRecordsAcrossPasses(t *testing.T) {
 	}
 }
 
-func TestTaskFinishUsesWallClockElapsed(t *testing.T) {
-	task := &backgroundTask{dto: TaskDTO{State: "running", StartedAt: 1000, ElapsedMs: 10}}
+func TestTaskFinishUsesActiveElapsed(t *testing.T) {
+	task := &backgroundTask{
+		dto:          TaskDTO{State: "running", StartedAt: time.Now().Add(-10 * time.Second).UnixMilli(), ElapsedMs: 10},
+		activeBaseMs: 10,
+		activeSince:  time.Now().Add(-500 * time.Millisecond),
+	}
 	task.finish(nil)
-	if task.dto.ElapsedMs <= 10 || task.dto.ElapsedMs != task.dto.FinishedAt-1000 {
-		t.Fatalf("elapsed = %d, finished-start = %d", task.dto.ElapsedMs, task.dto.FinishedAt-1000)
+	if task.dto.ElapsedMs < 500 || task.dto.ElapsedMs > 2000 {
+		t.Fatalf("active elapsed = %d", task.dto.ElapsedMs)
+	}
+	if task.dto.ElapsedMs >= task.dto.FinishedAt-task.dto.StartedAt {
+		t.Fatalf("paused/outside time leaked into elapsed: %d", task.dto.ElapsedMs)
+	}
+}
+
+func TestTaskResumeKeepsAccumulatedActiveTime(t *testing.T) {
+	task := &backgroundTask{
+		dto:          TaskDTO{State: "paused", StartedAt: time.Now().Add(-30 * time.Second).UnixMilli(), ElapsedMs: 1200, FinishedAt: time.Now().UnixMilli()},
+		activeBaseMs: 1200,
+	}
+	if !task.resume() {
+		t.Fatal("paused task should resume")
+	}
+	if task.dto.State != "running" || task.dto.FinishedAt != 0 {
+		t.Fatalf("resume state = %#v", task.dto)
+	}
+	task.pause()
+	if task.dto.ElapsedMs < 1200 {
+		t.Fatalf("accumulated active time lost: %d", task.dto.ElapsedMs)
 	}
 }
 

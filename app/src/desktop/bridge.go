@@ -192,34 +192,41 @@ func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 type apiParams struct {
-	Slug       string              `json:"slug"`
-	Folder     string              `json:"folder"`
-	Mode       string              `json:"mode"`
-	Root       string              `json:"root"`
-	Dst        string              `json:"dst"`
-	Path       string              `json:"path"`
-	Drive      string              `json:"drive"`
-	Peer       string              `json:"peer"`
-	Token      string              `json:"token"`
-	Limit      int                 `json:"limit"`
-	Name       string              `json:"name"`
-	Title      string              `json:"title"`
-	Initial    string              `json:"initial"`
-	Paths      []string            `json:"paths"`
-	Peers      []string            `json:"peers"`
-	Settings   *takapp.SettingsDTO `json:"settings"`
-	Kind       string              `json:"kind"`
-	ID         string              `json:"id"`
-	Text       string              `json:"text"`
-	Timeout    int                 `json:"timeout"`
-	Width      int                 `json:"width"`
-	Height     int                 `json:"height"`
-	Concurrent int                 `json:"concurrent"`
-	Threads    int                 `json:"threads"`
-	X          int                 `json:"x"`
-	Y          int                 `json:"y"`
-	Seq        int64               `json:"seq"`
-	Purpose    string              `json:"purpose"`
+	Slug                string              `json:"slug"`
+	Folder              string              `json:"folder"`
+	Mode                string              `json:"mode"`
+	Root                string              `json:"root"`
+	Dst                 string              `json:"dst"`
+	Path                string              `json:"path"`
+	Drive               string              `json:"drive"`
+	Peer                string              `json:"peer"`
+	Token               string              `json:"token"`
+	Limit               int                 `json:"limit"`
+	Name                string              `json:"name"`
+	Title               string              `json:"title"`
+	Initial             string              `json:"initial"`
+	Paths               []string            `json:"paths"`
+	Peers               []string            `json:"peers"`
+	Settings            *takapp.SettingsDTO `json:"settings"`
+	Kind                string              `json:"kind"`
+	ID                  string              `json:"id"`
+	Text                string              `json:"text"`
+	Timeout             int                 `json:"timeout"`
+	Width               int                 `json:"width"`
+	Height              int                 `json:"height"`
+	Concurrent          int                 `json:"concurrent"`
+	Threads             int                 `json:"threads"`
+	StallTimeoutSeconds int                 `json:"stallTimeoutSeconds"`
+	StalledFileRetries  int                 `json:"stalledFileRetries"`
+	NetworkRetryMinutes int                 `json:"networkRetryMinutes"`
+	UnknownRetryCount   int                 `json:"unknownRetryCount"`
+	MaxRepairPasses     int                 `json:"maxRepairPasses"`
+	TransferAdjustment  string              `json:"transferAdjustment"`
+	ReconnectTimeout    string              `json:"reconnectTimeout"`
+	X                   int                 `json:"x"`
+	Y                   int                 `json:"y"`
+	Seq                 int64               `json:"seq"`
+	Purpose             string              `json:"purpose"`
 }
 
 func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
@@ -305,7 +312,13 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "startOneClick":
 		return b.facade.StartOneClick(p.Slug)
 	case "setDownloadConfig":
-		return b.facade.SetDownloadConfig(p.Concurrent, p.Threads)
+		return b.facade.SetDownloadConfig(takapp.DownloadConfigDTO{
+			Concurrent: p.Concurrent, Threads: p.Threads,
+			StallTimeoutSeconds: p.StallTimeoutSeconds, StalledFileRetries: p.StalledFileRetries,
+			NetworkRetryMinutes: p.NetworkRetryMinutes, UnknownRetryCount: p.UnknownRetryCount,
+			MaxRepairPasses: p.MaxRepairPasses, TransferAdjustment: p.TransferAdjustment,
+			ReconnectTimeout: p.ReconnectTimeout,
+		})
 	case "cancel":
 		return map[string]bool{"cancelled": b.facade.Cancel()}, nil
 	case "pause":
@@ -665,6 +678,7 @@ func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	// Archived media is immutable and re-reading is the dominant viewer cost.
+	w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
 	http.ServeContent(w, r, name, st.ModTime(), f)
 }

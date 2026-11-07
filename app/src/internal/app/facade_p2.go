@@ -421,19 +421,56 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 	return f.GetSettings(), nil
 }
 
-// SetDownloadConfig applies transfer concurrency immediately. tdl receives
-// these values only when its process starts, so an active run is paused and
-// resumed as a new incremental task instead of pretending a live child process
-// can change its worker count.
-func (f *Facade) SetDownloadConfig(concurrent, threads int) (string, error) {
-	if concurrent < 1 || concurrent > 8 {
+type DownloadConfigDTO struct {
+	Concurrent          int    `json:"concurrent"`
+	Threads             int    `json:"threads"`
+	StallTimeoutSeconds int    `json:"stallTimeoutSeconds"`
+	StalledFileRetries  int    `json:"stalledFileRetries"`
+	NetworkRetryMinutes int    `json:"networkRetryMinutes"`
+	UnknownRetryCount   int    `json:"unknownRetryCount"`
+	MaxRepairPasses     int    `json:"maxRepairPasses"`
+	TransferAdjustment  string `json:"transferAdjustment"`
+	ReconnectTimeout    string `json:"reconnectTimeout"`
+}
+
+// SetDownloadConfig applies transfer settings immediately. tdl receives these
+// values only when its process starts, so an active run is paused and resumed
+// as an incremental attempt on the same task.
+func (f *Facade) SetDownloadConfig(dto DownloadConfigDTO) (string, error) {
+	if dto.Concurrent < 1 || dto.Concurrent > 8 {
 		return "", errors.New("并发文件任务需在 1–8 之间")
 	}
-	if threads < 1 || threads > 16 {
+	if dto.Threads < 1 || dto.Threads > 16 {
 		return "", errors.New("单文件线程需在 1–16 之间")
 	}
+	if dto.StallTimeoutSeconds < 30 || dto.StallTimeoutSeconds > 600 {
+		return "", errors.New("卡住判定需在 30–600 秒之间")
+	}
+	if dto.StalledFileRetries < 1 || dto.StalledFileRetries > 10 {
+		return "", errors.New("疑难文件重试需在 1–10 次之间")
+	}
+	if dto.NetworkRetryMinutes < 1 || dto.NetworkRetryMinutes > 180 {
+		return "", errors.New("网络恢复窗口需在 1–180 分钟之间")
+	}
+	if dto.UnknownRetryCount < 0 || dto.UnknownRetryCount > 10 {
+		return "", errors.New("未知错误重试需在 0–10 次之间")
+	}
+	if dto.MaxRepairPasses < 1 || dto.MaxRepairPasses > 10 {
+		return "", errors.New("最大修复轮数需在 1–10 之间")
+	}
+	switch dto.TransferAdjustment {
+	case "increase", "increase-both", "decrease", "keep":
+	default:
+		return "", errors.New("未知的重试传输策略")
+	}
+	dto.ReconnectTimeout = strings.TrimSpace(dto.ReconnectTimeout)
 	f.mu.Lock()
-	if f.a.Settings.Concurrent == concurrent && f.a.Settings.Threads == threads {
+	s := f.a.Settings
+	if s.Concurrent == dto.Concurrent && s.Threads == dto.Threads &&
+		s.StallTimeoutSeconds == dto.StallTimeoutSeconds && s.StalledFileRetries == dto.StalledFileRetries &&
+		s.NetworkRetryMinutes == dto.NetworkRetryMinutes && s.UnknownRetryCount == dto.UnknownRetryCount &&
+		s.MaxRepairPasses == dto.MaxRepairPasses && s.TransferAdjustment == dto.TransferAdjustment &&
+		(dto.ReconnectTimeout == "" || s.ReconnectTimeout == dto.ReconnectTimeout) {
 		op := f.op
 		f.mu.Unlock()
 		if op != nil && op.task != nil {
@@ -441,8 +478,17 @@ func (f *Facade) SetDownloadConfig(concurrent, threads int) (string, error) {
 		}
 		return "", nil
 	}
-	f.a.Settings.Concurrent = concurrent
-	f.a.Settings.Threads = threads
+	f.a.Settings.Concurrent = dto.Concurrent
+	f.a.Settings.Threads = dto.Threads
+	f.a.Settings.StallTimeoutSeconds = dto.StallTimeoutSeconds
+	f.a.Settings.StalledFileRetries = dto.StalledFileRetries
+	f.a.Settings.NetworkRetryMinutes = dto.NetworkRetryMinutes
+	f.a.Settings.UnknownRetryCount = dto.UnknownRetryCount
+	f.a.Settings.MaxRepairPasses = dto.MaxRepairPasses
+	f.a.Settings.TransferAdjustment = dto.TransferAdjustment
+	if dto.ReconnectTimeout != "" {
+		f.a.Settings.ReconnectTimeout = dto.ReconnectTimeout
+	}
 	if err := f.a.saveSettings(); err != nil {
 		f.mu.Unlock()
 		return "", err
