@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"telegramarchivekit/internal/archive"
 	"telegramarchivekit/internal/media"
@@ -418,6 +419,62 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 		return f.GetSettings(), err
 	}
 	return f.GetSettings(), nil
+}
+
+// SetDownloadConfig applies transfer concurrency immediately. tdl receives
+// these values only when its process starts, so an active run is paused and
+// resumed as a new incremental task instead of pretending a live child process
+// can change its worker count.
+func (f *Facade) SetDownloadConfig(concurrent, threads int) (string, error) {
+	if concurrent < 1 || concurrent > 8 {
+		return "", errors.New("并发文件任务需在 1–8 之间")
+	}
+	if threads < 1 || threads > 16 {
+		return "", errors.New("单文件线程需在 1–16 之间")
+	}
+	f.mu.Lock()
+	if f.a.Settings.Concurrent == concurrent && f.a.Settings.Threads == threads {
+		op := f.op
+		f.mu.Unlock()
+		if op != nil && op.task != nil {
+			return op.task.snapshot().ID, nil
+		}
+		return "", nil
+	}
+	f.a.Settings.Concurrent = concurrent
+	f.a.Settings.Threads = threads
+	if err := f.a.saveSettings(); err != nil {
+		f.mu.Unlock()
+		return "", err
+	}
+	op := f.op
+	if op == nil {
+		f.mu.Unlock()
+		return "", nil
+	}
+	slug := op.slug
+	op.paused = true
+	op.cancel()
+	f.mu.Unlock()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		f.mu.Lock()
+		running := f.op != nil
+		f.mu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", errors.New("等待当前下载停下超时，请稍后重试")
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+	taskID, err := f.StartOneClick(slug)
+	if err != nil {
+		return "", fmt.Errorf("新配置已保存，但重新开始下载失败：%w", err)
+	}
+	return taskID, nil
 }
 
 func (f *Facade) Diagnostics() []DiagRow {

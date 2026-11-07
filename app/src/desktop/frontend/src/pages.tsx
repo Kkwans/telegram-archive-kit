@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   AtSign,
   ChartPie,
+  CloudDownload,
   Fingerprint,
   LogOut,
   Phone,
@@ -59,6 +60,8 @@ import {
 import Artplayer from "artplayer";
 import { call } from "./rpc";
 import { Select } from "./Select";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type {
   AccountInfo,
   AccountProfile,
@@ -99,6 +102,8 @@ export interface PageCtx {
   pickFolder: (purpose: string, title: string) => Promise<string>;
   tasks: TaskInfo[];
   openTasks: () => void;
+  /** Opens the unified download detail for a concrete task id. */
+  openTask: (taskId: string) => void;
   prefs: ViewerPrefs;
   applyPrefs: (p: ViewerPrefs) => void;
 }
@@ -133,10 +138,11 @@ const MEDIA_KINDS = [
 ] as const;
 
 export function Home({ ctx }: { ctx: PageCtx }) {
-  const { boot, chats, selected, setSelected, refresh, toast, go, tasks, openTasks, pickFiles } = ctx;
+  const { boot, chats, selected, setSelected, refresh, toast, go, tasks, openTasks, openTask, pickFiles } = ctx;
   const [stats, setStats] = useState<HomeStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncSlug, setSyncSlug] = useState(selected);
+  const [missingConfirm, setMissingConfirm] = useState(false);
   useEffect(() => {
     if (!syncSlug && selected) setSyncSlug(selected);
   }, [selected]);
@@ -166,20 +172,23 @@ export function Home({ ctx }: { ctx: PageCtx }) {
     }
     setSelected(slug);
     try {
-      await call("startOneClick", { slug });
+      const taskID = await call<string>("startOneClick", { slug });
       toast("已开始同步：" + (chats.find((c) => c.slug === slug)?.name ?? "聊天"));
-      go("overview");
+      openTask(taskID);
     } catch (e) {
       toast((e as Error).message, true);
     }
   };
-  const syncAllMissing = async () => {
+  const syncAllMissing = () => {
     const missing = chats.filter((c) => c.missing > 0);
     if (missing.length === 0) {
       toast("所有聊天都没有缺失媒体");
       return;
     }
-    if (!window.confirm(`将依次同步 ${missing.length} 个存在缺失媒体的聊天，期间会下载并重建网页。继续？`)) return;
+    setMissingConfirm(true);
+  };
+  const runSyncAllMissing = async () => {
+    setMissingConfirm(false);
     try {
       await call("startSyncAllMissing");
       toast("批量同步任务已加入任务中心");
@@ -377,303 +386,15 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           )}
         </section>
       </div>
-    </>
-  );
-}
 
-/* ============================ Overview ============================ */
-const SPEED_WINDOWS = [
-  { value: "60", label: "最近 1 分钟" },
-  { value: "180", label: "最近 3 分钟" },
-  { value: "300", label: "最近 5 分钟" },
-  { value: "600", label: "最近 10 分钟" },
-  { value: "900", label: "最近 15 分钟" },
-];
-
-export function Overview({ ctx }: { ctx: PageCtx }) {
-  const { chats, selected, dl, op, done, running, history, refresh, toast, prefs, go } = ctx;
-  const current = chats.find((c) => c.slug === selected) || null;
-  const [windowSec, setWindowSec] = useState(() => {
-    const saved = Number(localStorage.getItem("tak-speed-window") || 0);
-    return saved >= 60 && saved <= 900 ? saved : prefs.speedWindowSeconds || 180;
-  });
-  useEffect(() => {
-    localStorage.setItem("tak-speed-window", String(windowSec));
-  }, [windowSec]);
-
-  const percent = useMemo(() => {
-    if (dl) return Math.max(0, Math.min(100, dl.percent));
-    if (op && op.total > 0) return Math.max(0, Math.min(100, (op.current * 100) / op.total));
-    return 0;
-  }, [dl, op]);
-
-  const samples = useMemo(() => {
-    const count = Math.max(2, Math.ceil(windowSec / 0.9));
-    return history.slice(-count);
-  }, [history, windowSec]);
-  const chart = useMemo(() => {
-    const W = 720;
-    const H = 160;
-    const left = 58;
-    const right = 12;
-    const top = 12;
-    const bottom = 24;
-    const plotW = W - left - right;
-    const plotH = H - top - bottom;
-    const max = Math.max(1, ...samples.flatMap((s) => [s.now, s.avg]));
-    const point = (value: number, i: number, len: number) => {
-      const x = left + (len <= 1 ? 0 : (i / (len - 1)) * plotW);
-      const y = top + plotH - Math.min(1, value / max) * plotH;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    };
-    return {
-      W, H, left, right, top, bottom, plotW, plotH, max,
-      now: samples.map((s, i) => point(s.now, i, samples.length)).join(" "),
-      avg: samples.map((s, i) => point(s.avg, i, samples.length)).join(" "),
-      ticks: [0, 0.25, 0.5, 0.75, 1].map((f) => ({ y: top + plotH - f * plotH, label: rate(max * f) })),
-      times: [1, 0.75, 0.5, 0.25, 0].map((f) => ({ x: left + f * plotW, label: f === 0 ? "现在" : f === 1 ? "最早" : `-${Math.round((windowSec * f) / 60)} 分` })),
-    };
-  }, [samples, windowSec]);
-
-  const start = async () => {
-    if (!selected || running) return;
-    try {
-      await call("startOneClick", { slug: selected });
-      refresh();
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-  const cancel = async () => {
-    try {
-      await call("cancel");
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-  const pause = async () => {
-    try {
-      await call("pause");
-      toast("正在暂停任务，已完成文件会保留");
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-
-  const idle = !running && !dl && !op;
-  const downloading = running && !!dl;
-  const dlSpeed = rateParts(dl?.speedNow ?? 0);
-  const heroChat = current?.name || dl?.chat || "下载中心";
-  const heroTag = running ? "进行中" : done?.paused ? "已暂停" : done?.partial ? "部分完成" : done?.ok ? "已完成" : done ? "失败" : "";
-  const stageText = running
-    ? dl
-      ? `第 ${dl.pass}/${dl.passMax} 轮 · 已下载 ${dl.done}/${dl.total} 个媒体${dl.detail ? " · " + dl.detail : ""}`
-      : op
-        ? `${op.stage}${op.detail ? " · " + op.detail : ""}`
-        : "正在准备…"
-    : done
-      ? done.paused
-        ? "进度已保留，可在任务中心点击“继续下载”"
-        : done.partial
-          ? done.error || done.stage || "部分媒体未能下载，可在任务中心继续补齐"
-          : done.ok
-            ? `消息 ${done.messages ?? 0} · 媒体 ${done.media ?? 0}${done.missing ? ` · 缺失 ${done.missing}` : ""}`
-            : done.error || done.stage || "请重试"
-      : current
-        ? "点击「同步当前聊天」检查并补齐缺失媒体"
-        : "先在左侧选择聊天";
-
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1>下载中心</h1>
-          <p>
-            {current
-              ? `当前聊天：${current.name} · ${current.messages.toLocaleString()} 条消息 · ${current.missing > 0 ? `缺失 ${current.missing} 个媒体` : "媒体完整"}`
-              : "先在左侧选择聊天，或到档案库导入 result.json"}
-          </p>
-        </div>
-        <div className="actions">
-          <button className="btn ghost" onClick={() => go("tasks")}>
-            <ListTodo size={13} /> 任务中心
-          </button>
-          <button className="btn ghost" onClick={() => current && call("openLibrary", { slug: current.slug })} disabled={!current}>
-            <FolderOpen size={13} /> 打开归档库
-          </button>
-          {running ? (
-            <>
-              <button className="btn ghost" onClick={pause}>
-                <Pause size={12} /> 暂停
-              </button>
-              <button className="btn danger" onClick={cancel}>
-                <Square size={12} /> 取消任务
-              </button>
-            </>
-          ) : (
-            <button className="btn primary" onClick={start} disabled={!current}>
-              <Play size={13} /> {done?.paused ? "继续下载" : done?.partial ? "继续补齐" : "同步当前聊天"}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <section className={`hero ${!running && !dl ? "idle" : ""} ${done?.paused || done?.partial ? "warning" : ""}`}>
-        <div
-          className={`ring ${idle ? "idle" : ""}`}
-          role="progressbar"
-          aria-valuenow={Math.round(percent)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          style={{ background: idle ? "var(--surface-3)" : `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` }}
-        >
-          {idle ? <Play size={20} /> : <b>{Math.round(percent)}%</b>}
-        </div>
-        <div className="hero-main">
-          <div className="hero-topline">
-            <div className="hero-heading">
-              <span className="download-hero-kicker">下载聊天</span>
-              <div className="hero-title">
-                <h2>{heroChat}</h2>
-                {heroTag && <span className={`tag ${done?.paused || done?.partial ? "warn" : !running && done && !done.ok ? "bad" : ""}`}>{heroTag}</span>}
-              </div>
-            </div>
-            {downloading && (
-              <div className="download-live-speed">
-                <span className="download-meter-label"><i />实时速度</span>
-                <b>{dlSpeed.value}</b><em>{dlSpeed.unit}</em>
-              </div>
-            )}
-          </div>
-          <div className="hero-stage" title={stageText}>{stageText}</div>
-          {dl && (
-            <div className="hero-meta">
-              <span>已下载 <b>{bytes(dl.bytes)}</b>{dl.totalBytes > 0 ? ` / ${bytes(dl.totalBytes)}` : ""}</span>
-              <span>峰值 <b>{rate(dl.speedPeak)}</b></span>
-              <span>并发 <b>{dl.concurrent}</b> × <b>{dl.threads}</b></span>
-              <span>第 <b>{dl.pass}</b> 轮</span>
-            </div>
-          )}
-          {op && !dl && (
-            <div className="hero-meta">
-              <span>{op.stage}</span>
-              {op.total > 0 && <span><b>{op.current} / {op.total} {op.unit}</b></span>}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className={`stat-grid ${downloading ? "" : "three"}`}>
-        {downloading && (
-          <div className="stat">
-            <span>实时速度</span>
-            <div><b>{rate(dl?.speedNow ?? 0)}</b></div>
-          </div>
-        )}
-        <div className="stat">
-          <span>平均速度</span>
-          <div><b>{rate(dl?.speedAvg ?? 0)}</b></div>
-        </div>
-        <div className="stat">
-          <span>本轮完成</span>
-          <div><b>{dl?.done ?? 0}</b><em>/ {dl?.total ?? 0}</em></div>
-        </div>
-        <div className="stat">
-          <span>预计剩余</span>
-          <div><b>{duration(dl?.etaMs ?? 0)}</b></div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h3><ChartPie size={14} /> 速度曲线</h3>
-          <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
-          <div className="chart-window">
-            <Select ariaLabel="速度曲线时间窗" value={String(windowSec)} onChange={(v) => setWindowSec(Number(v))} options={SPEED_WINDOWS} />
-          </div>
-        </div>
-        <div className="chart chart-axes">
-          {samples.length >= 2 ? (
-            <svg viewBox={`0 0 ${chart.W} ${chart.H}`} preserveAspectRatio="none" aria-label="下载速度曲线">
-              {chart.ticks.map((t) => (
-                <g key={t.y}>
-                  <line className="grid" x1={chart.left} y1={t.y} x2={chart.W - chart.right} y2={t.y} />
-                  <text className="axis-y" x={chart.left - 8} y={t.y + 3} textAnchor="end">{t.label}</text>
-                </g>
-              ))}
-              {chart.times.map((t) => (
-                <text key={t.x} className="axis-x" x={t.x} y={chart.H - 6} textAnchor={t.x === chart.left ? "start" : t.x === chart.W - chart.right ? "end" : "middle"}>{t.label}</text>
-              ))}
-              <polyline className="avg" points={chart.avg} />
-              <polyline className="now" points={chart.now} />
-            </svg>
-          ) : (
-            <div className="chart-empty">同步开始后显示实时 / 平均速度曲线。</div>
-          )}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h3>正在下载</h3>
-          <span className="meta">{(dl?.active ?? []).length} 个文件</span>
-        </div>
-        {dl && (dl.active ?? []).length > 0 ? (
-          <table className="table task-table download-table">
-            <thead>
-              <tr>
-                <th>文件</th>
-                <th className="hide-sm">类型</th>
-                <th>进度</th>
-                <th>已传 / 期望</th>
-                <th>速度</th>
-                <th className="hide-sm">剩余</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(dl.active ?? []).map((t) => (
-                <tr key={t.id}>
-                  <td className="name" title={t.name}>{t.name}</td>
-                  <td className="hide-sm"><span className={`kind-chip ${t.kind}`}>{kindLabel(t.kind)}</span></td>
-                  <td>
-                    <div className="progress-inline">
-                      <div className="mini"><i style={{ width: `${Math.max(0, Math.min(100, t.percent))}%` }} /></div>
-                      <span className={t.stalled ? "stalled" : ""}>{t.stalled ? "停滞" : t.percent >= 0 ? `${t.percent.toFixed(0)}%` : "—"}</span>
-                    </div>
-                  </td>
-                  <td>{bytes(t.transferred)}{t.expected > 0 ? ` / ${bytes(t.expected)}` : ""}</td>
-                  <td>{rate(t.speed)}</td>
-                  <td className="hide-sm">{duration(t.etaMs)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="chart-empty">没有正在下载的文件。</div>
-        )}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h3>最近完成</h3>
-          <span className="meta">{(dl?.completed ?? []).length} 个</span>
-        </div>
-        {dl && (dl.completed ?? []).length > 0 ? (
-          <div className="done-list">
-            {(dl.completed ?? []).map((t) => (
-              <div className="done-row" key={t.id}>
-                <CheckCircle2 size={14} color="var(--ok)" />
-                <span className={`kind-chip ${t.kind}`}>{kindLabel(t.kind)}</span>
-                <span className="nm" title={t.name}>{t.name}</span>
-                <span className="tm">{bytes(t.expected || t.transferred)}</span>
-                <span className="tm">{duration(t.elapsedMs)}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="chart-empty">还没有完成记录。</div>
-        )}
-      </section>
+      <ConfirmDialog
+        open={missingConfirm}
+        title="同步全部缺失媒体？"
+        message={`将依次同步 ${chats.filter((c) => c.missing > 0).length} 个存在缺失媒体的聊天，期间会下载并重建网页。`}
+        confirmLabel="开始同步"
+        onConfirm={() => void runSyncAllMissing()}
+        onCancel={() => setMissingConfirm(false)}
+      />
     </>
   );
 }
@@ -692,9 +413,12 @@ interface Stats {
 }
 
 export function Chats({ ctx }: { ctx: PageCtx }) {
-  const { chats, selected, refresh, toast, go, pickFolder } = ctx;
+  const { chats, selected, refresh, toast, go, pickFolder, openTask } = ctx;
   const [stats, setStats] = useState<Stats | null>(null);
   const [busy, setBusy] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [onlineTarget, setOnlineTarget] = useState<OnlineUpdateTarget | null>(null);
+  const [onlineLoading, setOnlineLoading] = useState(false);
 
   const current = chats.find((c) => c.slug === selected) || null;
   useEffect(() => {
@@ -718,7 +442,12 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
   const remove = async () => {
     if (!current) return;
-    if (!window.confirm(`删除本地归档「${current.name}」？\n\n只删除档案库副本，Telegram 云端不受影响，且无法从 TAK 撤销。`)) return;
+    setDeleteConfirm(true);
+  };
+
+  const removeConfirmed = async () => {
+    if (!current) return;
+    setDeleteConfirm(false);
     setBusy("delete");
     try {
       await call("deleteChat", { slug: current.slug });
@@ -743,15 +472,20 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     }
   };
 
-  const sync = async () => {
-    if (!current) return;
+  const onlineUpdate = async () => {
+    if (!current || onlineLoading) return;
+    if (!ctx.boot?.hasSession) {
+      toast("请先在账号管理登录 Telegram", true);
+      return;
+    }
+    setOnlineLoading(true);
     try {
-      await call("startOneClick", { slug: current.slug });
-      toast("已开始同步");
-      refresh();
-      go("overview");
+      const chat = await call<{ peer: string; name: string; type?: string; id?: number; avatar?: string }>("onlineChatForSlug", { slug: current.slug });
+      setOnlineTarget(onlineTargetFromChat(chat));
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setOnlineLoading(false);
     }
   };
 
@@ -759,7 +493,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     if (!current) return;
     try {
       await call("startRefreshWeb", { slug: current.slug });
-      toast("重建任务已加入任务中心");
+      toast("已加入任务中心：正在补齐视频封面并重建离线网页");
     } catch (e) {
       toast((e as Error).message, true);
     }
@@ -792,15 +526,6 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         <div className="actions">
           <button className="btn ghost" onClick={() => go("library")}>
             <ChevronLeft size={13} /> 返回档案管理
-          </button>
-          <button className="btn ghost" onClick={() => call("openLibrary", { slug: current.slug })}>
-            <FolderOpen size={13} /> 打开归档库
-          </button>
-          <button className="btn ghost" onClick={rebuild}>
-            <RefreshCw size={13} /> 重建网页
-          </button>
-          <button className="btn primary" onClick={sync}>
-            <Play size={13} /> 一键同步
           </button>
         </div>
       </div>
@@ -850,12 +575,21 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <button className="btn sm ghost" onClick={() => call("revealChat", { slug: current.slug })}>
             <FolderOpen size={12} /> 打开目录
           </button>
+          <button className="btn sm ghost" onClick={() => call("openLibrary", { slug: current.slug })}>
+            <ArrowUpRight size={12} /> 打开归档库
+          </button>
           <button className="btn sm ghost" onClick={exportChat}>
             <ArrowDownToLine size={12} /> 导出到另一库
           </button>
           <span className="spacer" />
           <button className="btn sm danger" disabled={busy === "delete"} onClick={remove}>
             <Trash2 size={12} /> 删除本地归档
+          </button>
+          <button className="btn sm ghost" onClick={rebuild} title="重新生成离线网页，并补齐缺失的图片与视频封面缩略图">
+            <RefreshCw size={12} /> 补齐封面与网页
+          </button>
+          <button className="btn sm primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
+            {onlineLoading ? <Loader2 size={12} className="spin" /> : <CloudDownload size={12} />} {onlineLoading ? "正在读取会话…" : "拉取最新消息"}
           </button>
         </div>
         {stats && (
@@ -873,7 +607,26 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         )}
       </section>
 
+      {onlineTarget && (
+        <OnlineUpdateDialog
+          target={onlineTarget}
+          onClose={() => setOnlineTarget(null)}
+          onStarted={(taskId) => openTask(taskId)}
+          toast={toast}
+        />
+      )}
+
       <MediaGallery ctx={ctx} chat={current} />
+
+      <ConfirmDialog
+        open={deleteConfirm}
+        title={`删除本地归档「${current.name}」？`}
+        message="只删除档案库副本，Telegram 云端不受影响，且无法从 TAK 撤销。"
+        confirmLabel="删除归档"
+        danger
+        onConfirm={() => void removeConfirmed()}
+        onCancel={() => setDeleteConfirm(false)}
+      />
     </>
   );
 }
@@ -1406,16 +1159,51 @@ const ArtVideo = forwardRef<VideoApi, {
       moreVideoAttr: { playsInline: true, preload: "auto" } as never,
     });
     playerRef.current = player;
+    const playerBox = box.current;
+    playerBox.classList.remove("controls-awake");
+    wrap.current?.classList.remove("controls-awake");
+    let hideTimer = 0;
     let pointerInside = false;
-    const onPointerEnter = () => { pointerInside = true; };
-    const onPointerLeave = () => { pointerInside = false; };
-    box.current.addEventListener("pointerenter", onPointerEnter);
-    box.current.addEventListener("pointerleave", onPointerLeave);
-    const hideIdleControls = () => {
-      if (!pointerInside) player.controls.show = false;
+    const hideControls = () => {
+      player.controls.show = false;
+      wrap.current?.classList.remove("controls-awake");
     };
-    player.on("video:canplay", hideIdleControls);
-    player.once("ready", hideIdleControls);
+    const scheduleHide = () => {
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => {
+        if (!playerRef.current) return;
+        if (player.setting.show) {
+          scheduleHide();
+          return;
+        }
+        if (player.video.paused) return;
+        if (!pointerInside) hideControls();
+      }, 2400);
+    };
+    const wakeControls = () => {
+      player.controls.show = true;
+      wrap.current?.classList.add("controls-awake");
+      if (player.playing) scheduleHide();
+    };
+    const onPointerMove = () => {
+      pointerInside = true;
+      wakeControls();
+    };
+    const onPointerDown = () => {
+      pointerInside = true;
+      wakeControls();
+    };
+    const onPointerEnter = () => { pointerInside = true; };
+    const onPointerLeave = () => {
+      pointerInside = false;
+      window.clearTimeout(hideTimer);
+      hideControls();
+    };
+    playerBox.addEventListener("pointermove", onPointerMove);
+    playerBox.addEventListener("pointerdown", onPointerDown);
+    playerBox.addEventListener("pointerenter", onPointerEnter);
+    playerBox.addEventListener("pointerleave", onPointerLeave);
+    player.on("video:play", hideControls);
     player.setting.add({
       name: "tak-precise-speed",
       html: "精确倍速",
@@ -1487,15 +1275,41 @@ const ArtVideo = forwardRef<VideoApi, {
       fitFrame();
       setFramed(true);
     };
-    const onData = () => {
-      fitFrame();
-      setReady(true);
+    const onData = () => fitFrame();
+    let revealed = false;
+    let revealFrame = 0;
+    let revealFallback = 0;
+    const finishReveal = () => {
+      if (!revealed) return;
+      window.clearTimeout(revealFallback);
+      hideControls();
+      window.requestAnimationFrame(() => {
+        hideControls();
+        setReady(true);
+      });
     };
+    const revealFirstFrame = () => {
+      if (revealed) return;
+      revealed = true;
+      hideControls();
+      const video = player.video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (callback: () => void) => number;
+        cancelVideoFrameCallback?: (handle: number) => void;
+      };
+      if (typeof video.requestVideoFrameCallback === "function") {
+        revealFrame = video.requestVideoFrameCallback(() => finishReveal());
+        revealFallback = window.setTimeout(finishReveal, 1600);
+      } else {
+        finishReveal();
+      }
+    };
+    player.on("video:playing", revealFirstFrame);
     player.video.addEventListener("loadedmetadata", onMeta);
     player.video.addEventListener("loadeddata", onData);
     player.video.addEventListener("resize", fitFrame);
     if (player.video.readyState >= 1) onMeta();
     if (player.video.readyState >= 2) onData();
+    if (!player.video.paused && player.video.readyState >= 2) revealFirstFrame();
     const stageEl = wrap.current?.parentElement;
     const observer = typeof ResizeObserver !== "undefined" && stageEl ? new ResizeObserver(fitFrame) : null;
     observer?.observe(stageEl as Element);
@@ -1591,8 +1405,16 @@ const ArtVideo = forwardRef<VideoApi, {
       player.video.removeEventListener("loadedmetadata", updateLoadPercent);
       player.video.removeEventListener("durationchange", updateLoadPercent);
       player.video.removeEventListener("canplay", updateLoadPercent);
-      box.current?.removeEventListener("pointerenter", onPointerEnter);
-      box.current?.removeEventListener("pointerleave", onPointerLeave);
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(revealFallback);
+      const frameVideo = player.video as HTMLVideoElement & { cancelVideoFrameCallback?: (handle: number) => void };
+      if (revealFrame && typeof frameVideo.cancelVideoFrameCallback === "function") {
+        frameVideo.cancelVideoFrameCallback(revealFrame);
+      }
+      playerBox.removeEventListener("pointermove", onPointerMove);
+      playerBox.removeEventListener("pointerdown", onPointerDown);
+      playerBox.removeEventListener("pointerenter", onPointerEnter);
+      playerBox.removeEventListener("pointerleave", onPointerLeave);
       window.removeEventListener("resize", fitFrame);
       if (audioCtx.current) {
         void audioCtx.current.close();
@@ -2117,6 +1939,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [mode, setMode] = useState("reference");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
   const [detailStats, setDetailStats] = useState<Stats | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
@@ -2283,14 +2106,20 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       setBusy("");
     }
   };
-  const deleteSelected = async () => {
+  const deleteSelected = () => {
     if (selectedChats.length === 0) return;
-    if (!window.confirm(`删除选中的 ${selectedChats.length} 个本地归档？\n\n只删除档案库副本，Telegram 云端不受影响，且无法从 TAK 撤销。`)) return;
+    setPendingDelete(selectedChats);
+  };
+  const runDelete = async () => {
+    const targets = pendingDelete;
+    if (targets.length === 0) return;
+    setPendingDelete([]);
     setBusy("bulk");
     try {
-      for (const c of selectedChats) await call("deleteChat", { slug: c.slug });
-      toast(`已删除 ${selectedChats.length} 个本地归档`);
+      for (const c of targets) await call("deleteChat", { slug: c.slug });
+      toast(targets.length === 1 ? "已删除本地归档" : `已删除 ${targets.length} 个本地归档`);
       setSel(new Set());
+      if (detailChat && targets.some((c) => c.slug === detailChat.slug)) setDetailChat(null);
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
@@ -2391,16 +2220,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     navigator.clipboard?.writeText(text).then(() => toast(`${label}已复制`)).catch(() => toast("复制失败", true));
   };
 
-  const removeChat = (chat: ChatRow) => {
-    if (!window.confirm(`删除本地归档「${chat.name}」？\n\n只删除档案库副本，Telegram 云端不受影响。`)) return;
-    call("deleteChat", { slug: chat.slug })
-      .then(() => {
-        toast("已删除本地归档");
-        if (detailChat?.slug === chat.slug) setDetailChat(null);
-        refresh();
-      })
-      .catch((e: Error) => toast(e.message, true));
-  };
+  const removeChat = (chat: ChatRow) => setPendingDelete([chat]);
 
   const verifyChat = (chat: ChatRow) => {
     call<Stats>("verifyChat", { slug: chat.slug })
@@ -2930,6 +2750,16 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         </div>,
         document.body
       )}
+
+      <ConfirmDialog
+        open={pendingDelete.length > 0}
+        title={pendingDelete.length === 1 ? `删除本地归档「${pendingDelete[0]?.name}」？` : `删除选中的 ${pendingDelete.length} 个本地归档？`}
+        message="只删除档案库副本，Telegram 云端不受影响，且无法从 TAK 撤销。"
+        confirmLabel={pendingDelete.length === 1 ? "删除归档" : "全部删除"}
+        danger
+        onConfirm={() => void runDelete()}
+        onCancel={() => setPendingDelete([])}
+      />
     </>
   );
 }
@@ -3533,6 +3363,7 @@ export function Account({ ctx }: { ctx: PageCtx }) {
   const [entry, setEntry] = useState("");
   const [showRaw, setShowRaw] = useState(false);
   const [ready, setReady] = useState(false);
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
   const autoChecked = useRef(false);
 
   const loadInfo = () => {
@@ -3659,8 +3490,10 @@ export function Account({ ctx }: { ctx: PageCtx }) {
     }
   };
 
-  const logout = async () => {
-    if (!window.confirm("退出当前 Telegram 会话？\n\n会话文件会先备份到 ~/.tdl/backups，然后从当前 namespace 移除；重新登录即可恢复。")) return;
+  const logout = () => setLogoutConfirm(true);
+
+  const logoutConfirmed = async () => {
+    setLogoutConfirm(false);
     setBusy("logout");
     try {
       await call("logoutTdl");
@@ -3989,6 +3822,16 @@ ID ${profile.userId}`;
         )}
       </section>
       )}
+
+      <ConfirmDialog
+        open={logoutConfirm}
+        title="退出当前 Telegram 会话？"
+        message="会话文件会先备份到 ~/.tdl/backups，然后从当前 namespace 移除；重新登录即可恢复。"
+        confirmLabel="退出会话"
+        danger
+        onConfirm={() => void logoutConfirmed()}
+        onCancel={() => setLogoutConfirm(false)}
+      />
     </>
   );
 }

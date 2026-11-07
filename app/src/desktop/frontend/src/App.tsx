@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { call } from "./rpc";
 import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo, ViewerPrefs } from "./types";
-import { Account, Chats, Diagnostics, Home, Library, Overview, SettingsPage, type PageCtx } from "./pages";
+import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
 import { OnlineChatsPage } from "./OnlineChats";
 import { Select } from "./Select";
@@ -363,6 +363,7 @@ export default function App() {
   }, []);
 
   const [onlineRequest, setOnlineRequest] = useState<{ filter: string; seq: number } | null>(null);
+  const [taskFocus, setTaskFocus] = useState("");
   const go = (next: string) => {
     setSideTip(null);
     setAppTip(null);
@@ -371,6 +372,11 @@ export default function App() {
   const openOnline = (filter = "all") => {
     setOnlineRequest({ filter, seq: Date.now() });
     go("online");
+  };
+  const openTask = (taskId: string) => {
+    if (!taskId) return;
+    setTaskFocus(taskId);
+    go("tasks");
   };
   const ctx: PageCtx = useMemo(
     () => ({
@@ -393,6 +399,7 @@ export default function App() {
       pickFolder,
       tasks,
       openTasks: () => setPage("tasks"),
+      openTask,
       prefs,
       applyPrefs: setPrefs,
     }),
@@ -461,8 +468,9 @@ export default function App() {
         hint: "下载缺失媒体并重建网页",
         section: "操作",
         run: () => {
-          call("startOneClick", { slug: selected }).catch((e: Error) => toast(e.message, true));
-          setPage("overview");
+          call<string>("startOneClick", { slug: selected })
+            .then((taskID) => openTask(taskID))
+            .catch((e: Error) => toast(e.message, true));
         },
       });
       actions.push({
@@ -551,7 +559,7 @@ export default function App() {
   };
 
   const navActive = (key: string) =>
-    page === key || (key === "library" && page === "chats") || (key === "tasks" && page === "overview");
+    page === key || (key === "library" && page === "chats");
 
   const showNavTip = (e: React.MouseEvent<HTMLElement>, label: string, desc: string) => {
     if (!sideCollapsed) return;
@@ -765,13 +773,14 @@ export default function App() {
           <div className="scroll">
             {page === "home" && <Home ctx={ctx} />}
             {page === "online" && <OnlineChatsPage ctx={ctx} />}
-            {page === "overview" && <Overview ctx={ctx} />}
             {page === "chats" && <Chats ctx={ctx} />}
             {page === "library" && <Library ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
             {page === "tasks" && (
               <TasksPage
                 tasks={tasks}
+                focusTaskId={taskFocus}
+                onFocusHandled={() => setTaskFocus("")}
                 onRefresh={refresh}
                 onClear={() => setTasks((list) => list.filter((t) => t.state === "running"))}
                 toast={toast}

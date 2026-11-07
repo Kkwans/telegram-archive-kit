@@ -244,6 +244,8 @@ export interface TaskInfo {
   total?: number;
   etaMs?: number;
   elapsedMs?: number;
+  concurrent?: number;
+  threads?: number;
   startedAt: number;
   finishedAt?: number;
   error?: string;

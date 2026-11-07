@@ -33,6 +33,8 @@ type TaskDTO struct {
 	Total               int     `json:"total,omitempty"`
 	ETAMs               int64   `json:"etaMs,omitempty"`
 	ElapsedMs           int64   `json:"elapsedMs,omitempty"`
+	Concurrent          int     `json:"concurrent,omitempty"`
+	Threads             int     `json:"threads,omitempty"`
 	StartedAt           int64   `json:"startedAt"`
 	FinishedAt          int64   `json:"finishedAt,omitempty"`
 	Error               string  `json:"error,omitempty"`
@@ -122,6 +124,8 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	t.dto.Done = s.Done
 	t.dto.Total = s.Total
 	t.dto.ETAMs = s.ETAMs
+	t.dto.Concurrent = s.Concurrent
+	t.dto.Threads = s.Threads
 	t.active = append([]TaskProgress(nil), s.Active...)
 	if t.lastPass == 0 || s.Pass == t.lastPass {
 		t.completed = append([]TaskProgress(nil), s.Completed...)
@@ -321,6 +325,12 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 				}
 				d.Percent = int(pct + 0.5)
 			}
+		}
+		if d.Concurrent <= 0 {
+			d.Concurrent = f.a.Settings.Concurrent
+		}
+		if d.Threads <= 0 {
+			d.Threads = f.a.Settings.Threads
 		}
 		return d, nil
 	}

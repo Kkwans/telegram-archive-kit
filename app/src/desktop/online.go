@@ -140,6 +140,19 @@ func (s *OnlineService) Chat(peer string) (OnlineChat, bool) {
 	return chat, ok
 }
 
+// ChatByID resolves a Telegram numeric id (the same id stored in a local
+// workspace) back to the live dialog entry.
+func (s *OnlineService) ChatByID(id int64) (OnlineChat, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, chat := range s.chats {
+		if chat.ID == id {
+			return chat, true
+		}
+	}
+	return OnlineChat{}, false
+}
+
 func (s *OnlineService) Cached(ns string) *OnlineChatsDTO {
 	b, err := os.ReadFile(s.path(ns))
 	if err != nil {

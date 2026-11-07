@@ -787,6 +787,48 @@ func (b *Bridge) localOnlineArchive(chat OnlineChat) localOnlineArchive {
 	return localOnlineArchive{}
 }
 
+// OnlineChatForSlug maps a local workspace back to its live Telegram dialog so
+// the chat detail page can reuse the same preview/statistics pipeline as the
+// online-chat page.
+func (b *Bridge) OnlineChatForSlug(slug string) (OnlineChat, error) {
+	var idText string
+	for _, chat := range b.facade.ListChats() {
+		if chat.Slug == slug {
+			idText = strings.TrimSpace(chat.ID)
+			break
+		}
+	}
+	if idText == "" {
+		return OnlineChat{}, errors.New("该聊天没有 Telegram Chat ID，无法在线更新")
+	}
+	id, err := strconv.ParseInt(idText, 10, 64)
+	if err != nil || id == 0 {
+		return OnlineChat{}, errors.New("该聊天的 Chat ID 无法识别，无法在线更新")
+	}
+	info := b.facade.AccountInfo()
+	if !info.HasSessionFile {
+		return OnlineChat{}, errors.New("尚未登录 Telegram，请先在账号管理完成登录")
+	}
+	if chat, ok := b.online.ChatByID(id); ok {
+		return chat, nil
+	}
+	if cached := b.online.Cached(info.Namespace); cached != nil {
+		for _, chat := range cached.Chats {
+			if chat.ID == id {
+				return chat, nil
+			}
+		}
+	}
+	settings := b.facade.GetSettings()
+	if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, 45*time.Second); err != nil {
+		return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", err))
+	}
+	if chat, ok := b.online.ChatByID(id); ok {
+		return chat, nil
+	}
+	return OnlineChat{}, errors.New("该聊天不在当前 Telegram 会话列表中，请先到在线聊天页刷新")
+}
+
 // resolveOnlineChat accepts cached peers and fetches the live dialog list only
 // when the peer or its access hash is missing.
 func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (OnlineChat, error) {

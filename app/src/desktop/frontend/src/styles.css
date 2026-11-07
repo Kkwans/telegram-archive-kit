@@ -646,7 +646,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   --art-theme: #2f6bff;
 }
 .art-video-wrap.is-loading .art-player { opacity: 0; pointer-events: none; }
-.art-video-wrap.is-ready .art-player { opacity: 1; transition: opacity .18s ease; }
+.art-video-wrap.is-ready .art-player { opacity: 1; }
+.art-video-wrap:not(.controls-awake) .art-video-player .art-bottom { opacity: 0 !important; pointer-events: none !important; }
+.art-video-wrap.controls-awake .art-video-player .art-bottom { opacity: 1; }
 .art-video-wrap {
   position: relative; width: 100%; height: 100%; display: grid; place-items: center;
   border-radius: 12px; overflow: hidden; background: #000;
@@ -662,7 +664,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   color: #e9eef9; font-size: 11.5px; white-space: nowrap; pointer-events: none;
 }
 .art-video-loading {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  position: absolute; inset: 0; display: block;
   pointer-events: none; background: #000;
 }
 .art-video-loading::after {
@@ -2423,6 +2425,47 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 .download-hero-title { gap: 9px; }
 .download-hero-title h2 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 760; letter-spacing: -.025em; }
 .download-hero-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.download-hero-configline { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.download-config-chip {
+  display: inline-flex; align-items: baseline; gap: 3px; padding: 2px 8px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
+  color: var(--muted); font-size: 10.5px; font-weight: 550;
+}
+.download-config-chip b { color: var(--text); font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.download-config-panel .panel-head { border-bottom: 0; }
+.download-config-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0 14px 14px; }
+.download-config-grid > div {
+  min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 11px 12px;
+  border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2);
+}
+.download-config-grid span { color: var(--faint); font-size: 10px; }
+.download-config-grid b { color: var(--text); font-size: 18px; line-height: 1.15; font-weight: 720; font-variant-numeric: tabular-nums; }
+.download-config-grid b em { color: var(--muted); font-size: 10.5px; font-style: normal; font-weight: 550; }
+.download-config-grid > div:last-child b { font-size: 13px; line-height: 1.45; font-weight: 650; }
+.download-config-modal { width: min(540px, 100%); gap: 16px; }
+.download-config-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.download-config-form label { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.download-config-form span { color: var(--text); font-size: 12px; font-weight: 650; }
+.download-config-form small { color: var(--faint); font-size: 10px; line-height: 1.5; }
+.download-config-form input {
+  width: 100%; height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.download-config-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.download-config-note {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2);
+  color: var(--muted); font-size: 10.5px; line-height: 1.6;
+}
+.download-config-note svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
+.download-slot-table tbody tr { height: 40px; }
+.download-slot-empty td { color: var(--faint); }
+.download-slot-empty .col-file { font-style: italic; }
+.recent-completed-table { max-width: 1180px; margin: 0 auto; }
+.recent-completed-table .col-file { width: 46%; }
+.recent-completed-table .col-kind { width: 17%; }
+.recent-completed-table .col-size { width: 18%; text-align: right; }
+.recent-completed-table .col-elapsed { width: 19%; text-align: right; padding-right: 20px; }
 .download-live-speed {
   flex: 0 0 auto; display: flex; align-items: baseline; gap: 7px; padding: 6px 10px;
   border: 1px solid rgba(47, 107, 255, .18); border-radius: 9px;
@@ -2469,7 +2512,8 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
   backdrop-filter: none; white-space: normal;
 }
 .media-busy {
-  position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
   filter: drop-shadow(0 2px 10px rgba(0, 0, 0, .55));
 }
 .load-spinner {

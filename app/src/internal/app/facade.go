@@ -281,7 +281,8 @@ func (f *Facade) ListChats() []ChatDTO {
 }
 
 // StartOneClick runs sync + build for one chat and streams progress events.
-// It returns the operation id immediately; completion arrives as tak:done.
+// It returns the task id so callers can open the matching download detail;
+// completion arrives as tak:done.
 func (f *Facade) StartOneClick(slug string) (string, error) {
 	if strings.TrimSpace(slug) == "" {
 		return "", errors.New("缺少聊天标识")
@@ -310,10 +311,11 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	f.hasDl = false
 	f.hasOp = false
 	f.hasDone = false
+	taskID := task.snapshot().ID
 	f.mu.Unlock()
 
 	go f.runOneClick(ctx, op, meta)
-	return opID, nil
+	return taskID, nil
 }
 
 func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceMeta) {

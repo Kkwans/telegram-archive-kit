@@ -192,32 +192,34 @@ func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 type apiParams struct {
-	Slug     string              `json:"slug"`
-	Folder   string              `json:"folder"`
-	Mode     string              `json:"mode"`
-	Root     string              `json:"root"`
-	Dst      string              `json:"dst"`
-	Path     string              `json:"path"`
-	Drive    string              `json:"drive"`
-	Peer     string              `json:"peer"`
-	Token    string              `json:"token"`
-	Limit    int                 `json:"limit"`
-	Name     string              `json:"name"`
-	Title    string              `json:"title"`
-	Initial  string              `json:"initial"`
-	Paths    []string            `json:"paths"`
-	Peers    []string            `json:"peers"`
-	Settings *takapp.SettingsDTO `json:"settings"`
-	Kind     string              `json:"kind"`
-	ID       string              `json:"id"`
-	Text     string              `json:"text"`
-	Timeout  int                 `json:"timeout"`
-	Width    int                 `json:"width"`
-	Height   int                 `json:"height"`
-	X        int                 `json:"x"`
-	Y        int                 `json:"y"`
-	Seq      int64               `json:"seq"`
-	Purpose  string              `json:"purpose"`
+	Slug       string              `json:"slug"`
+	Folder     string              `json:"folder"`
+	Mode       string              `json:"mode"`
+	Root       string              `json:"root"`
+	Dst        string              `json:"dst"`
+	Path       string              `json:"path"`
+	Drive      string              `json:"drive"`
+	Peer       string              `json:"peer"`
+	Token      string              `json:"token"`
+	Limit      int                 `json:"limit"`
+	Name       string              `json:"name"`
+	Title      string              `json:"title"`
+	Initial    string              `json:"initial"`
+	Paths      []string            `json:"paths"`
+	Peers      []string            `json:"peers"`
+	Settings   *takapp.SettingsDTO `json:"settings"`
+	Kind       string              `json:"kind"`
+	ID         string              `json:"id"`
+	Text       string              `json:"text"`
+	Timeout    int                 `json:"timeout"`
+	Width      int                 `json:"width"`
+	Height     int                 `json:"height"`
+	Concurrent int                 `json:"concurrent"`
+	Threads    int                 `json:"threads"`
+	X          int                 `json:"x"`
+	Y          int                 `json:"y"`
+	Seq        int64               `json:"seq"`
+	Purpose    string              `json:"purpose"`
 }
 
 func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
@@ -301,11 +303,9 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		b.ackNotice(p.Seq)
 		return nil, nil
 	case "startOneClick":
-		id, err := b.facade.StartOneClick(p.Slug)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]string{"opId": id}, nil
+		return b.facade.StartOneClick(p.Slug)
+	case "setDownloadConfig":
+		return b.facade.SetDownloadConfig(p.Concurrent, p.Threads)
 	case "cancel":
 		return map[string]bool{"cancelled": b.facade.Cancel()}, nil
 	case "pause":
@@ -405,6 +405,8 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.OnlineChats(p.Timeout)
 	case "onlineChatsCached":
 		return b.OnlineChatsCached(), nil
+	case "onlineChatForSlug":
+		return b.OnlineChatForSlug(p.Slug)
 	case "onlineAvatars":
 		return b.OnlineAvatars(p.Peers, p.Timeout)
 	case "onlineExportPreview":
