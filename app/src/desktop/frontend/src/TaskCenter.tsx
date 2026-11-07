@@ -245,9 +245,10 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const concurrent = Math.max(1, task.concurrent || 4);
   const threads = Math.max(1, task.threads || 4);
   const sparkValues = series.slice(-28).map((sample) => sample.now);
-  const sparkMax = Math.max(1, ...sparkValues);
-  const sparkPoints = sparkValues.map((value, index) =>
-    `${(index / Math.max(1, sparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / sparkMax) * 24).toFixed(2)}`
+  const sparkLine = sparkValues.length > 1 ? sparkValues : [0, 0];
+  const sparkMax = Math.max(1, ...sparkLine);
+  const sparkPoints = sparkLine.map((value, index) =>
+    `${(index / Math.max(1, sparkLine.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / sparkMax) * 24).toFixed(2)}`
   ).join(" ");
   const retryLabel: Record<string, string> = {
     increase: "逐步增加线程",
@@ -380,29 +381,32 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           {running ? <b>{Math.round(percent)}%</b> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
-          {running && (
-            <div className="download-hero-configline">
-              <span className="download-hero-kicker">下载配置</span>
-              <span className="download-config-chip">并发 <b>{concurrent}</b> 个文件</span>
-              <span className="download-config-chip">每文件 <b>{threads}</b> 线程</span>
-            </div>
-          )}
+          <span className="download-hero-kicker">下载聊天</span>
           <div className="download-hero-title">
             <h2>{task.chat || taskTitle(task)}</h2>
-            <span className={`tag ${failed ? "bad" : warning ? "warn" : ""}`}>{statusLabel(task.state)}</span>
           </div>
-          <p className={`download-hero-desc ${failed ? "bad" : warning ? "warn" : ""}`} title={result}>{displayResult}</p>
+          {running ? (
+            <div className="download-hero-configline">
+              <span>并发 <b>{concurrent}</b> 个文件</span>
+              <span>每文件 <b>{threads}</b> 线程</span>
+            </div>
+          ) : (
+            <p className={`download-hero-desc ${failed ? "bad" : warning ? "warn" : ""}`} title={result}>{displayResult}</p>
+          )}
+          <div className="download-hero-info">
+            <span>开始 <b>{dateTime(task.startedAt)}</b></span>
+            <span>峰值速度 <b>{rate(task.peakSpeed ?? 0)}</b></span>
+            {task.finishedAt ? <span>结束 <b>{dateTime(task.finishedAt)}</b></span> : null}
+          </div>
         </div>
         {running && (
           <div className="download-hero-meter running">
             <span className="download-meter-label"><i />实时速度</span>
             <div className="download-meter-value"><b>{speed.value}</b><em>{speed.unit}</em></div>
-            {sparkValues.length > 1 && (
-              <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
-                <polygon points={`0,28 ${sparkPoints} 100,28`} />
-                <polyline points={sparkPoints} vectorEffect="non-scaling-stroke" />
-              </svg>
-            )}
+            <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+              <polygon points={`0,28 ${sparkPoints} 100,28`} />
+              <polyline points={sparkPoints} vectorEffect="non-scaling-stroke" />
+            </svg>
           </div>
         )}
         {!running && (
