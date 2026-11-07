@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf16"
 
 	"github.com/gotd/td/session"
@@ -795,46 +796,122 @@ func (b *Bridge) localOnlineArchive(chat OnlineChat) localOnlineArchive {
 	return localOnlineArchive{}
 }
 
+func normalizeChatTitle(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// matchOnlineChatByName resolves an official ChatExport workspace, which carries
+// only a title. Exact (case-insensitive) titles win; otherwise spacing and
+// punctuation are ignored. More than one candidate is reported as ambiguous.
+func matchOnlineChatByName(chats []OnlineChat, name string) (OnlineChat, int) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return OnlineChat{}, 0
+	}
+	var exact, normalized []OnlineChat
+	wantNorm := normalizeChatTitle(name)
+	for _, chat := range chats {
+		if strings.EqualFold(strings.TrimSpace(chat.Name), name) {
+			exact = append(exact, chat)
+			continue
+		}
+		if wantNorm != "" && normalizeChatTitle(chat.Name) == wantNorm {
+			normalized = append(normalized, chat)
+		}
+	}
+	if len(exact) == 1 {
+		return exact[0], 1
+	}
+	if len(exact) > 1 {
+		return OnlineChat{}, len(exact)
+	}
+	if len(normalized) == 1 {
+		return normalized[0], 1
+	}
+	return OnlineChat{}, len(normalized)
+}
+
+func findOnlineChatByID(chats []OnlineChat, id int64) (OnlineChat, bool) {
+	for _, chat := range chats {
+		if chat.ID == id {
+			return chat, true
+		}
+	}
+	return OnlineChat{}, false
+}
+
 // OnlineChatForSlug maps a local workspace back to its live Telegram dialog so
 // the chat detail page can reuse the same preview/statistics pipeline as the
-// online-chat page.
+// online-chat page. Official ChatExports have no numeric id, so a title match
+// against the live dialog list is used instead.
 func (b *Bridge) OnlineChatForSlug(slug string) (OnlineChat, error) {
-	var idText string
+	var idText, localName string
 	for _, chat := range b.facade.ListChats() {
 		if chat.Slug == slug {
 			idText = strings.TrimSpace(chat.ID)
+			localName = strings.TrimSpace(chat.Name)
 			break
 		}
-	}
-	if idText == "" {
-		return OnlineChat{}, errors.New("该聊天没有 Telegram Chat ID，无法在线更新")
-	}
-	id, err := strconv.ParseInt(idText, 10, 64)
-	if err != nil || id == 0 {
-		return OnlineChat{}, errors.New("该聊天的 Chat ID 无法识别，无法在线更新")
 	}
 	info := b.facade.AccountInfo()
 	if !info.HasSessionFile {
 		return OnlineChat{}, errors.New("尚未登录 Telegram，请先在账号管理完成登录")
 	}
-	if chat, ok := b.online.ChatByID(id); ok {
-		return chat, nil
+	var id int64
+	if idText != "" {
+		parsed, err := strconv.ParseInt(idText, 10, 64)
+		if err != nil || parsed == 0 {
+			return OnlineChat{}, errors.New("该聊天的 Chat ID 无法识别，无法在线更新")
+		}
+		id = parsed
 	}
-	if cached := b.online.Cached(info.Namespace); cached != nil {
-		for _, chat := range cached.Chats {
-			if chat.ID == id {
+	live := b.online.Chats()
+	if id > 0 {
+		if chat, ok := findOnlineChatByID(live, id); ok {
+			return chat, nil
+		}
+		if cached := b.online.Cached(info.Namespace); cached != nil {
+			if chat, ok := findOnlineChatByID(cached.Chats, id); ok {
 				return chat, nil
+			}
+		}
+	} else {
+		if chat, n := matchOnlineChatByName(live, localName); n == 1 {
+			return chat, nil
+		} else if n > 1 {
+			return OnlineChat{}, fmt.Errorf("在线会话中有 %d 个同名聊天「%s」，无法自动确定；请先在“在线聊天”页确认目标聊天", n, localName)
+		}
+		if cached := b.online.Cached(info.Namespace); cached != nil {
+			if chat, n := matchOnlineChatByName(cached.Chats, localName); n == 1 {
+				return chat, nil
+			} else if n > 1 {
+				return OnlineChat{}, fmt.Errorf("在线会话中有 %d 个同名聊天「%s」，无法自动确定；请先在“在线聊天”页确认目标聊天", n, localName)
 			}
 		}
 	}
 	settings := b.facade.GetSettings()
-	if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, 45*time.Second); err != nil {
+	fetched, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, 45*time.Second)
+	if err != nil {
 		return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", err))
 	}
-	if chat, ok := b.online.ChatByID(id); ok {
-		return chat, nil
+	if id > 0 {
+		if chat, ok := findOnlineChatByID(fetched.Chats, id); ok {
+			return chat, nil
+		}
+		return OnlineChat{}, errors.New("该聊天不在当前 Telegram 会话列表中，请先到在线聊天页刷新")
 	}
-	return OnlineChat{}, errors.New("该聊天不在当前 Telegram 会话列表中，请先到在线聊天页刷新")
+	if chat, n := matchOnlineChatByName(fetched.Chats, localName); n == 1 {
+		return chat, nil
+	} else if n > 1 {
+		return OnlineChat{}, fmt.Errorf("在线会话中有 %d 个同名聊天「%s」，无法自动确定；请先在“在线聊天”页确认目标聊天", n, localName)
+	}
+	return OnlineChat{}, fmt.Errorf("在线会话中没有找到「%s」。请确认当前账号仍在该聊天中，或先在“在线聊天”页刷新列表", localName)
 }
 
 // resolveOnlineChat accepts cached peers and fetches the live dialog list only
@@ -1004,7 +1081,7 @@ func (b *Bridge) OnlineExportDiscard(token string) {
 
 // OnlineExport merges a gotd export into the current library and starts the
 // normal media download + page build pipeline.
-func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token string) (OnlineExportResult, error) {
+func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token, targetSlug string) (OnlineExportResult, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
 	exportTimeout := time.Duration(timeout) * time.Second
@@ -1015,18 +1092,30 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token string) 
 	if err != nil {
 		return OnlineExportResult{}, err
 	}
-	local := b.localOnlineArchive(chat)
-	existingSlug := local.slug
-	existed := local.existed
-	idText := strconv.FormatInt(chat.ID, 10)
-
 	var messages []map[string]any
 	var media int
 	if prepared, ok := b.online.TakePrepared(info.Namespace, peerKey, token); ok {
 		chat = prepared.chat
 		messages = prepared.messages
 		media = prepared.media
-	} else {
+	}
+	idText := strconv.FormatInt(chat.ID, 10)
+	if targetSlug != "" {
+		// Official ChatExports have no id. Persist the resolved Telegram identity
+		// first so ImportJSONFiles merges the new history into that workspace by
+		// strong id instead of creating a duplicate chat.
+		if err := b.facade.BindChatIdentity(targetSlug, idText, chat.Name, desktopChatType(chat)); err != nil {
+			return OnlineExportResult{}, err
+		}
+	}
+	local := b.localOnlineArchive(chat)
+	existingSlug := local.slug
+	existed := local.existed
+	if targetSlug != "" && existingSlug == "" {
+		existingSlug = targetSlug
+		existed = true
+	}
+	if len(messages) == 0 {
 		minID := 0
 		if existed && local.dir != "" {
 			minID = localMaxMessageID(local.dir)

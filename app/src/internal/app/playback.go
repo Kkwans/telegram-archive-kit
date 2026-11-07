@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	playbackMu     sync.Mutex
+	playbackLocks  sync.Map
 	playbackMax    int64 = 4 << 30
 	playbackFormat       = map[string]bool{".mp4": true, ".m4v": true, ".mov": true}
 )
@@ -49,8 +49,12 @@ func (f *Facade) PlayableMediaPath(slug, rel string) (string, error) {
 	if fileExists(dst) {
 		return dst, nil
 	}
-	playbackMu.Lock()
-	defer playbackMu.Unlock()
+	// Remuxing one clip must not block a different clip that the viewer is
+	// prefetching at the same time. Per-file locks also collapse duplicate work.
+	lockValue, _ := playbackLocks.LoadOrStore(dst, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
 	if fileExists(dst) {
 		return dst, nil
 	}

@@ -214,6 +214,7 @@ type apiParams struct {
 	Timeout             int                 `json:"timeout"`
 	Width               int                 `json:"width"`
 	Height              int                 `json:"height"`
+	Fullscreen          bool                `json:"fullscreen"`
 	Concurrent          int                 `json:"concurrent"`
 	Threads             int                 `json:"threads"`
 	StallTimeoutSeconds int                 `json:"stallTimeoutSeconds"`
@@ -421,6 +422,18 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return b.sessionCheck(p.Timeout), nil
 	case "captureWindow":
 		return b.CaptureWindow()
+	case "setWindowFullscreen":
+		if b.window == nil {
+			return nil, errors.New("窗口尚未初始化")
+		}
+		if p.Fullscreen {
+			b.window.Fullscreen()
+		} else {
+			b.window.UnFullscreen()
+		}
+		return map[string]bool{"fullscreen": p.Fullscreen}, nil
+	case "windowFullscreenState":
+		return map[string]bool{"fullscreen": b.window != nil && b.window.IsFullscreen()}, nil
 	case "onlineChats":
 		return b.OnlineChats(p.Timeout)
 	case "onlineChatsCached":
@@ -440,7 +453,7 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		b.OnlineExportDiscard(p.Token)
 		return nil, nil
 	case "onlineExport":
-		return b.OnlineExport(p.Peer, p.Timeout, p.Limit, p.Token)
+		return b.OnlineExport(p.Peer, p.Timeout, p.Limit, p.Token, p.Slug)
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":

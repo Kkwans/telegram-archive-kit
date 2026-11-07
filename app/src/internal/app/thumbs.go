@@ -19,6 +19,36 @@ func (a *App) ensureImageThumbnails(slug string, arc *Archive) {
 	a.ensureImageThumbnailsProgress(slug, arc, nil)
 }
 
+// thumbnailsNeedFFmpeg reports whether a decoder is actually required. Official
+// ChatExports ship thumbnails for their files, so importing them must not block
+// on downloading FFmpeg just because the build flag is enabled.
+func (a *App) thumbnailsNeedFFmpeg(slug string, arc *Archive) bool {
+	if arc == nil {
+		return false
+	}
+	for _, m := range arc.Messages {
+		for _, x := range m.Media {
+			if x.Kind != "image" && x.Kind != "video" {
+				continue
+			}
+			if x.Thumb != "" {
+				if st, err := os.Stat(media.MediaLocalPath(a.workspaceDir(slug), x.Thumb)); err == nil && !st.IsDir() && st.Size() > 0 {
+					continue
+				}
+			}
+			if x.Kind == "video" {
+				return true
+			}
+			switch strings.ToLower(filepath.Ext(x.Name)) {
+			case ".jpg", ".jpeg", ".png", ".gif":
+			default:
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type thumbTask struct {
 	mi, xi int
 	src    string
@@ -58,6 +88,14 @@ func (a *App) ensureImageThumbnailsProgressCtx(ctx context.Context, slug string,
 			}
 			if x.Kind == "video" && decoder == "" {
 				continue
+			}
+			// Telegram's own ChatExport ships a `*_thumb.jpg` beside each file.
+			// Accept it as the cover instead of decoding the video again.
+			if x.Thumb != "" {
+				if st, err := os.Stat(media.MediaLocalPath(a.workspaceDir(slug), x.Thumb)); err == nil && !st.IsDir() && st.Size() > 0 {
+					done++
+					continue
+				}
 			}
 			src := media.MediaLocalPath(a.workspaceDir(slug), x.Path)
 			if !fileExists(src) {

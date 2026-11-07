@@ -220,6 +220,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
+  const [pauseRequested, setPauseRequested] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
     concurrent: task.concurrent ?? 4, threads: task.threads ?? 4,
@@ -233,6 +234,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const partial = task.state === "partial";
   const paused = task.state === "paused";
   const stopped = task.state === "stopped";
+  const pausing = pauseRequested && running;
   const warning = partial || paused;
   const noop = noNewMedia(task);
   const elapsed = taskElapsed(task);
@@ -263,7 +265,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
     : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : partial ? "部分媒体未能下载" : paused ? "任务已暂停" : stopped ? "任务已终止" : "任务失败"));
-  const displayResult = failed ? `失败原因：${result}` : partial ? `部分完成：${result}` : paused ? "任务已暂停，已完成文件和记录会保留" : stopped ? "任务已终止，已完成文件和记录会保留" : result;
+  const displayResult = pausing
+    ? "正在安全暂停，当前文件结束后会保留进度…"
+    : failed ? `失败原因：${result}` : partial ? `部分完成：${result}` : paused ? "任务已暂停，已完成文件和记录会保留" : stopped ? "任务已终止，已完成文件和记录会保留" : result;
   const concurrent = Math.max(1, task.concurrent || 4);
   const threads = Math.max(1, task.threads || 4);
   const sparkValues = series.slice(-28).map((sample) => sample.now);
@@ -328,13 +332,25 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
     }
   };
 
+  useEffect(() => {
+    if (pauseRequested && task.state !== "running") setPauseRequested(false);
+  }, [pauseRequested, task.state]);
+
+  useEffect(() => {
+    if (!pauseRequested) return;
+    const timer = window.setTimeout(() => setPauseRequested(false), 10000);
+    return () => window.clearTimeout(timer);
+  }, [pauseRequested]);
+
   const pause = async () => {
-    if (busyAction) return;
+    if (busyAction || pausing) return;
     setBusyAction("pause");
+    setPauseRequested(true);
+    toast("正在安全暂停，已完成文件会保留");
     try {
       await call("pause");
-      toast("正在暂停任务，已完成文件会保留");
     } catch (e) {
+      setPauseRequested(false);
       toast((e as Error).message, true);
     } finally {
       setBusyAction("");
@@ -344,9 +360,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const resume = async () => {
     if (!task.slug || busyAction) return;
     setBusyAction("resume");
+    toast("正在继续下载：只补齐缺失媒体，已完成文件会保留");
     try {
       const nextTask = await call<string>("startOneClick", { slug: task.slug });
-      toast("已继续下载：只补齐缺失媒体，已完成文件会保留");
       onOpenTask(nextTask);
     } catch (e) {
       toast((e as Error).message, true);
@@ -389,7 +405,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           <ArrowLeft size={14} /> 返回任务中心
         </button>
         <div className="actions">
-          {running && (
+          {running && !pausing && (
             <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
             </button>
@@ -420,12 +436,16 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
               继续下载
             </button>
           )}
-          {running && (
+          {running && (pausing ? (
+            <button className="btn warn" disabled>
+              <Loader2 size={13} className="spin" /> 正在暂停…
+            </button>
+          ) : (
             <button className="btn warn" disabled={!!busyAction} onClick={() => void pause()}>
               {busyAction === "pause" ? <Loader2 size={13} className="spin" /> : <Pause size={13} />}
               暂停
             </button>
-          )}
+          ))}
         </div>
       </div>
 

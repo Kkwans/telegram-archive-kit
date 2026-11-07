@@ -1123,6 +1123,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 .official-import-summary b { font-size: 14px; }
 .official-import-summary span { color: var(--muted); font-size: 11.5px; }
+.official-import-stats { display: flex; flex-wrap: wrap; gap: 5px 15px; padding: 3px 0 1px; }
+.official-import-stats span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.official-import-stats svg { color: var(--faint); }
+.official-import-stats b { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .official-import-summary code {
   min-width: 0; color: var(--faint); font: 10.5px/1.5 "Cascadia Mono", Consolas, monospace;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -2607,50 +2611,32 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
   pointer-events: none; filter: drop-shadow(0 2px 10px rgba(0, 0, 0, .6));
 }
 .image-loading-guard .load-spinner { width: 38px; height: 38px; border-color: rgba(255, 255, 255, .34); border-top-color: #fff; }
-.viewer-modal::backdrop { background: #080b12; }
-.viewer-modal:fullscreen { inset: 0; width: 100vw; height: 100vh; background: #080b12; }
 .viewer-fs-cover {
-  position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 9999;
-  display: grid; place-items: center; overflow: hidden; pointer-events: all;
-  background:
-    radial-gradient(52% 46% at 50% 50%, rgba(47, 107, 255, .12), transparent 72%),
-    rgba(8, 11, 18, .42);
-  backdrop-filter: blur(34px) saturate(1.35);
-  -webkit-backdrop-filter: blur(34px) saturate(1.35);
-  animation: viewer-fs-cover-in .2s ease both;
-  transition: opacity .24s ease;
+  position: fixed; inset: 0; z-index: 9999; overflow: hidden; pointer-events: all;
+  background: rgba(5, 8, 13, .985);
+  opacity: 1;
+  transition: opacity .2s ease;
+}
+.viewer-fs-cover::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(46% 42% at 50% 50%, rgba(47, 107, 255, .1), transparent 70%);
 }
 .viewer-fs-cover.settle { opacity: 0; }
-.viewer-fs-zoom {
-  width: 92px; height: 92px; display: grid; place-items: center;
-  animation: viewer-fs-zoom-in .34s cubic-bezier(.2, .82, .25, 1) both;
+.viewer-fs-ghost {
+  position: fixed; z-index: 1; object-fit: contain;
+  background: #05070b;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .55);
+  will-change: left, top, width, height;
 }
-.viewer-fs-cover.out .viewer-fs-zoom {
-  animation: viewer-fs-zoom-out .34s cubic-bezier(.4, 0, .7, .2) both;
+.viewer-fs-ghost.live {
+  transition:
+    left .28s cubic-bezier(.2, .8, .2, 1),
+    top .28s cubic-bezier(.2, .8, .2, 1),
+    width .28s cubic-bezier(.2, .8, .2, 1),
+    height .28s cubic-bezier(.2, .8, .2, 1),
+    border-radius .28s ease;
 }
-.viewer-fs-orb {
-  position: relative; width: 78px; height: 78px; border-radius: 50%;
-  background: radial-gradient(circle at 50% 44%, rgba(210, 225, 255, .18), rgba(47, 107, 255, .16) 46%, rgba(47, 107, 255, .015) 72%);
-  border: 1px solid rgba(155, 185, 255, .28);
-  box-shadow: 0 0 42px rgba(47, 107, 255, .22), inset 0 0 26px rgba(47, 107, 255, .14);
-  animation: viewer-fs-orb-breathe 1.15s ease-in-out infinite;
-}
-.viewer-fs-orb::after {
-  content: ""; position: absolute; inset: -12px; border-radius: 50%;
-  border: 1px solid rgba(160, 190, 255, .14);
-  box-shadow: 0 0 28px rgba(47, 107, 255, .16);
-}
-@keyframes viewer-fs-cover-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes viewer-fs-zoom-in {
-  0% { transform: scale(.42); opacity: 0; }
-  55% { transform: scale(1.04); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
-@keyframes viewer-fs-zoom-out {
-  0% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(.5); opacity: 0; }
-}
-@keyframes viewer-fs-orb-breathe {
-  0%, 100% { transform: scale(.9); opacity: .62; box-shadow: 0 0 24px rgba(47, 107, 255, .14), inset 0 0 16px rgba(47, 107, 255, .1); }
-  50% { transform: scale(1.06); opacity: 1; box-shadow: 0 0 58px rgba(47, 107, 255, .34), inset 0 0 32px rgba(47, 107, 255, .2); }
+.viewer-fs-empty {
+  position: absolute; inset: 0;
+  background: radial-gradient(40% 36% at 50% 50%, rgba(47, 107, 255, .12), transparent 72%);
 }

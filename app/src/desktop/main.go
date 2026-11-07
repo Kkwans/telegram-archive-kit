@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -57,6 +58,10 @@ func main() {
 		windowsOpts.AdditionalBrowserArgs = append(windowsOpts.AdditionalBrowserArgs, "--remote-debugging-port=9222")
 	}
 
+	instanceID := "com.kkwans.telegramarchivekit"
+	if custom := strings.TrimSpace(os.Getenv("TAK_INSTANCE_ID")); custom != "" {
+		instanceID = custom
+	}
 	appIcon, _ := static.UI.ReadFile("ui/favicon.ico")
 	app := application.New(application.Options{
 		Name:        "TelegramArchiveKit",
@@ -67,7 +72,7 @@ func main() {
 			Middleware: bridge.Middleware,
 		},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.kkwans.telegramarchivekit",
+			UniqueID: instanceID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				bridge.QueueArgs(data.Args)
 				bridge.showWindow()

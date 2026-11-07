@@ -153,6 +153,18 @@ func (s *OnlineService) ChatByID(id int64) (OnlineChat, bool) {
 	return OnlineChat{}, false
 }
 
+// Chats returns a snapshot of the in-memory dialog list. It is used to match
+// official ChatExport workspaces (which have no numeric id) back to Telegram.
+func (s *OnlineService) Chats() []OnlineChat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]OnlineChat, 0, len(s.chats))
+	for _, chat := range s.chats {
+		out = append(out, chat)
+	}
+	return out
+}
+
 func (s *OnlineService) Cached(ns string) *OnlineChatsDTO {
 	b, err := os.ReadFile(s.path(ns))
 	if err != nil {

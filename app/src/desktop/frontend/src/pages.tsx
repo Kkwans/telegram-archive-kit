@@ -482,7 +482,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     setOnlineLoading(true);
     try {
       const chat = await call<{ peer: string; name: string; type?: string; id?: number; avatar?: string }>("onlineChatForSlug", { slug: current.slug });
-      setOnlineTarget(onlineTargetFromChat(chat));
+      setOnlineTarget({ ...onlineTargetFromChat(chat), slug: current.slug });
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
@@ -544,7 +544,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <button className="btn ghost" onClick={() => go("library")}>
             <ChevronLeft size={13} /> 返回档案管理
           </button>
-          <button className="btn ghost danger-text" disabled={busy === "delete"} onClick={remove}>
+          <button className="btn danger" disabled={busy === "delete"} onClick={remove}>
             <Trash2 size={13} /> 删除本地归档
           </button>
           <button className="btn primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
@@ -578,7 +578,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         </div>
         <div className="chat-facts-grid chat-facts-three">
           <div className="fact"><span>类型</span><b>{current.type || "--"}</b></div>
-          <div className="fact"><span>Chat ID</span><b className="mono">{current.id || "--"}</b></div>
+          <div className="fact"><span>Chat ID</span><b className="mono">{current.id || (current.official > 0 ? "在线更新时识别" : "--")}</b></div>
           <div className="fact"><span>官方导出</span><b>{current.official} 个</b></div>
           <div className="fact"><span>首次消息</span><b>{dateTime(current.firstTs)}</b></div>
           <div className="fact"><span>最后消息</span><b>{dateTime(current.lastTs)}</b></div>
@@ -993,8 +993,6 @@ interface VideoApi {
   setVolume(percent: number): void;
   adjustVolume(delta: number): void;
   toggleMute(): void;
-  isFullscreen(): boolean;
-  setFullscreen(on: boolean): void;
 }
 
 const PLAY_RATES = [0.5, 1, 1.25, 1.5, 2];
@@ -1018,6 +1016,15 @@ const ArtVideo = forwardRef<VideoApi, {
   const onNextRef = useRef(onNext);
   autoNextRef.current = autoNext;
   onNextRef.current = onNext;
+  const frameAspectRef = useRef(frameAspect);
+  const knownRatioRef = useRef(knownRatio);
+  const hasNextRef = useRef(hasNext);
+  frameAspectRef.current = frameAspect;
+  knownRatioRef.current = knownRatio;
+  hasNextRef.current = hasNext;
+  const switchSourceRef = useRef<((nextSrc: string, nextPoster: string) => void) | null>(null);
+  const loadedSrc = useRef(src);
+  const nextButtonRef = useRef<HTMLElement | null>(null);
   const rateRef = useRef(1);
   const resumeRate = useRef(1);
   const boostRef = useRef(false);
@@ -1162,12 +1169,22 @@ const ArtVideo = forwardRef<VideoApi, {
       p.video.muted = !p.video.muted;
       showNotice(p.video.muted ? "静音" : `音量 ${volumeRef.current}%`);
     },
-    isFullscreen: () => !!playerRef.current?.fullscreen,
-    setFullscreen(on) {
-      const p = playerRef.current;
-      if (p) p.fullscreen = on;
-    },
   }), [maxVolume]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    if (loadedSrc.current === src) {
+      if ((poster || "") !== (player.poster || "")) player.poster = poster || "";
+      return;
+    }
+    loadedSrc.current = src;
+    switchSourceRef.current?.(src, poster || "");
+  }, [src, poster]);
+
+  useEffect(() => {
+    if (nextButtonRef.current) nextButtonRef.current.style.display = hasNext ? "" : "none";
+  }, [hasNext]);
 
   useLayoutEffect(() => {
     if (!box.current) return;
@@ -1184,7 +1201,9 @@ const ArtVideo = forwardRef<VideoApi, {
       playbackRate: false,
       aspectRatio: true,
       screenshot: false,
-      fullscreen: true,
+      // The viewer owns fullscreen (window-level). ArtPlayer's HTML-fullscreen
+      // control would reintroduce the stale WebView viewport bug.
+      fullscreen: false,
       fullscreenWeb: false,
       hotkey: false,
       miniProgressBar: true,
@@ -1285,9 +1304,11 @@ const ArtVideo = forwardRef<VideoApi, {
       const availH = Math.max(120, stage.clientHeight - padY);
       const vw = player.video.videoWidth;
       const vh = player.video.videoHeight;
-      let ratio = frameAspect === "16:9" ? 16 / 9
-        : frameAspect === "4:3" ? 4 / 3
-        : knownRatio > 0 ? knownRatio
+      const aspect = frameAspectRef.current;
+      const ratioKnown = knownRatioRef.current;
+      let ratio = aspect === "16:9" ? 16 / 9
+        : aspect === "4:3" ? 4 / 3
+        : ratioKnown > 0 ? ratioKnown
         : vw > 0 && vh > 0 ? vw / vh
         : posterRatio.current || 16 / 9;
       if (!Number.isFinite(ratio) || ratio <= 0) ratio = 16 / 9;
@@ -1348,22 +1369,49 @@ const ArtVideo = forwardRef<VideoApi, {
     if (player.video.readyState >= 1) onMeta();
     if (player.video.readyState >= 2) onData();
     if (!player.video.paused && player.video.readyState >= 2) revealFirstFrame();
+    const resetReveal = () => {
+      revealed = false;
+      window.clearTimeout(revealFallback);
+      revealFallback = 0;
+      if (revealFrame) {
+        const v = player.video as HTMLVideoElement & { cancelVideoFrameCallback?: (handle: number) => void };
+        if (typeof v.cancelVideoFrameCallback === "function") v.cancelVideoFrameCallback(revealFrame);
+        revealFrame = 0;
+      }
+    };
+    const prepareSource = (nextSrc: string, nextPoster: string) => {
+      resetReveal();
+      setReady(false);
+      setShowBusy(false);
+      setLoadPercent(0);
+      const aspect = frameAspectRef.current;
+      setFramed(knownRatioRef.current > 0 || aspect === "16:9" || aspect === "4:3");
+      hideControls();
+      player.poster = nextPoster;
+      fitFrame();
+      // Reuse the same Artplayer/DOM/video element: switching a URL is much
+      // faster than destroying and rebuilding the player between clips.
+      void player.switchUrl(nextSrc).catch(() => undefined);
+    };
+    switchSourceRef.current = prepareSource;
     const stageEl = wrap.current?.parentElement;
     const observer = typeof ResizeObserver !== "undefined" && stageEl ? new ResizeObserver(fitFrame) : null;
     observer?.observe(stageEl as Element);
     window.addEventListener("resize", fitFrame);
-    if (hasNext) {
-      const icon = document.createElement("div");
-      icon.className = "art-icon";
-      icon.innerHTML = '<svg viewBox="0 0 22 22" width="22" height="22" fill="currentColor"><path d="M14.98 9.24 7.06 4.25A1.9 1.9 0 0 0 4.2 5.9v10.2a1.9 1.9 0 0 0 2.86 1.65l7.92-4.99a1.9 1.9 0 0 0 0-3.52z"/><rect x="15.6" y="4" width="2" height="14" rx="1"/></svg>';
-      player.controls.add({
-        name: "next",
-        position: "left",
-        index: 11,
-        html: icon,
-        click: onNext,
-      });
-    }
+    const icon = document.createElement("div");
+    icon.className = "art-icon";
+    icon.innerHTML = '<svg viewBox="0 0 22 22" width="22" height="22" fill="currentColor"><path d="M14.98 9.24 7.06 4.25A1.9 1.9 0 0 0 4.2 5.9v10.2a1.9 1.9 0 0 0 2.86 1.65l7.92-4.99a1.9 1.9 0 0 0 0-3.52z"/><rect x="15.6" y="4" width="2" height="14" rx="1"/></svg>';
+    const nextButton = player.controls.add({
+      name: "next",
+      position: "left",
+      index: 11,
+      html: icon,
+      click() {
+        if (hasNextRef.current) onNextRef.current();
+      },
+    });
+    nextButtonRef.current = nextButton || null;
+    if (nextButton) nextButton.style.display = hasNextRef.current ? "" : "none";
     const rateLabel = document.createElement("span");
     rateLabel.className = "tak-rate-label";
     rateLabel.textContent = "1.00×";
@@ -1461,8 +1509,10 @@ const ArtVideo = forwardRef<VideoApi, {
       }
       player.destroy(false);
       playerRef.current = null;
+      switchSourceRef.current = null;
+      nextButtonRef.current = null;
     };
-  }, [src, poster, frameAspect, knownRatio, hasNext]);
+  }, []);
 
   return (
     <>
@@ -1489,6 +1539,75 @@ const ArtVideo = forwardRef<VideoApi, {
     </>
   );
 });
+
+type ViewerRect = { left: number; top: number; width: number; height: number };
+type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number };
+
+function mediaBox(modal: HTMLElement | null, isVideo: boolean): ViewerRect | null {
+  const el = isVideo
+    ? modal?.querySelector<HTMLElement>(".art-video-wrap")
+    : modal?.querySelector<HTMLElement>(".image-stage img");
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 8 || r.height < 8) return null;
+  return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+function viewerFrameSource(modal: HTMLElement | null, isVideo: boolean, poster: string): string {
+  if (isVideo) {
+    const video = modal?.querySelector<HTMLVideoElement>("video");
+    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+      try {
+        const scale = Math.min(1, 960 / video.videoWidth);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL("image/jpeg", 0.78);
+        }
+      } catch {
+        /* poster is the fallback */
+      }
+    }
+    return poster;
+  }
+  const img = modal?.querySelector<HTMLImageElement>(".image-stage img");
+  return img?.currentSrc || img?.src || "";
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+}
+
+function waitForViewport(ms = 420): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      window.removeEventListener("resize", onResize);
+      resolve();
+    };
+    const onResize = () => window.setTimeout(finish, 80);
+    window.addEventListener("resize", onResize);
+    window.setTimeout(finish, ms);
+  });
+}
+
+function fitViewerRect(ratio: number): ViewerRect {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const safe = 0.94;
+  let width = vw * safe;
+  let height = width / (ratio || 16 / 9);
+  if (height > vh * safe) {
+    height = vh * safe;
+    width = height * (ratio || 16 / 9);
+  }
+  return { left: (vw - width) / 2, top: (vh - height) / 2, width, height };
+}
 
 function MediaViewer({
   chat,
@@ -1532,11 +1651,13 @@ function MediaViewer({
   const [immersive, setImmersive] = useState(false);
   const immersiveRef = useRef(false);
   immersiveRef.current = immersive;
-  const [fsSwitching, setFsSwitching] = useState(false);
-  const [fsDirection, setFsDirection] = useState<"in" | "out">("in");
-  const [fsSettling, setFsSettling] = useState(false);
-  const fsMaskTimer = useRef<number | null>(null);
-  const fsStartedAt = useRef(0);
+  const [windowFs, setWindowFs] = useState(false);
+  const windowFsRef = useRef(false);
+  windowFsRef.current = windowFs;
+  const fsBusy = useRef(false);
+  const [fsGhost, setFsGhost] = useState<FsGhost | null>(null);
+  const [fsGhostLive, setFsGhostLive] = useState(false);
+  const [fsFade, setFsFade] = useState(false);
 
   useEffect(() => {
     setImageReady(false);
@@ -1606,81 +1727,87 @@ function MediaViewer({
     setOffset({ x: 0, y: 0 });
   };
 
-  const beginFullscreenSwitch = (direction: "in" | "out") => {
-    fsStartedAt.current = performance.now();
-    setFsDirection(direction);
-    setFsSettling(false);
-    setFsSwitching(true);
-    if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
-    // Safety net if fullscreenchange never arrives in this WebView.
-    fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 1800);
+  const applyWindowFullscreen = (on: boolean) => {
+    call("setWindowFullscreen", { fullscreen: on }).catch(() => undefined);
   };
 
-  const settleFullscreenSwitch = () => {
-    if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
-    const delay = Math.max(0, 320 - (performance.now() - fsStartedAt.current));
-    window.setTimeout(() => {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setFsSettling(true);
-          fsMaskTimer.current = window.setTimeout(() => {
-            setFsSwitching(false);
-            setFsSettling(false);
-          }, 300);
-        });
-      });
-    }, delay);
+  const transitionFullscreen = async (enter: boolean, hideChrome = false) => {
+    if (fsBusy.current || enter === windowFsRef.current) return;
+    fsBusy.current = true;
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+    const modalEl = modal.current;
+    const measured = modalEl ? mediaBox(modalEl, isVideo) : null;
+    const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, poster) : "";
+    const ratio = measured ? measured.width / measured.height : 16 / 9;
+    // Even when the media has not painted yet, an opaque cover must hide the
+    // window resize. The dark fallback is removed after the same short beat.
+    const from = measured || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    setFsGhost({ src: snapshot, from, to: from, radius: isVideo ? 10 : 12 });
+    setFsGhostLive(false);
+    setFsFade(false);
+    await nextPaint();
+    windowFsRef.current = enter;
+    setWindowFs(enter);
+    if (enter) {
+      if (hideChrome) setImmersive(true);
+      applyWindowFullscreen(true);
+    } else {
+      if (hideChrome) setImmersive(false);
+      applyWindowFullscreen(false);
+    }
+    await waitForViewport();
+    await nextPaint();
+    const to = mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
+    setFsGhost((ghost) => (ghost ? { ...ghost, to } : ghost));
+    setFsGhostLive(true);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, measured ? 300 : 160));
+    setFsFade(true);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, measured ? 220 : 140));
+    setFsGhost(null);
+    setFsGhostLive(false);
+    setFsFade(false);
+    fsBusy.current = false;
   };
 
   const toggleFullscreen = () => {
-    const entering = !document.fullscreenElement;
-    beginFullscreenSwitch(entering ? "in" : "out");
-    // Let the blurred breathing cover paint before the viewport changes.
-    window.setTimeout(() => {
-      if (entering) void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
-      else void document.exitFullscreen();
-    }, 60);
+    void transitionFullscreen(!windowFsRef.current);
   };
 
   const enterImmersive = () => {
-    setImmersive(true);
-    if (!document.fullscreenElement) {
-      beginFullscreenSwitch("in");
-      window.setTimeout(() => {
-        void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
-      }, 60);
+    if (windowFsRef.current) {
+      setImmersive(true);
+      return;
     }
+    void transitionFullscreen(true, true);
   };
 
   const exitImmersive = () => {
-    setImmersive(false);
-    if (document.fullscreenElement) {
-      beginFullscreenSwitch("out");
-      window.setTimeout(() => void document.exitFullscreen(), 60);
+    if (windowFsRef.current) {
+      void transitionFullscreen(false, true);
+      return;
     }
+    setImmersive(false);
   };
 
-  useEffect(() => {
-    const onFullscreen = () => {
-      if (!document.fullscreenElement) {
-        setImmersive(false);
-        setFsDirection("out");
-        // Native Esc can exit fullscreen without going through our button.
-        setFsSwitching(true);
-      }
-      settleFullscreenSwitch();
-    };
-    document.addEventListener("fullscreenchange", onFullscreen);
-    return () => {
-      document.removeEventListener("fullscreenchange", onFullscreen);
-      if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
-    };
+  const closeViewer = () => {
+    if (windowFsRef.current) {
+      windowFsRef.current = false;
+      setWindowFs(false);
+      applyWindowFullscreen(false);
+    }
+    onClose();
+  };
+
+  useEffect(() => () => {
+    if (windowFsRef.current) {
+      windowFsRef.current = false;
+      applyWindowFullscreen(false);
+    }
   }, []);
 
-  const exitFullscreenWithCover = () => {
-    beginFullscreenSwitch("out");
-    window.setTimeout(() => void document.exitFullscreen(), 60);
-  };
+  const actionsRef = useRef({ transitionFullscreen, closeViewer });
+  actionsRef.current = { transitionFullscreen, closeViewer };
 
   useEffect(() => {
     const clearHold = () => {
@@ -1710,17 +1837,14 @@ function MediaViewer({
         return;
       }
       if (e.key === "Escape") {
-        if (document.fullscreenElement) {
-          exitFullscreenWithCover();
-        }
-        else if (st.kind === "video" && api.current?.isFullscreen()) api.current.setFullscreen(false);
+        if (windowFsRef.current) void actionsRef.current.transitionFullscreen(false);
         else if (immersiveRef.current) setImmersive(false);
-        else st.onClose();
+        else actionsRef.current.closeViewer();
         return;
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        toggleFullscreen();
+        void actionsRef.current.transitionFullscreen(!windowFsRef.current);
         return;
       }
       if (st.kind === "image") {
@@ -1835,10 +1959,26 @@ function MediaViewer({
   };
 
   return (
-    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""} ${fsSwitching ? "switching-fullscreen" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
-      {fsSwitching && (
-        <div className={`viewer-fs-cover ${fsDirection} ${fsSettling ? "settle" : ""}`} aria-hidden="true">
-          <div className="viewer-fs-zoom"><span className="viewer-fs-orb" /></div>
+    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
+      {fsGhost && (
+        <div className={`viewer-fs-cover ${fsFade ? "settle" : ""}`} aria-hidden="true">
+          {fsGhost.src ? (
+            <img
+              className={`viewer-fs-ghost ${fsGhostLive ? "live" : ""}`}
+              src={fsGhost.src}
+              alt=""
+              draggable={false}
+              style={{
+                left: `${(fsGhostLive ? fsGhost.to : fsGhost.from).left}px`,
+                top: `${(fsGhostLive ? fsGhost.to : fsGhost.from).top}px`,
+                width: `${(fsGhostLive ? fsGhost.to : fsGhost.from).width}px`,
+                height: `${(fsGhostLive ? fsGhost.to : fsGhost.from).height}px`,
+                borderRadius: `${fsGhost.radius}px`,
+              }}
+            />
+          ) : (
+            <span className="viewer-fs-empty" />
+          )}
         </div>
       )}
       <div
@@ -1867,9 +2007,9 @@ function MediaViewer({
           <Eye size={12} /> 沉浸模式
         </button>
         <button className="btn sm ghost" onClick={toggleFullscreen}>
-          <Maximize2 size={12} /> 全屏
+          {windowFs ? <Minimize2 size={12} /> : <Maximize2 size={12} />} {windowFs ? "退出全屏" : "全屏"}
         </button>
-        <button className="viewer-close" aria-label="关闭查看器" onClick={onClose}>
+        <button className="viewer-close" aria-label="关闭查看器" onClick={closeViewer}>
           <X size={17} />
         </button>
       </header>
@@ -1878,7 +2018,6 @@ function MediaViewer({
         {isVideo ? (
           <ArtVideo
             ref={api}
-            key={item.rel}
             src={src}
             poster={poster || ""}
             maxVolume={prefs.maxVolume}
@@ -2014,7 +2153,13 @@ function AudioViewer({
 interface OfficialMeta {
   name: string;
   messageCount: number;
+  mediaMessages: number;
   mediaFiles: number;
+  images: number;
+  videos: number;
+  audio: number;
+  files: number;
+  totalBytes: number;
   root: string;
   matchedSlug?: string;
 }
@@ -2841,7 +2986,15 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
             <div className="official-import-summary">
               <b>{official.meta.name}</b>
-              <span>{official.meta.messageCount.toLocaleString()} 条消息 · {official.meta.mediaFiles.toLocaleString()} 个媒体文件</span>
+              <span>
+                {official.meta.messageCount.toLocaleString()} 条消息 · {official.meta.mediaMessages.toLocaleString()} 条含媒体 · {official.meta.mediaFiles.toLocaleString()} 个文件 · {bytes(official.meta.totalBytes)}
+              </span>
+              <div className="official-import-stats">
+                <span><Images size={12} /> 图片 <b>{official.meta.images.toLocaleString()}</b></span>
+                <span><Video size={12} /> 视频 <b>{official.meta.videos.toLocaleString()}</b></span>
+                <span><Music size={12} /> 音频 <b>{official.meta.audio.toLocaleString()}</b></span>
+                <span><FileText size={12} /> 文件 <b>{official.meta.files.toLocaleString()}</b></span>
+              </div>
               <code title={official.meta.root}>{official.meta.root}</code>
             </div>
 

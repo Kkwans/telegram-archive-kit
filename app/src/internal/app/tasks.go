@@ -602,7 +602,20 @@ func (f *Facade) StartImportOfficial(folder, slug, mode string) (string, error) 
 	}
 	return f.startTask("import-official", "继承官方 ChatExport", func(t *backgroundTask) error {
 		t.update(20, "分析导出目录")
-		chat, err := f.ImportOfficial(folder, slug, mode)
+		chat, err := f.importOfficial(folder, slug, mode, func(p OperationProgress) {
+			pct := 20
+			if p.Total > 0 {
+				pct = 20 + int(p.Current*78/p.Total)
+			}
+			if pct > 98 {
+				pct = 98
+			}
+			detail := strings.TrimSpace(p.Stage)
+			if strings.TrimSpace(p.Detail) != "" {
+				detail += " · " + p.Detail
+			}
+			t.update(pct, detail)
+		})
 		if err != nil {
 			return err
 		}

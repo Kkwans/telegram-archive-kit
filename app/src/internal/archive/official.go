@@ -220,6 +220,28 @@ func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta
 				med := Media{Path: renderPath, Name: filepath.Base(abs), Kind: MediaKind(abs), Ext: strings.TrimPrefix(strings.ToLower(filepath.Ext(abs)), ".")}
 				if st != nil {
 					med.Size = st.Size()
+					meta.TotalBytes += st.Size()
+				}
+				// Telegram Desktop exports a sibling `*_thumb.jpg` for every photo,
+				// video and sticker. Reusing it makes an imported ChatExport show real
+				// covers immediately instead of waiting for FFmpeg.
+				thumbAbs := abs + "_thumb.jpg"
+				if ts, er := os.Stat(thumbAbs); er == nil && !ts.IsDir() && ts.Size() > 0 {
+					if mode == "referenced" {
+						med.Thumb = PathToFileURL(thumbAbs)
+					} else if rel, er := filepath.Rel(workspaceRoot, thumbAbs); er == nil {
+						med.Thumb = filepath.ToSlash(rel)
+					}
+				}
+				switch med.Kind {
+				case "image":
+					meta.Images++
+				case "video":
+					meta.Videos++
+				case "audio":
+					meta.Audio++
+				default:
+					meta.Files++
 				}
 				media[id] = append(media[id], med)
 				totalFiles++

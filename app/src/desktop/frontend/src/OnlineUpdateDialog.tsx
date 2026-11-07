@@ -22,6 +22,8 @@ export interface OnlineUpdateTarget {
   type?: string;
   id?: number | string;
   avatar?: string;
+  /** Existing local workspace to merge into (official ChatExport imports). */
+  slug?: string;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -197,7 +199,7 @@ export function OnlineUpdateDialog({
     setExporting(true);
     setPreviewError("");
     try {
-      const res = await call<OnlineExportResult>("onlineExport", { peer: preview.peer, timeout: 300, token: preview.token || "" });
+      const res = await call<OnlineExportResult>("onlineExport", { peer: preview.peer, timeout: 300, token: preview.token || "", slug: target.slug || "" });
       if (res.upToDate) {
         close();
         toast("已是最新，没有需要归档的新消息");

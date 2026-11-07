@@ -937,7 +937,7 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 				// Do not let a misbehaving child make cancellation feel like the old Ctrl+C hang.
 				select {
 				case <-result:
-				case <-time.After(3 * time.Second):
+				case <-time.After(1200 * time.Millisecond):
 				}
 				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
 				return nil, errUserAbort

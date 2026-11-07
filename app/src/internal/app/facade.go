@@ -433,6 +433,9 @@ func (f *Facade) Pause() bool {
 	op := f.op
 	if op != nil {
 		op.paused = true
+		if op.task != nil {
+			op.task.update(-1, "正在安全暂停，当前文件结束后会保留进度…")
+		}
 	}
 	f.mu.Unlock()
 	if op == nil {

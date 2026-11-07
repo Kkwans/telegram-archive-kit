@@ -111,6 +111,11 @@ type OfficialExportMeta struct {
 	MessageCount   int       `json:"message_count"`
 	MediaMessages  int       `json:"media_messages"`
 	MediaFiles     int       `json:"media_files"`
+	Images         int       `json:"images,omitempty"`
+	Videos         int       `json:"videos,omitempty"`
+	Audio          int       `json:"audio,omitempty"`
+	Files          int       `json:"files,omitempty"`
+	TotalBytes     int64     `json:"total_bytes,omitempty"`
 }
 
 type WorkspaceMeta struct {

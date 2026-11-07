@@ -23,6 +23,11 @@ type OfficialMetaDTO struct {
 	MessageCount  int    `json:"messageCount"`
 	MediaMessages int    `json:"mediaMessages"`
 	MediaFiles    int    `json:"mediaFiles"`
+	Images        int    `json:"images"`
+	Videos        int    `json:"videos"`
+	Audio         int    `json:"audio"`
+	Files         int    `json:"files"`
+	TotalBytes    int64  `json:"totalBytes"`
 	FirstID       string `json:"firstId,omitempty"`
 	LastID        string `json:"lastId,omitempty"`
 }
@@ -114,6 +119,7 @@ func (f *Facade) AnalyzeOfficial(folder string) (OfficialPreviewDTO, error) {
 		Meta: OfficialMetaDTO{
 			Name: meta.Name, Root: meta.Root, Mode: meta.Mode,
 			MessageCount: meta.MessageCount, MediaMessages: meta.MediaMessages, MediaFiles: meta.MediaFiles,
+			Images: meta.Images, Videos: meta.Videos, Audio: meta.Audio, Files: meta.Files, TotalBytes: meta.TotalBytes,
 			FirstID: meta.FirstMessageID, LastID: meta.LastMessageID,
 		},
 		Chats: f.ListChats(),
@@ -128,6 +134,10 @@ func (f *Facade) AnalyzeOfficial(folder string) (OfficialPreviewDTO, error) {
 }
 
 func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
+	return f.importOfficial(folder, slug, mode, nil)
+}
+
+func (f *Facade) importOfficial(folder, slug, mode string, progress func(OperationProgress)) (ChatDTO, error) {
 	if st, err := os.Stat(folder); err != nil || !st.IsDir() {
 		return ChatDTO{}, errors.New("所选目录无效")
 	}
@@ -186,8 +196,11 @@ func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
 	}
 	_ = writeJSON(f.a.workspaceMetaPath(slug), wm)
 
-	if fileExists(f.a.sourcePath(slug)) {
-		if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), slug, true, nil); err != nil {
+	// Official-only workspaces can now build thumbnails and pages from their
+	// messages.html. Do the full build here so an import immediately shows covers
+	// and a browsable archive instead of an empty shell.
+	if fileExists(f.a.sourcePath(slug)) || f.a.hasOfficialExport(slug) {
+		if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), slug, true, progress); err != nil {
 			return ChatDTO{}, err
 		}
 	} else if err := f.a.buildLibrary(); err != nil {
@@ -199,6 +212,30 @@ func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
 		}
 	}
 	return ChatDTO{}, nil
+}
+
+// BindChatIdentity attaches the live Telegram id/name to an official-imported
+// workspace before an online export, so the new result.json merges into it
+// instead of creating a duplicate chat.
+func (f *Facade) BindChatIdentity(slug, id, name, chatType string) error {
+	if strings.TrimSpace(slug) == "" || slug != filepath.Base(slug) {
+		return errors.New("无效的聊天标识")
+	}
+	meta, err := f.a.readWorkspaceMeta(slug)
+	if err != nil {
+		return err
+	}
+	if id = strings.TrimSpace(id); id != "" {
+		meta.Chat.ID = id
+	}
+	if name = strings.TrimSpace(name); name != "" {
+		meta.Chat.Name = name
+	}
+	if chatType = strings.TrimSpace(chatType); chatType != "" {
+		meta.Chat.Type = chatType
+	}
+	meta.UpdatedAt = time.Now()
+	return writeJSON(f.a.workspaceMetaPath(slug), meta)
 }
 
 func (f *Facade) DeleteChat(slug string) error {

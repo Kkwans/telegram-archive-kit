@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -201,5 +203,23 @@ func TestTaskPauseAndPartialKeepProgress(t *testing.T) {
 	partial.partial(errors.New("2 条媒体未匹配"))
 	if partial.dto.State != "partial" || partial.dto.Percent != 100 || partial.dto.Error == "" {
 		t.Fatalf("partial task state = %#v", partial.dto)
+	}
+}
+
+func TestPauseCancelsAndUpdatesDetailImmediately(t *testing.T) {
+	f := &Facade{}
+	ctx, cancel := context.WithCancel(context.Background())
+	task := &backgroundTask{dto: TaskDTO{ID: "task-pause", State: "running", Detail: "正在下载"}}
+	f.op = &desktopOp{id: "op", cancel: cancel, task: task}
+	if !f.Pause() {
+		t.Fatal("pause should accept a running operation")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("pause did not cancel the operation context")
+	}
+	if detail := task.snapshot().Detail; !strings.Contains(detail, "正在安全暂停") {
+		t.Fatalf("detail = %q", detail)
 	}
 }

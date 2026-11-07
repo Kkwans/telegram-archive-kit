@@ -761,10 +761,17 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 		return nil, err
 	}
 	jsonPath := a.sourcePath(slug)
-	if _, err := os.Stat(jsonPath); err != nil {
+	var arc *Archive
+	var err error
+	if fileExists(jsonPath) {
+		arc, err = archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug))
+	} else if a.hasOfficialExport(slug) {
+		// Official HTML exports have no result.json. Parse their pages directly so
+		// thumbnails, search, date navigation and offline pages still work.
+		arc, err = a.buildOfficialArchive(slug)
+	} else {
 		return nil, fmt.Errorf("找不到聊天源数据: %s", jsonPath)
 	}
-	arc, err := archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug))
 	if err != nil {
 		return nil, err
 	}
@@ -776,7 +783,7 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 	// reports progress to interactive callers, so the first build is visible rather
 	// than looking frozen.
 	if a.Settings.GenerateThumbnails {
-		if media.FindFFmpeg() == "" {
+		if media.FindFFmpeg() == "" && a.thumbnailsNeedFFmpeg(slug, arc) {
 			if progress != nil {
 				progress(OperationProgress{Stage: "步骤 2/8 · 自动安装视频预览引擎", Detail: "正在下载并校验 FFmpeg，安装完成后继续构建"})
 			}
@@ -862,7 +869,14 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 		meta.Slug = slug
 		meta.ImportedAt = time.Now()
 	}
+	oldChat := meta.Chat
 	meta.Chat = arc.Chat
+	if meta.Chat.ID == "" {
+		meta.Chat.ID = oldChat.ID
+	}
+	if meta.Chat.Type == "" {
+		meta.Chat.Type = oldChat.Type
+	}
 	meta.UpdatedAt = time.Now()
 	meta.MessageCount = arc.Stats.Messages
 	meta.MediaCount = arc.Stats.MediaFiles
@@ -926,10 +940,14 @@ func (a *App) buildLibrary() error {
 		lc := LibraryChat{Slug: meta.Slug, Name: meta.Chat.Name, Type: meta.Chat.Type, ID: meta.Chat.ID, Messages: meta.MessageCount, MediaFiles: meta.MediaCount, Missing: meta.MissingCount, FirstTS: meta.FirstTS, LastTS: meta.LastTS, ImportedAt: formatMetaTime(meta.ImportedAt), UpdatedAt: formatMetaTime(meta.UpdatedAt), FolderName: meta.Slug, OfficialExports: len(meta.OfficialExports), DataScript: "chats/" + meta.Slug + "/data/archive-data.js", SourceRel: "chats/" + meta.Slug + "/source/result.json", ReportRel: "chats/" + meta.Slug + "/archive-report.json", WorkspaceRel: "chats/" + meta.Slug + "/", MessagesRel: "chats/" + meta.Slug + "/messages.html"}
 		if !fileExists(a.sourcePath(meta.Slug)) {
 			lc.SourceRel = ""
-			lc.DataScript = ""
-			lc.ReportRel = ""
-			if rel := a.primaryOfficialMessagesRel(meta.Slug); rel != "" {
-				lc.MessagesRel = rel
+			// Official-only chats gain generated data/pages after a build. Keep
+			// using the Telegram export HTML only until that first build exists.
+			if !fileExists(filepath.Join(a.dataDir(meta.Slug), "archive-data.js")) {
+				lc.DataScript = ""
+				lc.ReportRel = ""
+				if rel := a.primaryOfficialMessagesRel(meta.Slug); rel != "" {
+					lc.MessagesRel = rel
+				}
 			}
 		}
 		var rep Report

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,9 +22,9 @@ type officialIndexFile struct {
 	Exports   []officialIndexedExport `json:"exports"`
 }
 
-// officialIndexVersion 2 records that only class-tagged media elements count as
-// attachments; older caches also swallowed stickers embedded in message text.
-const officialIndexVersion = 2
+// officialIndexVersion 3 reuses Telegram's exported `*_thumb.jpg` siblings so
+// imported chats show covers without waiting for FFmpeg.
+const officialIndexVersion = 3
 
 func (a *App) officialIndexPath(slug string) string {
 	return filepath.Join(a.workspaceDir(slug), "official-media-index.json")
@@ -131,6 +132,54 @@ func (a *App) registerOfficialExport(slug, root, mode string) (OfficialExportMet
 	wm.UpdatedAt = time.Now()
 	_ = writeJSON(a.workspaceMetaPath(slug), wm)
 	return meta, nil
+}
+
+// officialRoots resolves every recorded export folder that still exists. Roots
+// are stored relative to the workspace for managed/copied imports.
+func (a *App) officialRoots(slug string) []string {
+	idx, err := a.loadOfficialIndex(slug)
+	if err != nil || len(idx.Exports) == 0 {
+		return nil
+	}
+	ws := a.workspaceDir(slug)
+	var roots []string
+	for _, ex := range idx.Exports {
+		root := filepath.FromSlash(ex.Meta.Root)
+		candidates := []string{root}
+		if !filepath.IsAbs(root) {
+			candidates = []string{filepath.Join(ws, root), root}
+		}
+		for _, c := range candidates {
+			if st, er := os.Stat(c); er == nil && st.IsDir() {
+				roots = append(roots, c)
+				break
+			}
+		}
+	}
+	return roots
+}
+
+func (a *App) hasOfficialExport(slug string) bool {
+	return len(a.officialRoots(slug)) > 0
+}
+
+// buildOfficialArchive parses messages.html pages directly, so an official-only
+// workspace can produce thumbnails and archive pages without result.json.
+func (a *App) buildOfficialArchive(slug string) (*Archive, error) {
+	roots := a.officialRoots(slug)
+	if len(roots) == 0 {
+		return nil, errors.New("找不到官方 ChatExport 目录")
+	}
+	meta, _ := a.readWorkspaceMeta(slug)
+	arc, err := archive.BuildOfficialArchive(roots, a.officialMediaByID(slug), meta.Chat.Name)
+	if err != nil {
+		return nil, err
+	}
+	arc.Chat.ID = meta.Chat.ID
+	if arc.Chat.Type == "" {
+		arc.Chat.Type = meta.Chat.Type
+	}
+	return arc, nil
 }
 
 func (a *App) managedOfficialRoot(slug, sourceName string) string {
