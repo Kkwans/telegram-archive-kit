@@ -224,11 +224,7 @@ export function OnlineUpdateDialog({
   return (
     <>
       {createPortal(
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) requestClose(); }}
-        >
+        <div className="modal-backdrop" role="presentation">
           <div className="modal export-preview-modal" role="dialog" aria-modal="true" aria-labelledby="online-update-title">
             <div className="export-preview-head">
               {target.avatar ? (

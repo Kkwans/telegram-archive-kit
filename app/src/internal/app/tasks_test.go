@@ -163,6 +163,17 @@ func TestTaskFinishUsesActiveElapsed(t *testing.T) {
 	}
 }
 
+func TestTaskStopIsDistinctFromFailure(t *testing.T) {
+	task := &backgroundTask{dto: TaskDTO{State: "paused", StartedAt: 1000, ElapsedMs: 800}}
+	task.stop()
+	if task.dto.State != "stopped" || task.dto.Error == "" {
+		t.Fatalf("stop state = %#v", task.dto)
+	}
+	if task.dto.ElapsedMs != 800 {
+		t.Fatalf("stop lost elapsed: %d", task.dto.ElapsedMs)
+	}
+}
+
 func TestTaskResumeKeepsAccumulatedActiveTime(t *testing.T) {
 	task := &backgroundTask{
 		dto:          TaskDTO{State: "paused", StartedAt: time.Now().Add(-30 * time.Second).UnixMilli(), ElapsedMs: 1200, FinishedAt: time.Now().UnixMilli()},

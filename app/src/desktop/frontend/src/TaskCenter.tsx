@@ -24,6 +24,7 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  Square,
   Trash2,
   Video,
   X,
@@ -63,6 +64,7 @@ function statusLabel(state: string): string {
   if (state === "done") return "完成";
   if (state === "partial") return "部分完成";
   if (state === "paused") return "已暂停";
+  if (state === "stopped") return "已终止";
   return "失败";
 }
 
@@ -84,7 +86,7 @@ function taskElapsed(task: TaskInfo): number {
 }
 
 function noNewMedia(task: TaskInfo | TaskDetail): boolean {
-  return kindMeta(task.kind).group === "download" && task.state !== "failed" && !task.total && !task.bytes;
+  return kindMeta(task.kind).group === "download" && task.state !== "failed" && task.state !== "stopped" && !task.total && !task.bytes;
 }
 
 const STATUS_FILTERS = [
@@ -93,6 +95,7 @@ const STATUS_FILTERS = [
   ["done", "已完成"],
   ["partial", "部分完成"],
   ["paused", "已暂停"],
+  ["stopped", "已终止"],
   ["failed", "失败"],
 ] as const;
 
@@ -215,7 +218,7 @@ interface DownloadConfigDraft {
 export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
-  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "config">("");
+  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
   const [configOpen, setConfigOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
     concurrent: task.concurrent ?? 4, threads: task.threads ?? 4,
@@ -228,6 +231,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const failed = task.state === "failed";
   const partial = task.state === "partial";
   const paused = task.state === "paused";
+  const stopped = task.state === "stopped";
   const warning = partial || paused;
   const noop = noNewMedia(task);
   const elapsed = taskElapsed(task);
@@ -257,8 +261,8 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const pageRecords = completed.slice((safePage - 1) * pageSize, safePage * pageSize);
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
-    : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : partial ? "部分媒体未能下载" : paused ? "任务已暂停" : "任务失败"));
-  const displayResult = failed ? `失败原因：${result}` : partial ? `部分完成：${result}` : paused ? "任务已暂停，已完成文件和记录会保留" : result;
+    : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : partial ? "部分媒体未能下载" : paused ? "任务已暂停" : stopped ? "任务已终止" : "任务失败"));
+  const displayResult = failed ? `失败原因：${result}` : partial ? `部分完成：${result}` : paused ? "任务已暂停，已完成文件和记录会保留" : stopped ? "任务已终止，已完成文件和记录会保留" : result;
   const concurrent = Math.max(1, task.concurrent || 4);
   const threads = Math.max(1, task.threads || 4);
   const sparkValues = series.slice(-28).map((sample) => sample.now);
@@ -363,6 +367,20 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
     }
   };
 
+  const stop = async () => {
+    if (busyAction) return;
+    setBusyAction("stop");
+    try {
+      await call("stopTask", { id: task.id });
+      toast("任务已终止，已完成文件和记录会保留");
+      onOpenTask(task.id);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   return (
     <>
       <div className="page-head download-detail-head">
@@ -373,18 +391,6 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           {running && (
             <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
-            </button>
-          )}
-          {running && (
-            <button className="btn ghost" disabled={!!busyAction} onClick={() => void pause()}>
-              {busyAction === "pause" ? <Loader2 size={13} className="spin" /> : <Pause size={13} />}
-              暂停
-            </button>
-          )}
-          {task.slug && (failed || partial || paused) && (
-            <button className="btn primary" disabled={!!busyAction} onClick={() => void resume()}>
-              {busyAction === "resume" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
-              继续下载
             </button>
           )}
           {task.slug && (
@@ -401,10 +407,28 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
               <FolderOpen size={13} /> 打开归档库
             </button>
           )}
+          {(running || paused || partial) && (
+            <button className="btn ghost danger-text" disabled={!!busyAction} onClick={() => void stop()}>
+              {busyAction === "stop" ? <Loader2 size={13} className="spin" /> : <Square size={13} />}
+              结束任务
+            </button>
+          )}
+          {task.slug && (failed || partial || paused) && (
+            <button className="btn primary" disabled={!!busyAction} onClick={() => void resume()}>
+              {busyAction === "resume" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
+              继续下载
+            </button>
+          )}
+          {running && (
+            <button className="btn warn" disabled={!!busyAction} onClick={() => void pause()}>
+              {busyAction === "pause" ? <Loader2 size={13} className="spin" /> : <Pause size={13} />}
+              暂停
+            </button>
+          )}
         </div>
       </div>
 
-      <section className={`download-hero ${running ? "running" : warning ? "warning" : failed ? "failed" : "done"}`}>
+      <section className={`download-hero ${running ? "running" : stopped ? "stopped" : warning ? "warning" : failed ? "failed" : "done"}`}>
         <div
           className="download-hero-icon"
           role="progressbar"
@@ -413,7 +437,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           aria-valuemax={100}
           style={running ? { background: `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` } : undefined}
         >
-          {running ? <b>{Math.round(percent)}%</b> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
+          {running ? <b>{Math.round(percent)}%</b> : stopped ? <Square size={28} strokeWidth={2.2} /> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
           <span className="download-hero-kicker">下载聊天</span>
@@ -446,7 +470,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         )}
         {!running && (
           <span className="download-hero-watermark" aria-hidden="true">
-            {partial ? <AlertTriangle size={126} strokeWidth={1.4} /> : paused ? <Pause size={126} strokeWidth={1.4} /> : failed ? <X size={132} strokeWidth={1.4} /> : <Check size={144} strokeWidth={1.4} />}
+            {stopped ? <Square size={126} strokeWidth={1.4} /> : partial ? <AlertTriangle size={126} strokeWidth={1.4} /> : paused ? <Pause size={126} strokeWidth={1.4} /> : failed ? <X size={132} strokeWidth={1.4} /> : <Check size={144} strokeWidth={1.4} />}
           </span>
         )}
       </section>
@@ -673,21 +697,27 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
                 <input type="text" value={configDraft.reconnectTimeout}
                   onChange={(e) => setConfigField("reconnectTimeout", e.target.value)} />
               </label>
-              <label className="wide">
+              <div className="download-strategy-field wide">
                 <span>重试传输策略</span>
                 <small>反复卡住时如何调整并发参数</small>
-                <Select
-                  ariaLabel="重试传输策略"
-                  value={configDraft.transferAdjustment}
-                  onChange={(v) => setConfigField("transferAdjustment", v)}
-                  options={[
-                    { value: "increase", label: "逐步增加线程（推荐）" },
-                    { value: "increase-both", label: "线程和并发一起增加（试验）" },
-                    { value: "decrease", label: "逐步降低线程" },
-                    { value: "keep", label: "保持原配置" },
-                  ]}
-                />
-              </label>
+                <div className="download-strategy-options">
+                  {[
+                    ["increase", "逐步增加线程（推荐）"],
+                    ["increase-both", "线程和并发一起增加（试验）"],
+                    ["decrease", "逐步降低线程"],
+                    ["keep", "保持原配置"],
+                  ].map(([value, label]) => (
+                    <button
+                      type="button"
+                      key={value}
+                      className={configDraft.transferAdjustment === value ? "on" : ""}
+                      onClick={() => setConfigField("transferAdjustment", value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
             <div className="download-config-note">
               <SlidersHorizontal size={14} />
@@ -947,7 +977,7 @@ export function TasksPage({
                   >
                     <td className="task-col-state">
                       <span className={`task-state ${t.state}`}>
-                        {t.state === "running" ? <Loader2 size={12} className="spin" /> : t.state === "done" ? <CheckCircle2 size={12} /> : t.state === "partial" ? <AlertTriangle size={12} /> : t.state === "paused" ? <Pause size={12} /> : <XCircle size={12} />}
+                        {t.state === "running" ? <Loader2 size={12} className="spin" /> : t.state === "done" ? <CheckCircle2 size={12} /> : t.state === "partial" ? <AlertTriangle size={12} /> : t.state === "paused" ? <Pause size={12} /> : t.state === "stopped" ? <Square size={12} /> : <XCircle size={12} />}
                         {statusLabel(t.state)}
                       </span>
                     </td>

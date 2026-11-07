@@ -136,7 +136,7 @@ func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
 		return ChatDTO{}, err
 	}
 	if strings.TrimSpace(slug) == "" {
-		m, err := f.a.ensureProvisionalWorkspace(meta.Name)
+		m, err := f.a.ensureProvisionalWorkspace(meta.Name, meta.LastTS)
 		if err != nil {
 			return ChatDTO{}, err
 		}
@@ -169,6 +169,22 @@ func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
 	default:
 		return ChatDTO{}, errors.New("未知的导入模式")
 	}
+
+	// Official HTML exports do not carry result.json, so populate the library
+	// metadata directly; otherwise the imported chat looks empty in chat lists.
+	wm, _ := f.a.readWorkspaceMeta(slug)
+	if wm.Chat.Name == "" {
+		wm.Chat.Name = meta.Name
+	}
+	wm.MessageCount = meta.MessageCount
+	wm.MediaCount = meta.MediaFiles
+	wm.FirstTS = meta.FirstTS
+	wm.LastTS = meta.LastTS
+	wm.UpdatedAt = time.Now()
+	if wm.Slug == "" {
+		wm.Slug = slug
+	}
+	_ = writeJSON(f.a.workspaceMetaPath(slug), wm)
 
 	if fileExists(f.a.sourcePath(slug)) {
 		if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), slug, true, nil); err != nil {

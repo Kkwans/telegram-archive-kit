@@ -323,6 +323,8 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return map[string]bool{"cancelled": b.facade.Cancel()}, nil
 	case "pause":
 		return map[string]bool{"paused": b.facade.Pause()}, nil
+	case "stopTask":
+		return b.facade.StopTask(p.ID)
 	case "openLibrary":
 		return nil, b.facade.OpenLibrary(p.Slug)
 	case "revealChat":

@@ -426,7 +426,9 @@ export default function App() {
             ? `任务部分完成：${t.title}${t.error ? " · " + t.error : ""}`
             : t.state === "paused"
               ? `任务已暂停：${t.title}`
-              : `任务失败：${t.title}${t.error ? " · " + t.error : ""}`;
+              : t.state === "stopped"
+                ? `任务已终止：${t.title}`
+                : `任务失败：${t.title}${t.error ? " · " + t.error : ""}`;
         toast(text, t.state === "failed");
       }
     });

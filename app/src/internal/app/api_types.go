@@ -50,6 +50,7 @@ type DoneDTO struct {
 	OpID     string `json:"opId"`
 	OK       bool   `json:"ok"`
 	Paused   bool   `json:"paused,omitempty"`
+	Stopped  bool   `json:"stopped,omitempty"`
 	Partial  bool   `json:"partial,omitempty"`
 	Error    string `json:"error,omitempty"`
 	Stage    string `json:"stage,omitempty"`

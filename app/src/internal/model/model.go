@@ -106,6 +106,8 @@ type OfficialExportMeta struct {
 	ImportedAt     time.Time `json:"imported_at"`
 	FirstMessageID string    `json:"first_message_id,omitempty"`
 	LastMessageID  string    `json:"last_message_id,omitempty"`
+	FirstTS        int64     `json:"first_ts,omitempty"`
+	LastTS         int64     `json:"last_ts,omitempty"`
 	MessageCount   int       `json:"message_count"`
 	MediaMessages  int       `json:"media_messages"`
 	MediaFiles     int       `json:"media_files"`

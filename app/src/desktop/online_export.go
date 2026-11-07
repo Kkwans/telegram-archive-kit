@@ -275,18 +275,26 @@ func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, ch
 				if count := historyCount(res); count > 0 {
 					totalEstimate = count
 				}
-				if totalEstimate == 0 && highID > baseID {
-					totalEstimate = highID - baseID
-				}
 			}
 			if limit > 0 {
 				lastPercent = float64(len(out)) * 100 / float64(limit)
 			} else if totalEstimate > 0 {
-				processed := highID - pageLowID
+				processed := scanned
+				if baseID > 0 {
+					processed = highID - pageLowID
+				}
 				if processed < 0 {
 					processed = 0
 				}
 				lastPercent = float64(processed) * 100 / float64(totalEstimate)
+			} else {
+				// Private chats do not always expose a total count. Use a bounded,
+				// monotonic page progress instead of pretending the absolute message
+				// ID range is a message count (which produced 1% → 2% → 99%).
+				lastPercent = 4 + float64(pages+1)*4
+				if lastPercent > 92 {
+					lastPercent = 92
+				}
 			}
 			if lastPercent > 99 {
 				lastPercent = 99

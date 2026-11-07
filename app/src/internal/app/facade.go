@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"telegramarchivekit/internal/archive"
 	"telegramarchivekit/internal/media"
 )
 
@@ -18,12 +19,13 @@ import (
 var ErrOperationRunning = errors.New("已有任务正在进行，请等待完成或先取消")
 
 type desktopOp struct {
-	id     string
-	slug   string
-	chat   string
-	cancel context.CancelFunc
-	task   *backgroundTask
-	paused bool
+	id      string
+	slug    string
+	chat    string
+	cancel  context.CancelFunc
+	task    *backgroundTask
+	paused  bool
+	stopped bool
 }
 
 // Facade is the desktop client's only door into the engine. It owns the App
@@ -135,7 +137,7 @@ func (f *Facade) SetEmitter(fn func(event string, data any)) {
 func (f *Facade) send(event string, data any) {
 	var finished *backgroundTask
 	var finishErr error
-	var pausedDone, partialDone bool
+	var pausedDone, stoppedDone, partialDone bool
 	persist := false
 	f.mu.Lock()
 	switch event {
@@ -171,6 +173,7 @@ func (f *Facade) send(event string, data any) {
 			if f.op != nil && f.op.task != nil {
 				finished = f.op.task
 				pausedDone = d.Paused
+				stoppedDone = d.Stopped
 				partialDone = d.Partial
 				if !d.OK {
 					finishErr = errors.New(fallbackText(d.Error, d.Stage, "同步失败"))
@@ -181,7 +184,9 @@ func (f *Facade) send(event string, data any) {
 	fn := f.emit
 	f.mu.Unlock()
 	if finished != nil {
-		if pausedDone {
+		if stoppedDone {
+			finished.stop()
+		} else if pausedDone {
 			finished.pause()
 		} else if partialDone {
 			finished.partial(finishErr)
@@ -258,10 +263,32 @@ func (f *Facade) ListChats() []ChatDTO {
 	current := f.a.Settings.LastWorkspaceSlug
 	out := make([]ChatDTO, 0, len(list))
 	for _, m := range list {
+		messages := m.MessageCount
+		mediaCount := f.workspaceMediaSummary(m.Slug).Total
+		firstTS, lastTS := m.FirstTS, m.LastTS
+		if len(m.OfficialExports) > 0 && (messages == 0 || mediaCount == 0) {
+			officialMessages, officialMedia := 0, 0
+			for _, ex := range m.OfficialExports {
+				officialMessages += ex.MessageCount
+				officialMedia += ex.MediaFiles
+				if firstTS == 0 || (ex.FirstTS > 0 && ex.FirstTS < firstTS) {
+					firstTS = ex.FirstTS
+				}
+				if ex.LastTS > lastTS {
+					lastTS = ex.LastTS
+				}
+			}
+			if messages == 0 {
+				messages = officialMessages
+			}
+			if mediaCount == 0 {
+				mediaCount = officialMedia
+			}
+		}
 		dto := ChatDTO{
 			Slug: m.Slug, Name: m.Chat.Name, Type: m.Chat.Type, ID: m.Chat.ID,
-			Messages: m.MessageCount, Media: f.workspaceMediaSummary(m.Slug).Total, Missing: m.MissingCount,
-			FirstTS: m.FirstTS, LastTS: m.LastTS, UpdatedAt: formatMetaTime(m.UpdatedAt),
+			Messages: messages, Media: mediaCount, Missing: m.MissingCount,
+			FirstTS: firstTS, LastTS: lastTS, UpdatedAt: formatMetaTime(m.UpdatedAt),
 			HasSource: fileExists(f.a.sourcePath(m.Slug)),
 			Official:  len(m.OfficialExports),
 			Dir:       f.a.workspaceDir(m.Slug),
@@ -272,6 +299,17 @@ func (f *Facade) ListChats() []ChatDTO {
 				n := strings.ToLower(e.Name())
 				if !e.IsDir() && (n == "messages.html" || (strings.HasPrefix(n, "messages") && strings.HasSuffix(n, ".html") && len(n) > len("messages.html"))) {
 					dto.Pages++
+				}
+			}
+		}
+		if dto.Pages == 0 {
+			for _, ex := range m.OfficialExports {
+				root := filepath.FromSlash(ex.Root)
+				if !filepath.IsAbs(root) {
+					root = filepath.Join(f.a.workspaceDir(m.Slug), root)
+				}
+				if pages, err := archive.ListOfficialHTMLPages(root); err == nil {
+					dto.Pages += len(pages)
 				}
 			}
 		}
@@ -359,7 +397,12 @@ func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceM
 	}
 	f.mu.Lock()
 	paused := op.paused
+	stopped := op.stopped
 	f.mu.Unlock()
+	if stopped {
+		f.send("tak:done", DoneDTO{OpID: op.id, Stopped: true, Stage: "任务已终止", Error: "任务已终止，进度已保留"})
+		return
+	}
 	if paused {
 		f.send("tak:done", DoneDTO{OpID: op.id, Paused: true, Stage: "任务已暂停", Error: "任务已暂停，可稍后继续下载"})
 		return
@@ -397,6 +440,37 @@ func (f *Facade) Pause() bool {
 	}
 	op.cancel()
 	return true
+}
+
+// StopTask terminates a running or paused task without marking it failed.
+func (f *Facade) StopTask(id string) (bool, error) {
+	f.mu.Lock()
+	op := f.op
+	if op != nil && (id == "" || (op.task != nil && op.task.snapshot().ID == id)) {
+		op.stopped = true
+		op.cancel()
+		f.mu.Unlock()
+		return true, nil
+	}
+	f.mu.Unlock()
+
+	f.taskMu.Lock()
+	for _, task := range f.tasks {
+		dto := task.snapshot()
+		if dto.ID != id {
+			continue
+		}
+		if dto.State != "running" && dto.State != "paused" && dto.State != "partial" {
+			f.taskMu.Unlock()
+			return false, errors.New("该任务当前不可终止")
+		}
+		task.stop()
+		f.taskMu.Unlock()
+		f.saveTasks()
+		return true, nil
+	}
+	f.taskMu.Unlock()
+	return false, errors.New("找不到任务")
 }
 
 // SyncCurrentChat starts the one-click flow for the last selected chat; the

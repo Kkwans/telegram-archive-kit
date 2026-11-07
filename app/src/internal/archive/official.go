@@ -24,6 +24,7 @@ var (
 	// all pointed at the same shared .tgs. Only tagged media elements count.
 	officialMediaTagRE = regexp.MustCompile(`(?is)<(?:a|audio|video|source|img)\b[^>]*\bclass=["'][^"']*(?:photo_wrap|video_file_wrap|round_file_wrap|sticker|file|voice|audio|photo|video_file|thumbnail)[^"']*["'][^>]*>`)
 	officialSrcAttrRE  = regexp.MustCompile(`(?i)\b(?:href|src)\s*=\s*["']([^"']+)["']`)
+	officialDateRE     = regexp.MustCompile(`title=["'](\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2})`)
 )
 
 func OfficialPageNumber(name string) int {
@@ -126,6 +127,7 @@ func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta
 	media := map[string][]Media{}
 	ids := map[string]bool{}
 	firstID, lastID := int64(0), int64(0)
+	firstTS, lastTS := int64(0), int64(0)
 	chatName := ""
 	mediaMessages := map[string]bool{}
 	totalFiles := 0
@@ -138,6 +140,19 @@ func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta
 		if chatName == "" {
 			if m := officialTitleRE.FindStringSubmatch(text); len(m) == 2 {
 				chatName = CleanHTMLText(m[1])
+			}
+		}
+		for _, dm := range officialDateRE.FindAllStringSubmatch(text, -1) {
+			t, er := time.ParseInLocation("02.01.2006 15:04:05", dm[1], time.Local)
+			if er != nil {
+				continue
+			}
+			ts := t.Unix()
+			if firstTS == 0 || ts < firstTS {
+				firstTS = ts
+			}
+			if ts > lastTS {
+				lastTS = ts
 			}
 		}
 		locs := officialMessageIDRE.FindAllStringSubmatchIndex(text, -1)
@@ -200,6 +215,8 @@ func AnalyzeOfficialExport(root, workspaceRoot, mode string) (OfficialExportMeta
 	meta.MessageCount = len(ids)
 	meta.MediaMessages = len(mediaMessages)
 	meta.MediaFiles = totalFiles
+	meta.FirstTS = firstTS
+	meta.LastTS = lastTS
 	if firstID > 0 {
 		meta.FirstMessageID = strconv.FormatInt(firstID, 10)
 	}

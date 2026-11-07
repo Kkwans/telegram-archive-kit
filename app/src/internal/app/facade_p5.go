@@ -316,6 +316,19 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 	}
 
+	if idx, err := f.a.loadOfficialIndex(slug); err == nil {
+		for _, ex := range idx.Exports {
+			for id, list := range ex.Media {
+				for _, x := range list {
+					if strings.HasPrefix(strings.ToLower(x.Path), "file:") || filepath.IsAbs(filepath.FromSlash(x.Path)) {
+						continue
+					}
+					add(id, x.Name, x.Kind, x.Path, x.Thumb, x.Size, 0)
+				}
+			}
+		}
+	}
+
 	for _, dir := range []string{"media", "files"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
 		if err != nil {

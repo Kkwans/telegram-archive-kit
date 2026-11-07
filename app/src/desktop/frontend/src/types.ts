@@ -115,6 +115,7 @@ export interface DoneState {
   opId: string;
   ok: boolean;
   paused?: boolean;
+  stopped?: boolean;
   partial?: boolean;
   error?: string;
   stage?: string;
@@ -233,7 +234,7 @@ export interface TaskInfo {
   chat?: string;
   slug?: string;
   detail?: string;
-  state: "running" | "done" | "failed" | "partial" | "paused";
+  state: "running" | "done" | "failed" | "partial" | "paused" | "stopped";
   percent: number;
   avgSpeed?: number;
   peakSpeed?: number;

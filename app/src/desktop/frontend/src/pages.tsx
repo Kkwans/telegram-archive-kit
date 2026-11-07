@@ -23,6 +23,7 @@ import {
   Eye,
   FolderPlus,
   GitMerge,
+  Info,
   Keyboard,
   Minimize2,
   RotateCcw,
@@ -377,9 +378,9 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <div className="home-tasks">
               {recentTasks.map((t) => (
                 <div key={t.id} className={`home-task ${t.state}`}>
-                  {t.state === "running" ? <RefreshCw size={13} className="spin" /> : t.state === "done" ? <CheckCircle2 size={13} color="var(--ok)" /> : <X size={13} color="var(--danger)" />}
+                  {t.state === "running" ? <RefreshCw size={13} className="spin" /> : t.state === "done" ? <CheckCircle2 size={13} color="var(--ok)" /> : t.state === "paused" ? <Pause size={13} color="var(--warn)" /> : t.state === "partial" ? <AlertTriangle size={13} color="var(--warn)" /> : t.state === "stopped" ? <Square size={13} color="var(--muted)" /> : <X size={13} color="var(--danger)" />}
                   <span>{(() => { const label = t.kind === "sync" ? "下载聊天" : t.kind === "sync-all" ? "批量下载" : t.kind === "refresh" ? "重建网页" : t.title; return t.chat && !label.includes(t.chat) ? `${label} · ${t.chat}` : label; })()}</span>
-                  <em>{t.state === "running" ? `${t.percent}%` : t.state === "done" ? "完成" : "失败"}</em>
+                  <em>{t.state === "running" ? `${t.percent}%` : t.state === "done" ? "完成" : t.state === "paused" ? "已暂停" : t.state === "partial" ? "部分完成" : t.state === "stopped" ? "已终止" : "失败"}</em>
                 </div>
               ))}
             </div>
@@ -543,6 +544,12 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <button className="btn ghost" onClick={() => go("library")}>
             <ChevronLeft size={13} /> 返回档案管理
           </button>
+          <button className="btn ghost danger-text" disabled={busy === "delete"} onClick={remove}>
+            <Trash2 size={13} /> 删除本地归档
+          </button>
+          <button className="btn primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
+            {onlineLoading ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />} {onlineLoading ? "正在读取会话…" : "拉取最新消息"}
+          </button>
         </div>
       </div>
 
@@ -612,14 +619,6 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
             </button>
             <button className="btn sm ghost" onClick={() => void backfillJSON()} disabled={!current.hasSource} title="只按本地 result.json 补齐缺失媒体并重建，不访问 Telegram 在线消息">
               <FileText size={12} /> 按 result.json 补全
-            </button>
-          </div>
-          <div className="chat-actions-primary">
-            <button className="btn sm danger" disabled={busy === "delete"} onClick={remove}>
-              <Trash2 size={12} /> 删除本地归档
-            </button>
-            <button className="btn sm primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
-              {onlineLoading ? <Loader2 size={12} className="spin" /> : <CloudDownload size={12} />} {onlineLoading ? "正在读取会话…" : "拉取最新消息"}
             </button>
           </div>
         </div>
@@ -1534,7 +1533,10 @@ function MediaViewer({
   const immersiveRef = useRef(false);
   immersiveRef.current = immersive;
   const [fsSwitching, setFsSwitching] = useState(false);
+  const [fsDirection, setFsDirection] = useState<"in" | "out">("in");
+  const [fsSettling, setFsSettling] = useState(false);
   const fsMaskTimer = useRef<number | null>(null);
+  const fsStartedAt = useRef(0);
 
   useEffect(() => {
     setImageReady(false);
@@ -1604,7 +1606,10 @@ function MediaViewer({
     setOffset({ x: 0, y: 0 });
   };
 
-  const beginFullscreenSwitch = () => {
+  const beginFullscreenSwitch = (direction: "in" | "out") => {
+    fsStartedAt.current = performance.now();
+    setFsDirection(direction);
+    setFsSettling(false);
     setFsSwitching(true);
     if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
     // Safety net if fullscreenchange never arrives in this WebView.
@@ -1613,38 +1618,45 @@ function MediaViewer({
 
   const settleFullscreenSwitch = () => {
     if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
-    window.requestAnimationFrame(() => {
+    const delay = Math.max(0, 320 - (performance.now() - fsStartedAt.current));
+    window.setTimeout(() => {
       window.requestAnimationFrame(() => {
-        fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 220);
+        window.requestAnimationFrame(() => {
+          setFsSettling(true);
+          fsMaskTimer.current = window.setTimeout(() => {
+            setFsSwitching(false);
+            setFsSettling(false);
+          }, 300);
+        });
       });
-    });
+    }, delay);
   };
 
   const toggleFullscreen = () => {
     const entering = !document.fullscreenElement;
-    beginFullscreenSwitch();
-    // Let the breathing cover paint before the window/viewport changes.
+    beginFullscreenSwitch(entering ? "in" : "out");
+    // Let the blurred breathing cover paint before the viewport changes.
     window.setTimeout(() => {
       if (entering) void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
       else void document.exitFullscreen();
-    }, 70);
+    }, 60);
   };
 
   const enterImmersive = () => {
     setImmersive(true);
     if (!document.fullscreenElement) {
-      beginFullscreenSwitch();
+      beginFullscreenSwitch("in");
       window.setTimeout(() => {
         void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
-      }, 70);
+      }, 60);
     }
   };
 
   const exitImmersive = () => {
     setImmersive(false);
     if (document.fullscreenElement) {
-      beginFullscreenSwitch();
-      window.setTimeout(() => void document.exitFullscreen(), 70);
+      beginFullscreenSwitch("out");
+      window.setTimeout(() => void document.exitFullscreen(), 60);
     }
   };
 
@@ -1652,6 +1664,7 @@ function MediaViewer({
     const onFullscreen = () => {
       if (!document.fullscreenElement) {
         setImmersive(false);
+        setFsDirection("out");
         // Native Esc can exit fullscreen without going through our button.
         setFsSwitching(true);
       }
@@ -1663,6 +1676,11 @@ function MediaViewer({
       if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
     };
   }, []);
+
+  const exitFullscreenWithCover = () => {
+    beginFullscreenSwitch("out");
+    window.setTimeout(() => void document.exitFullscreen(), 60);
+  };
 
   useEffect(() => {
     const clearHold = () => {
@@ -1693,8 +1711,7 @@ function MediaViewer({
       }
       if (e.key === "Escape") {
         if (document.fullscreenElement) {
-          beginFullscreenSwitch();
-          window.setTimeout(() => void document.exitFullscreen(), 70);
+          exitFullscreenWithCover();
         }
         else if (st.kind === "video" && api.current?.isFullscreen()) api.current.setFullscreen(false);
         else if (immersiveRef.current) setImmersive(false);
@@ -1820,9 +1837,8 @@ function MediaViewer({
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""} ${fsSwitching ? "switching-fullscreen" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
       {fsSwitching && (
-        <div className="viewer-fs-cover" role="status" aria-live="polite">
-          <span className="viewer-fs-breathe"><Maximize2 size={22} /></span>
-          <span>正在切换全屏</span>
+        <div className={`viewer-fs-cover ${fsDirection} ${fsSettling ? "settle" : ""}`} aria-hidden="true">
+          <div className="viewer-fs-zoom"><span className="viewer-fs-orb" /></div>
         </div>
       )}
       <div
@@ -2013,7 +2029,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const history = boot?.history ?? [];
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
   const [target, setTarget] = useState("");
-  const [mode, setMode] = useState("reference");
+  const [mode, setMode] = useState("managed");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
@@ -2259,7 +2275,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       const preview = await call<OfficialPreview>("analyzeOfficial", { folder });
       setOfficial(preview);
       setTarget(preview.matchSlug || "");
-      setMode("reference");
+      setMode("managed");
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
@@ -2268,7 +2284,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   };
 
   const confirmOfficial = async () => {
-    if (!official) return;
+    if (!official || busy === "official") return;
+    setBusy("official");
     try {
       await call("startImportOfficial", { folder: official.meta.root, slug: target, mode });
       toast("官方导出任务已加入任务中心");
@@ -2276,6 +2293,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
+    } finally {
+      setBusy("");
     }
   };
 
@@ -2402,27 +2421,6 @@ export function Library({ ctx }: { ctx: PageCtx }) {
             <ChevronRight size={16} />
           </button>
         </div>
-        {official && (
-          <div className="official-editor">
-            <div>
-              <h4>官方导出：{official.meta.name}</h4>
-              <p>{official.meta.messageCount} 条消息 · {official.meta.mediaFiles} 个媒体文件 · {official.meta.root}</p>
-            </div>
-            <div className="official-fields">
-              <Select
-                ariaLabel="官方导出导入目标"
-                value={target}
-                onChange={setTarget}
-                options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}
-              />
-              <label className="opt"><input type="radio" checked={mode === "reference"} onChange={() => setMode("reference")} /> 引用原目录</label>
-              <label className="opt"><input type="radio" checked={mode === "copy"} onChange={() => setMode("copy")} /> 复制</label>
-              <label className="opt"><input type="radio" checked={mode === "managed"} onChange={() => setMode("managed")} /> 纳管</label>
-              <button className="btn sm primary" onClick={confirmOfficial}><Download size={12} /> 确认导入</button>
-              <button className="btn sm ghost" onClick={() => setOfficial(null)}><X size={12} /> 取消</button>
-            </div>
-          </div>
-        )}
       </section>
 
       <section className="panel">
@@ -2542,7 +2540,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               <div className="library-path-row">
                 <div>
                   <span>根目录</span>
-                  <code title={boot?.libraryRoot}>{wrapPath(boot?.libraryRoot || "未配置")}</code>
+                  <code title={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code>
                 </div>
                 <button className="icon-btn" title="复制根目录" aria-label="复制根目录" onClick={() => copyText(boot?.libraryRoot || "", "根目录")}>
                   <Copy size={13} />
@@ -2551,7 +2549,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               <div className="library-path-row">
                 <div>
                   <span>配置文件</span>
-                  <code title={boot?.configPath}>{wrapPath(boot?.configPath || "--")}</code>
+                  <code title={boot?.configPath}>{boot?.configPath || "--"}</code>
                 </div>
                 <button className="icon-btn" title="复制配置文件路径" aria-label="复制配置文件路径" onClick={() => copyText(boot?.configPath || "", "配置文件路径")}>
                   <Copy size={13} />
@@ -2821,6 +2819,77 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               <span className="spacer" />
               <button className="btn primary" onClick={() => openChat(detailChat.slug)}>
                 <ArrowUpRight size={12} /> 打开聊天
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {official && createPortal(
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && busy !== "official") setOfficial(null); }}>
+          <div className="modal official-import-modal" role="dialog" aria-modal="true" aria-labelledby="official-import-title">
+            <div className="task-modal-head">
+              <div>
+                <h2 id="official-import-title">导入官方 ChatExport</h2>
+                <p className="modal-sub">确认目标聊天与导入方式后开始分析并建立索引。</p>
+              </div>
+              <button className="icon-btn" aria-label="关闭官方导入" disabled={busy === "official"} onClick={() => setOfficial(null)}>
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="official-import-summary">
+              <b>{official.meta.name}</b>
+              <span>{official.meta.messageCount.toLocaleString()} 条消息 · {official.meta.mediaFiles.toLocaleString()} 个媒体文件</span>
+              <code title={official.meta.root}>{official.meta.root}</code>
+            </div>
+
+            <label className="official-import-field">
+              <span>导入到</span>
+              <Select
+                ariaLabel="官方导出导入目标"
+                value={target}
+                onChange={setTarget}
+                options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}
+              />
+            </label>
+
+            <div className="official-mode-field">
+              <div className="official-mode-head">
+                <span>导入方式</span>
+                <span
+                  className="official-help"
+                  data-tip="纳管：移动到档案库统一管理，推荐；复制：保留原目录，额外占用空间；引用：不复制也不移动，但原目录之后不能改名或移动。"
+                  aria-label="导入方式说明"
+                >
+                  <Info size={13} />
+                </span>
+              </div>
+              <div className="official-mode-grid">
+                {[
+                  ["managed", "纳管", "移动到档案库统一管理（推荐）"],
+                  ["copy", "复制", "复制到档案库，原目录可保留"],
+                  ["reference", "引用原目录", "不复制，原目录不可移动"],
+                ].map(([value, label, desc]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={mode === value ? "on" : ""}
+                    onClick={() => setMode(value)}
+                  >
+                    <b>{label}</b>
+                    <small>{desc}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn ghost" disabled={busy === "official"} onClick={() => setOfficial(null)}>取消</button>
+              <button className="btn primary" disabled={busy === "official"} onClick={() => void confirmOfficial()}>
+                {busy === "official" ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+                {busy === "official" ? "正在加入…" : "开始导入"}
               </button>
             </div>
           </div>

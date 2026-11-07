@@ -41,7 +41,7 @@ func (a *App) registerOfficialExportInteractive(slug, root, mode string) (Offici
 	return out, err
 }
 
-func (a *App) ensureProvisionalWorkspace(name string) (WorkspaceMeta, error) {
+func (a *App) ensureProvisionalWorkspace(name string, lastTS int64) (WorkspaceMeta, error) {
 	chat := Chat{Name: strings.TrimSpace(name)}
 	if chat.Name == "" {
 		chat.Name = "Telegram Archive"
@@ -49,6 +49,10 @@ func (a *App) ensureProvisionalWorkspace(name string) (WorkspaceMeta, error) {
 	slug, existed := a.findWorkspaceByChat(chat)
 	if existed {
 		return a.readWorkspaceMeta(slug)
+	}
+	slug = datedSlug(chat, lastTS)
+	if _, err := os.Stat(a.workspaceDir(slug)); err == nil {
+		slug = stableSlug(chat)
 	}
 	ws := a.workspaceDir(slug)
 	for _, p := range []string{filepath.Join(ws, "source"), filepath.Join(ws, "source", "history"), a.mediaDir(slug), a.filesDir(slug), a.dataDir(slug)} {
@@ -141,7 +145,7 @@ func (a *App) actionImportOfficialExportPath(folder string) {
 		}
 	}
 	if targetSlug == "" {
-		m, er := a.ensureProvisionalWorkspace(probe.Name)
+		m, er := a.ensureProvisionalWorkspace(probe.Name, probe.LastTS)
 		if er != nil {
 			showErrorAndWait(er)
 			return

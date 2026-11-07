@@ -98,7 +98,7 @@ func (dst *App) copyChatFromLibrary(srcRoot, srcSlug string) (WorkspaceMeta, err
 	} else {
 		// Official-HTML-only workspace: create a provisional chat that can later be
 		// joined to a full result.json by exact name, then by Chat ID once known.
-		target, err = dst.ensureProvisionalWorkspace(srcMeta.Chat.Name)
+		target, err = dst.ensureProvisionalWorkspace(srcMeta.Chat.Name, srcMeta.LastTS)
 		if err != nil {
 			return WorkspaceMeta{}, err
 		}

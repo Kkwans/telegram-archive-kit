@@ -253,6 +253,21 @@ func chatFromRaw(raw RawExport) Chat {
 	return Chat{Name: name, Type: raw.Type, ID: archive.AnyString(raw.ID)}
 }
 
+func rawLastTimestamp(raw RawExport) int64 {
+	var last int64
+	for _, message := range raw.Messages {
+		value, ok := message["date_unixtime"]
+		if !ok {
+			continue
+		}
+		seconds, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(value)), 10, 64)
+		if err == nil && seconds > last {
+			last = seconds
+		}
+	}
+	return last
+}
+
 func sanitizePathComponent(s string) string {
 	var b strings.Builder
 	lastSep := false
@@ -313,6 +328,40 @@ func shortHash(s string) string {
 	return hex.EncodeToString(h[:])[:12]
 }
 
+// datedSlug is the human-friendly workspace name for newly created archives:
+// chat_<name>_<latest message date>_<chat id or stable hash>.
+func datedSlug(chat Chat, lastTS int64) string {
+	name := sanitizePathComponent(chat.Name)
+	if name == "" {
+		name = "Telegram"
+	}
+	date := time.Now().Format("2006-01-02")
+	if lastTS > 0 {
+		date = time.Unix(lastTS, 0).Format("2006-01-02")
+	}
+	id := strings.TrimSpace(chat.ID)
+	if id != "" {
+		clean := sanitizeASCII(id)
+		if clean == "" {
+			clean = shortHash(id)
+		}
+		return "chat_" + name + "_" + date + "_" + clean
+	}
+	return "chat_" + name + "_" + date + "_" + shortHash(chat.Name+"|"+chat.Type)
+}
+
+func isDatedSlug(slug string) bool {
+	for _, part := range strings.Split(slug, "_") {
+		if len(part) != 10 || part[4] != '-' || part[7] != '-' {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", part); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) findWorkspaceByChat(chat Chat) (string, bool) {
 	entries, _ := os.ReadDir(a.chatsDir())
 	// Strong identity first: Telegram chat ID.
@@ -350,6 +399,9 @@ func (a *App) findWorkspaceByChat(chat Chat) (string, bool) {
 }
 
 func (a *App) migrateWorkspaceSlug(oldSlug string, chat Chat) string {
+	if isDatedSlug(oldSlug) {
+		return oldSlug
+	}
 	want := stableSlug(chat)
 	if oldSlug == "" || oldSlug == want {
 		return oldSlug
@@ -401,6 +453,11 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 	slug, existed := a.findWorkspaceByChat(chat)
 	if existed {
 		slug = a.migrateWorkspaceSlug(slug, chat)
+	} else {
+		slug = datedSlug(chat, rawLastTimestamp(raw))
+		if _, err := os.Stat(a.workspaceDir(slug)); err == nil {
+			slug = stableSlug(chat)
+		}
 	}
 	ws := a.workspaceDir(slug)
 	for _, p := range []string{filepath.Join(ws, "source"), filepath.Join(ws, "source", "history"), a.mediaDir(slug), a.filesDir(slug), a.dataDir(slug)} {
@@ -1010,6 +1067,10 @@ func (a *App) normalizeWorkspaceSlugs() bool {
 		}
 		m, err := a.readWorkspaceMeta(e.Name())
 		if err != nil || strings.TrimSpace(m.Chat.Name) == "" {
+			continue
+		}
+		// Dated slugs are the new canonical naming scheme; keep them in place.
+		if isDatedSlug(e.Name()) {
 			continue
 		}
 		want := stableSlug(m.Chat)

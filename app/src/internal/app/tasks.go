@@ -196,6 +196,17 @@ func (t *backgroundTask) pause() {
 	t.dto.Error = "任务已暂停，可继续下载"
 }
 
+func (t *backgroundTask) stop() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dto.State != "running" && t.dto.State != "paused" && t.dto.State != "partial" {
+		return
+	}
+	t.closeRunning()
+	t.dto.State = "stopped"
+	t.dto.Error = "任务已终止，进度已保留"
+}
+
 func (t *backgroundTask) partial(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -214,6 +225,8 @@ func (t *backgroundTask) closeRunning() {
 	if !t.activeSince.IsZero() {
 		t.activeBaseMs += now.Sub(t.activeSince).Milliseconds()
 		t.activeSince = time.Time{}
+	} else if t.activeBaseMs <= 0 && t.dto.ElapsedMs > 0 {
+		t.activeBaseMs = t.dto.ElapsedMs
 	}
 	t.dto.FinishedAt = now.UnixMilli()
 	t.dto.ETAMs = 0
