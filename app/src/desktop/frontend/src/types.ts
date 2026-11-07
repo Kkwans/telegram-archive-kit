@@ -114,6 +114,8 @@ export interface OperationState {
 export interface DoneState {
   opId: string;
   ok: boolean;
+  paused?: boolean;
+  partial?: boolean;
   error?: string;
   stage?: string;
   messages?: number;
@@ -231,7 +233,7 @@ export interface TaskInfo {
   chat?: string;
   slug?: string;
   detail?: string;
-  state: "running" | "done" | "failed";
+  state: "running" | "done" | "failed" | "partial" | "paused";
   percent: number;
   avgSpeed?: number;
   peakSpeed?: number;

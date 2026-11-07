@@ -690,14 +690,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   font-size: 10.5px; font-variant-numeric: tabular-nums; letter-spacing: .01em;
   pointer-events: none; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); white-space: nowrap;
 }
-.art-player.compact .tak-time-above,
 .art-player.tiny .tak-time-above { display: flex; }
-.tak-rate-label { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; padding: 0 3px; }
+.tak-rate-label { font-size: 13.5px; font-weight: 680; font-variant-numeric: tabular-nums; letter-spacing: -.015em; padding: 0 2px; }
 .art-video-player .art-controls [class*="hint--"]::before,
 .art-video-player .art-controls [class*="hint--"]::after { display: none !important; }
 .art-player.compact .art-control-next,
 .art-player.compact .art-control-volume,
-.art-player.compact .art-control-time,
 .art-player.tiny .art-control-next,
 .art-player.tiny .art-control-volume,
 .art-player.tiny .art-control-time { display: none !important; }
@@ -1219,6 +1217,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   opacity: .05; pointer-events: none;
 }
 .download-hero.done .download-hero-watermark { color: var(--ok); }
+.download-hero.warning .download-hero-watermark { color: var(--warn); }
 .download-hero.failed .download-hero-watermark { color: var(--danger); }
 .download-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .download-stats .stat { min-height: 74px; padding: 12px 13px; }
@@ -2415,4 +2414,79 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 .download-hero-desc.bad {
   white-space: normal; overflow: visible; text-overflow: clip;
   line-height: 1.55; color: var(--danger);
+}
+
+/* ===================== Compact task hero / pause states ===================== */
+.download-hero { padding: 16px 20px; gap: 16px; }
+.download-hero-heading { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.download-hero-kicker { color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: .06em; }
+.download-hero-title { gap: 9px; }
+.download-hero-title h2 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 760; letter-spacing: -.025em; }
+.download-hero-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.download-live-speed {
+  flex: 0 0 auto; display: flex; align-items: baseline; gap: 7px; padding: 6px 10px;
+  border: 1px solid rgba(47, 107, 255, .18); border-radius: 9px;
+  background: rgba(47, 107, 255, .055); white-space: nowrap;
+}
+.download-live-speed .download-meter-label { font-size: 9.5px; }
+.download-live-speed b { color: var(--text); font-size: 22px; line-height: 1; font-weight: 760; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.download-live-speed em { color: var(--muted); font-size: 10px; font-style: normal; font-weight: 600; }
+.download-hero-info { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 3px; color: var(--faint); font-size: 10px; line-height: 1.5; }
+.download-hero-info b { color: var(--muted); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.download-hero-info b.mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 9.5px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+.download-hero.warning {
+  border-color: rgba(201, 138, 29, .26);
+  background: linear-gradient(135deg, rgba(201, 138, 29, .1), rgba(201, 138, 29, .025) 56%, var(--surface));
+}
+.download-hero.warning .download-hero-icon {
+  color: var(--warn); background: rgba(201, 138, 29, .12);
+  box-shadow: inset 0 0 0 1px rgba(201, 138, 29, .2), 0 6px 18px rgba(201, 138, 29, .08);
+}
+.tag.warn { border-color: rgba(201, 138, 29, .32); background: rgba(201, 138, 29, .1); color: var(--warn); }
+.download-hero-desc.warn { color: var(--warn); white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.55; }
+.task-state.partial, .task-state.paused { color: var(--warn); }
+@media (max-width: 900px) {
+  .download-hero-topline { flex-wrap: wrap; }
+  .download-live-speed { margin-left: 0; }
+}
+
+/* Compact download-center hero */
+.hero-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.hero-heading { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hero-title { gap: 9px; }
+.hero-title h2 { margin: 0; color: var(--text); font-size: 21px; line-height: 1.15; font-weight: 760; letter-spacing: -.025em; }
+.hero.warning { border-color: rgba(201, 138, 29, .26); background: linear-gradient(135deg, rgba(201, 138, 29, .09), rgba(201, 138, 29, .02) 52%, var(--surface)); }
+.hero .download-live-speed { padding: 5px 10px; }
+@media (max-width: 900px) {
+  .hero-topline { flex-wrap: wrap; }
+}
+
+/* ===================== Viewer loading + fullscreen transition ===================== */
+.art-video-loading::after { display: none; }
+.art-video-loading img { opacity: 1; filter: none; }
+.art-video-pending {
+  width: auto; height: auto; padding: 0; border: 0; border-radius: 0; background: transparent;
+  backdrop-filter: none; white-space: normal;
+}
+.media-busy {
+  position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, .55));
+}
+.load-spinner {
+  display: block; width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, .3); border-top-color: #fff;
+  animation: spin .8s linear infinite;
+}
+.load-percent { color: #fff; font-size: 10.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.art-video-pending .load-spinner { width: 30px; height: 30px; }
+.art-video-pending .load-percent { color: var(--muted); }
+.image-loading-guard {
+  position: absolute; inset: 0; z-index: 3; display: grid; place-items: center;
+  pointer-events: none; filter: drop-shadow(0 2px 10px rgba(0, 0, 0, .6));
+}
+.image-loading-guard .load-spinner { width: 38px; height: 38px; border-color: rgba(255, 255, 255, .34); border-top-color: #fff; }
+.viewer-modal::backdrop { background: #080b12; }
+.viewer-modal:fullscreen { background: #080b12; }
+.viewer-modal.switching-fullscreen::before {
+  content: ""; position: absolute; inset: 0; z-index: 20; background: #080b12; pointer-events: none;
 }

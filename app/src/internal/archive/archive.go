@@ -104,13 +104,19 @@ func BuildArchiveWithDirs(jsonPath string, mediaDirs []string, extra map[string]
 		missing := m.ExpectedMedia && len(m.Media) == 0
 		if m.ExpectedMedia && m.ExpectedSize > 0 && len(m.Media) > 0 {
 			matchedSize := false
+			validImages := true
 			for _, x := range m.Media {
 				if x.Size == m.ExpectedSize {
 					matchedSize = true
-					break
+				}
+				if x.Size <= 0 || (x.Kind != "image" && x.Kind != "gif") {
+					validImages = false
 				}
 			}
-			if !matchedSize {
+			// Telegram's photo file_size describes the original upload while
+			// tdl may save a valid recompressed size. A present image is not a
+			// missing media just because those sizes differ.
+			if !matchedSize && !validImages {
 				missing = true
 				arc.Stats.SizeMismatch++
 			}

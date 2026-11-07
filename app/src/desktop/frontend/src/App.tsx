@@ -413,7 +413,14 @@ export default function App() {
       const finishedBeforeFirstPoll = prev === undefined && t.state !== "running";
       if (justFinished || finishedBeforeFirstPoll) {
         completed = true;
-        toast(t.state === "done" ? `任务完成：${t.title}` : `任务失败：${t.title}${t.error ? " · " + t.error : ""}`, t.state !== "done");
+        const text = t.state === "done"
+          ? `任务完成：${t.title}`
+          : t.state === "partial"
+            ? `任务部分完成：${t.title}${t.error ? " · " + t.error : ""}`
+            : t.state === "paused"
+              ? `任务已暂停：${t.title}`
+              : `任务失败：${t.title}${t.error ? " · " + t.error : ""}`;
+        toast(text, t.state === "failed");
       }
     });
     if (completed) refresh();

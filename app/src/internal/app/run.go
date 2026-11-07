@@ -1225,12 +1225,27 @@ func (a *App) smartSyncCtx(ctx context.Context, slug string, rep Reporter) error
 	if arc.Stats.MissingMedia > 0 {
 		if _, path, e := a.generateMissingJSON(slug); e == nil {
 			if ids := downloadPlanIDList(path, 8); ids != "" {
-				return fmt.Errorf("仍有 %d 条媒体未匹配（Message ID: %s）；可点击“继续下载”再次补齐", arc.Stats.MissingMedia, ids)
+				return &PartialMediaError{Count: arc.Stats.MissingMedia, IDs: ids}
 			}
 		}
-		return fmt.Errorf("仍有 %d 条媒体未匹配；可点击“继续下载”再次补齐", arc.Stats.MissingMedia)
+		return &PartialMediaError{Count: arc.Stats.MissingMedia}
 	}
 	return nil
+}
+
+// PartialMediaError distinguishes a mostly-complete archive from a hard
+// failure: the downloaded files must be kept, shown as a warning, and retried
+// incrementally.
+type PartialMediaError struct {
+	Count int
+	IDs   string
+}
+
+func (e *PartialMediaError) Error() string {
+	if e.IDs != "" {
+		return fmt.Sprintf("仍有 %d 条媒体未匹配（Message ID: %s）；可点击“继续下载”再次补齐", e.Count, e.IDs)
+	}
+	return fmt.Sprintf("仍有 %d 条媒体未匹配；可点击“继续下载”再次补齐", e.Count)
 }
 
 func downloadPlanIDList(path string, limit int) string {

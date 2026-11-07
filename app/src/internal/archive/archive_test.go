@@ -112,3 +112,29 @@ func TestOfficialExportIgnoresInlineTextSticker(t *testing.T) {
 		}
 	}
 }
+
+func TestRecompressedPhotoSizeDoesNotCountAsMissing(t *testing.T) {
+	root := t.TempDir()
+	jsonPath := filepath.Join(root, "result.json")
+	payload := map[string]any{"name": "照片", "type": "personal_chat", "id": 1, "messages": []any{
+		map[string]any{"id": 1, "type": "message", "date": "2026-01-01T00:00:00", "media_type": "photo", "photo": "photo.jpg", "file_size": 100},
+	}}
+	b, _ := json.Marshal(payload)
+	if err := os.WriteFile(jsonPath, b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	mediaDir := filepath.Join(root, "media")
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaDir, "999_1_photo.jpg"), []byte("smaller-but-valid"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	arc, err := BuildArchiveWithExtra(jsonPath, mediaDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arc.Stats.MissingMedia != 0 || len(arc.Missing) != 0 {
+		t.Fatalf("recompressed photo wrongly counted as missing: %#v", arc.Missing)
+	}
+}

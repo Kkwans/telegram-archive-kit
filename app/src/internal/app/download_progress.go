@@ -419,8 +419,9 @@ func (a *App) downloadExistingSnapshot(slug string, plan downloadPlan) (complete
 				matched = true
 			}
 		}
+		isImage := archive.MediaKind(plan.Names[id]) == "image"
 		if expected > 0 {
-			if matched {
+			if matched || (isImage && representative > 0) {
 				completed[id] = true
 				bytes += expected
 			}

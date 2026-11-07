@@ -42,6 +42,7 @@ import {
   Server,
   Cloud,
   AlertTriangle,
+  Pause,
   Play,
   Sparkles,
   QrCode,
@@ -450,24 +451,20 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
       toast((e as Error).message, true);
     }
   };
+  const pause = async () => {
+    try {
+      await call("pause");
+      toast("正在暂停任务，已完成文件会保留");
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
 
   const idle = !running && !dl && !op;
   const downloading = running && !!dl;
   const dlSpeed = rateParts(dl?.speedNow ?? 0);
-  const dlSparkValues = samples.slice(-28).map((s) => s.now);
-  const dlSparkMax = Math.max(1, ...dlSparkValues);
-  const dlSparkPoints = dlSparkValues.map((value, index) =>
-    `${(index / Math.max(1, dlSparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / dlSparkMax) * 24).toFixed(2)}`
-  ).join(" ");
-  const title = running
-    ? dl
-      ? `正在同步：${current?.name || dl.chat || "聊天"}`
-      : `正在同步：${current?.name || "聊天"}`
-    : done
-      ? done.ok
-        ? "上次同步已完成"
-        : "上次同步失败"
-      : "准备同步";
+  const heroChat = current?.name || dl?.chat || "下载中心";
+  const heroTag = running ? "进行中" : done?.paused ? "已暂停" : done?.partial ? "部分完成" : done?.ok ? "已完成" : done ? "失败" : "";
   const stageText = running
     ? dl
       ? `第 ${dl.pass}/${dl.passMax} 轮 · 已下载 ${dl.done}/${dl.total} 个媒体${dl.detail ? " · " + dl.detail : ""}`
@@ -475,9 +472,13 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
         ? `${op.stage}${op.detail ? " · " + op.detail : ""}`
         : "正在准备…"
     : done
-      ? done.ok
-        ? `消息 ${done.messages ?? 0} · 媒体 ${done.media ?? 0}${done.missing ? ` · 缺失 ${done.missing}` : ""}`
-        : done.error || done.stage || "请重试"
+      ? done.paused
+        ? "进度已保留，可在任务中心点击“继续下载”"
+        : done.partial
+          ? done.error || done.stage || "部分媒体未能下载，可在任务中心继续补齐"
+          : done.ok
+            ? `消息 ${done.messages ?? 0} · 媒体 ${done.media ?? 0}${done.missing ? ` · 缺失 ${done.missing}` : ""}`
+            : done.error || done.stage || "请重试"
       : current
         ? "点击「同步当前聊天」检查并补齐缺失媒体"
         : "先在左侧选择聊天";
@@ -501,18 +502,23 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
             <FolderOpen size={13} /> 打开归档库
           </button>
           {running ? (
-            <button className="btn danger" onClick={cancel}>
-              <Square size={12} /> 取消任务
-            </button>
+            <>
+              <button className="btn ghost" onClick={pause}>
+                <Pause size={12} /> 暂停
+              </button>
+              <button className="btn danger" onClick={cancel}>
+                <Square size={12} /> 取消任务
+              </button>
+            </>
           ) : (
             <button className="btn primary" onClick={start} disabled={!current}>
-              <Play size={13} /> 同步当前聊天
+              <Play size={13} /> {done?.paused ? "继续下载" : done?.partial ? "继续补齐" : "同步当前聊天"}
             </button>
           )}
         </div>
       </div>
 
-      <section className={`hero ${!running && !dl ? "idle" : ""}`}>
+      <section className={`hero ${!running && !dl ? "idle" : ""} ${done?.paused || done?.partial ? "warning" : ""}`}>
         <div
           className={`ring ${idle ? "idle" : ""}`}
           role="progressbar"
@@ -524,15 +530,26 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
           {idle ? <Play size={20} /> : <b>{Math.round(percent)}%</b>}
         </div>
         <div className="hero-main">
-          <div className="hero-title">
-            {title}
-            {running && <span className="tag">进行中</span>}
-            {done && !running && <span className={`tag ${done.ok ? "" : "bad"}`}>{done.ok ? "已完成" : "失败"}</span>}
+          <div className="hero-topline">
+            <div className="hero-heading">
+              <span className="download-hero-kicker">下载聊天</span>
+              <div className="hero-title">
+                <h2>{heroChat}</h2>
+                {heroTag && <span className={`tag ${done?.paused || done?.partial ? "warn" : !running && done && !done.ok ? "bad" : ""}`}>{heroTag}</span>}
+              </div>
+            </div>
+            {downloading && (
+              <div className="download-live-speed">
+                <span className="download-meter-label"><i />实时速度</span>
+                <b>{dlSpeed.value}</b><em>{dlSpeed.unit}</em>
+              </div>
+            )}
           </div>
           <div className="hero-stage" title={stageText}>{stageText}</div>
           {dl && (
             <div className="hero-meta">
               <span>已下载 <b>{bytes(dl.bytes)}</b>{dl.totalBytes > 0 ? ` / ${bytes(dl.totalBytes)}` : ""}</span>
+              <span>峰值 <b>{rate(dl.speedPeak)}</b></span>
               <span>并发 <b>{dl.concurrent}</b> × <b>{dl.threads}</b></span>
               <span>第 <b>{dl.pass}</b> 轮</span>
             </div>
@@ -544,18 +561,6 @@ export function Overview({ ctx }: { ctx: PageCtx }) {
             </div>
           )}
         </div>
-        {downloading && (
-          <div className="download-hero-meter running">
-            <span className="download-meter-label"><i />实时速度</span>
-            <div className="download-meter-value"><b>{dlSpeed.value}</b><em>{dlSpeed.unit}</em></div>
-            {dlSparkValues.length > 1 && (
-              <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
-                <polygon points={`0,28 ${dlSparkPoints} 100,28`} />
-                <polyline points={dlSparkPoints} vectorEffect="non-scaling-stroke" />
-              </svg>
-            )}
-          </div>
-        )}
       </section>
 
       <section className={`stat-grid ${downloading ? "" : "three"}`}>
@@ -1235,6 +1240,18 @@ const ArtVideo = forwardRef<VideoApi, {
   const [ready, setReady] = useState(false);
   const [framed, setFramed] = useState(knownRatio > 0 || frameAspect === "16:9" || frameAspect === "4:3");
   const [fit, setFit] = useState<"" | "compact" | "tiny">("");
+  const [showBusy, setShowBusy] = useState(false);
+  const [loadPercent, setLoadPercent] = useState(0);
+
+  useEffect(() => {
+    if (ready) {
+      setShowBusy(false);
+      return;
+    }
+    setShowBusy(false);
+    const timer = window.setTimeout(() => setShowBusy(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [ready, src]);
 
   const showNotice = (text: string) => {
     if (playerRef.current) playerRef.current.notice.show = text;
@@ -1389,6 +1406,16 @@ const ArtVideo = forwardRef<VideoApi, {
       moreVideoAttr: { playsInline: true, preload: "auto" } as never,
     });
     playerRef.current = player;
+    let pointerInside = false;
+    const onPointerEnter = () => { pointerInside = true; };
+    const onPointerLeave = () => { pointerInside = false; };
+    box.current.addEventListener("pointerenter", onPointerEnter);
+    box.current.addEventListener("pointerleave", onPointerLeave);
+    const hideIdleControls = () => {
+      if (!pointerInside) player.controls.show = false;
+    };
+    player.on("video:canplay", hideIdleControls);
+    player.once("ready", hideIdleControls);
     player.setting.add({
       name: "tak-precise-speed",
       html: "精确倍速",
@@ -1452,7 +1479,7 @@ const ArtVideo = forwardRef<VideoApi, {
         wrap.current.style.width = width;
         wrap.current.style.height = height;
       }
-      setFit(w < 360 ? "tiny" : w < 430 ? "compact" : "");
+      setFit(w < 320 ? "tiny" : w < 430 ? "compact" : "");
     };
     fitRef.current = fitFrame;
     fitFrame();
@@ -1499,7 +1526,7 @@ const ArtVideo = forwardRef<VideoApi, {
         boostRef.current = false;
         player.playbackRate = value;
         syncPreciseRange(player, value);
-        updateRateLabel(value);
+        return `<span class="tak-rate-label">${value.toFixed(2)}×</span>`;
       },
     });
     const volumeControl = player.template.$controlsLeft.querySelector(".art-control-volume");
@@ -1526,6 +1553,20 @@ const ArtVideo = forwardRef<VideoApi, {
     player.video.addEventListener("timeupdate", syncTimeAbove);
     player.video.addEventListener("durationchange", syncTimeAbove);
     player.video.addEventListener("seeked", syncTimeAbove);
+    const updateLoadPercent = () => {
+      const video = player.video;
+      if (!video.duration || !Number.isFinite(video.duration) || video.buffered.length === 0) {
+        setLoadPercent(0);
+        return;
+      }
+      const end = video.buffered.end(video.buffered.length - 1);
+      setLoadPercent(Math.max(0, Math.min(99, Math.round((end / video.duration) * 100))));
+    };
+    player.video.addEventListener("progress", updateLoadPercent);
+    player.video.addEventListener("loadedmetadata", updateLoadPercent);
+    player.video.addEventListener("durationchange", updateLoadPercent);
+    player.video.addEventListener("canplay", updateLoadPercent);
+    updateLoadPercent();
     player.on("video:ratechange", () => {
       if (!boostRef.current) rateRef.current = player.playbackRate;
       syncPreciseRange(player, player.playbackRate);
@@ -1546,6 +1587,12 @@ const ArtVideo = forwardRef<VideoApi, {
       player.video.removeEventListener("timeupdate", syncTimeAbove);
       player.video.removeEventListener("durationchange", syncTimeAbove);
       player.video.removeEventListener("seeked", syncTimeAbove);
+      player.video.removeEventListener("progress", updateLoadPercent);
+      player.video.removeEventListener("loadedmetadata", updateLoadPercent);
+      player.video.removeEventListener("durationchange", updateLoadPercent);
+      player.video.removeEventListener("canplay", updateLoadPercent);
+      box.current?.removeEventListener("pointerenter", onPointerEnter);
+      box.current?.removeEventListener("pointerleave", onPointerLeave);
       window.removeEventListener("resize", fitFrame);
       if (audioCtx.current) {
         void audioCtx.current.close();
@@ -1564,13 +1611,19 @@ const ArtVideo = forwardRef<VideoApi, {
         {framed && !ready && (
           <div className={`art-video-loading ${frameAspect === "original" ? "" : "fixed"}`} aria-live="polite">
             {poster ? <img src={poster} alt="" /> : <div className="art-video-loading-shade" />}
-            <span className="art-video-loading-state"><Loader2 size={15} className="spin" /> 正在加载视频…</span>
+            {showBusy && (
+              <div className="media-busy" role="status">
+                <span className="load-spinner" />
+                {loadPercent > 0 && loadPercent < 100 && <span className="load-percent">{loadPercent}%</span>}
+              </div>
+            )}
           </div>
         )}
       </div>
-      {!framed && (
-        <div className="art-video-pending" aria-live="polite">
-          <Loader2 size={15} className="spin" /> 正在加载视频…
+      {!framed && showBusy && (
+        <div className="art-video-pending" role="status">
+          <span className="load-spinner" />
+          {loadPercent > 0 && loadPercent < 100 && <span className="load-percent">{loadPercent}%</span>}
         </div>
       )}
     </>
@@ -1612,11 +1665,27 @@ function MediaViewer({
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [imageReady, setImageReady] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [tone, setTone] = useState("hsl(221 24% 14%)");
   const [immersive, setImmersive] = useState(false);
   const immersiveRef = useRef(false);
   immersiveRef.current = immersive;
+  const [fsSwitching, setFsSwitching] = useState(false);
+  const fsMaskTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    setImageReady(false);
+    setImageBusy(false);
+    if (isVideo) return;
+    const timer = window.setTimeout(() => setImageBusy(true), 350);
+    return () => window.clearTimeout(timer);
+  }, [item.rel, isVideo]);
+
+  useEffect(() => {
+    if (imageReady) setImageBusy(false);
+  }, [imageReady]);
   const stateRef = useRef({ index, items, onIndex, onClose, prefs, kind: item.kind });
   stateRef.current = { index, items, onIndex, onClose, prefs, kind: item.kind };
 
@@ -1663,27 +1732,45 @@ function MediaViewer({
     setOffset({ x: 0, y: 0 });
   };
 
+  const beginFullscreenSwitch = () => {
+    setFsSwitching(true);
+    if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
+    fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 600);
+  };
+
   const toggleFullscreen = () => {
+    beginFullscreenSwitch();
     if (document.fullscreenElement) void document.exitFullscreen();
-    else void modal.current?.requestFullscreen();
+    else void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
   };
 
   const enterImmersive = () => {
     setImmersive(true);
-    if (!document.fullscreenElement) void modal.current?.requestFullscreen().catch(() => undefined);
+    if (!document.fullscreenElement) {
+      beginFullscreenSwitch();
+      void modal.current?.requestFullscreen().catch(() => setFsSwitching(false));
+    }
   };
 
   const exitImmersive = () => {
     setImmersive(false);
-    if (document.fullscreenElement) void document.exitFullscreen();
+    if (document.fullscreenElement) {
+      beginFullscreenSwitch();
+      void document.exitFullscreen();
+    }
   };
 
   useEffect(() => {
     const onFullscreen = () => {
       if (!document.fullscreenElement) setImmersive(false);
+      if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
+      fsMaskTimer.current = window.setTimeout(() => setFsSwitching(false), 220);
     };
     document.addEventListener("fullscreenchange", onFullscreen);
-    return () => document.removeEventListener("fullscreenchange", onFullscreen);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreen);
+      if (fsMaskTimer.current) window.clearTimeout(fsMaskTimer.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -1837,7 +1924,7 @@ function MediaViewer({
   };
 
   return (
-    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
+    <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""} ${fsSwitching ? "switching-fullscreen" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
       <div
         className={`viewer-ambient ${prefs.backdrop === "solid" ? "solid" : "ambient"}`}
         style={prefs.backdrop === "ambient" && ambient
@@ -1905,8 +1992,15 @@ function MediaViewer({
               alt={item.name}
               draggable={false}
               loading="eager"
+              onLoad={() => setImageReady(true)}
+              onError={() => setImageReady(true)}
               style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
             />
+            {!imageReady && imageBusy && (
+              <div className="image-loading-guard" role="status">
+                <span className="load-spinner" />
+              </div>
+            )}
             {zoom > 1 && <span className="image-zoom-badge">{Math.round(zoom * 100)}%</span>}
           </div>
         )}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,5 +153,18 @@ func TestTaskFinishUsesWallClockElapsed(t *testing.T) {
 	task.finish(nil)
 	if task.dto.ElapsedMs <= 10 || task.dto.ElapsedMs != task.dto.FinishedAt-1000 {
 		t.Fatalf("elapsed = %d, finished-start = %d", task.dto.ElapsedMs, task.dto.FinishedAt-1000)
+	}
+}
+
+func TestTaskPauseAndPartialKeepProgress(t *testing.T) {
+	paused := &backgroundTask{dto: TaskDTO{State: "running", StartedAt: 1000, Percent: 40, Done: 4, Bytes: 400}}
+	paused.pause()
+	if paused.dto.State != "paused" || paused.dto.Percent != 40 || paused.dto.Done != 4 || paused.dto.Bytes != 400 {
+		t.Fatalf("paused task lost progress: %#v", paused.dto)
+	}
+	partial := &backgroundTask{dto: TaskDTO{State: "running", StartedAt: 1000, Percent: 100, Done: 10, Bytes: 1000}}
+	partial.partial(errors.New("2 条媒体未匹配"))
+	if partial.dto.State != "partial" || partial.dto.Percent != 100 || partial.dto.Error == "" {
+		t.Fatalf("partial task state = %#v", partial.dto)
 	}
 }

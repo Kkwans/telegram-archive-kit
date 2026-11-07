@@ -23,6 +23,7 @@ type desktopOp struct {
 	chat   string
 	cancel context.CancelFunc
 	task   *backgroundTask
+	paused bool
 }
 
 // Facade is the desktop client's only door into the engine. It owns the App
@@ -134,6 +135,7 @@ func (f *Facade) SetEmitter(fn func(event string, data any)) {
 func (f *Facade) send(event string, data any) {
 	var finished *backgroundTask
 	var finishErr error
+	var pausedDone, partialDone bool
 	persist := false
 	f.mu.Lock()
 	switch event {
@@ -168,6 +170,8 @@ func (f *Facade) send(event string, data any) {
 			f.running = false
 			if f.op != nil && f.op.task != nil {
 				finished = f.op.task
+				pausedDone = d.Paused
+				partialDone = d.Partial
 				if !d.OK {
 					finishErr = errors.New(fallbackText(d.Error, d.Stage, "同步失败"))
 				}
@@ -177,7 +181,13 @@ func (f *Facade) send(event string, data any) {
 	fn := f.emit
 	f.mu.Unlock()
 	if finished != nil {
-		finished.finish(finishErr)
+		if pausedDone {
+			finished.pause()
+		} else if partialDone {
+			finished.partial(finishErr)
+		} else {
+			finished.finish(finishErr)
+		}
 		f.saveTasks()
 	} else if persist {
 		f.saveTasks()
@@ -340,16 +350,40 @@ func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceM
 			return
 		}
 	}
+	f.mu.Lock()
+	paused := op.paused
+	f.mu.Unlock()
+	if paused {
+		f.send("tak:done", DoneDTO{OpID: op.id, Paused: true, Stage: "任务已暂停", Error: "任务已暂停，可稍后继续下载"})
+		return
+	}
 	stage := "同步失败"
 	if err != nil {
 		stage = err.Error()
 	}
-	f.send("tak:done", DoneDTO{OpID: op.id, OK: false, Stage: stage, Error: stage})
+	var partial *PartialMediaError
+	f.send("tak:done", DoneDTO{OpID: op.id, OK: false, Partial: errors.As(err, &partial), Stage: stage, Error: stage})
 }
 
 func (f *Facade) Cancel() bool {
 	f.mu.Lock()
 	op := f.op
+	f.mu.Unlock()
+	if op == nil {
+		return false
+	}
+	op.cancel()
+	return true
+}
+
+// Pause stops the current tdl run but records the task as paused so it can be
+// resumed from the existing files instead of becoming a red failure.
+func (f *Facade) Pause() bool {
+	f.mu.Lock()
+	op := f.op
+	if op != nil {
+		op.paused = true
+	}
 	f.mu.Unlock()
 	if op == nil {
 		return false

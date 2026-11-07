@@ -169,12 +169,7 @@ func (t *backgroundTask) finish(err error) {
 	if t.dto.State != "running" {
 		return
 	}
-	t.dto.FinishedAt = time.Now().UnixMilli()
-	t.dto.ETAMs = 0
-	t.active = nil
-	if t.dto.FinishedAt > t.dto.StartedAt {
-		t.dto.ElapsedMs = t.dto.FinishedAt - t.dto.StartedAt
-	}
+	t.closeRunning()
 	if err != nil {
 		t.dto.State = "failed"
 		t.dto.Error = err.Error()
@@ -182,6 +177,39 @@ func (t *backgroundTask) finish(err error) {
 	}
 	t.dto.State = "done"
 	t.dto.Percent = 100
+}
+
+func (t *backgroundTask) pause() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dto.State != "running" {
+		return
+	}
+	t.closeRunning()
+	t.dto.State = "paused"
+	t.dto.Error = "任务已暂停，可继续下载"
+}
+
+func (t *backgroundTask) partial(err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dto.State != "running" {
+		return
+	}
+	t.closeRunning()
+	t.dto.State = "partial"
+	if err != nil {
+		t.dto.Error = err.Error()
+	}
+}
+
+func (t *backgroundTask) closeRunning() {
+	t.dto.FinishedAt = time.Now().UnixMilli()
+	t.dto.ETAMs = 0
+	t.active = nil
+	if t.dto.FinishedAt > t.dto.StartedAt {
+		t.dto.ElapsedMs = t.dto.FinishedAt - t.dto.StartedAt
+	}
 }
 
 // mergeTaskProgress prepends records from a newer repair pass while keeping
@@ -347,7 +375,7 @@ func (f *Facade) ClearFinishedTasks() {
 	f.taskMu.Lock()
 	kept := f.tasks[:0]
 	for _, t := range f.tasks {
-		if t.snapshot().State == "running" {
+		if state := t.snapshot().State; state == "running" || state == "paused" {
 			kept = append(kept, t)
 		}
 	}

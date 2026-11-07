@@ -9,6 +9,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  AlertTriangle,
+  Pause,
   FileJson,
   FileText,
   FolderInput,
@@ -56,7 +58,11 @@ function taskTitle(task: TaskInfo): string {
 }
 
 function statusLabel(state: string): string {
-  return state === "running" ? "进行中" : state === "done" ? "完成" : "失败";
+  if (state === "running") return "进行中";
+  if (state === "done") return "完成";
+  if (state === "partial") return "部分完成";
+  if (state === "paused") return "已暂停";
+  return "失败";
 }
 
 function fmtDuration(ms: number): string {
@@ -83,6 +89,8 @@ const STATUS_FILTERS = [
   ["all", "全部"],
   ["running", "进行中"],
   ["done", "已完成"],
+  ["partial", "部分完成"],
+  ["paused", "已暂停"],
   ["failed", "失败"],
 ] as const;
 
@@ -193,10 +201,13 @@ function TaskSpeedChart({ task }: { task: TaskDetail }) {
 export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBack: () => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
-  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild">("");
+  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause">("");
   const meta = kindMeta(task.kind);
   const running = task.state === "running";
   const failed = task.state === "failed";
+  const partial = task.state === "partial";
+  const paused = task.state === "paused";
+  const warning = partial || paused;
   const noop = noNewMedia(task);
   const elapsed = taskElapsed(task);
   const percent = task.state === "done" ? 100 : Math.max(0, Math.min(100, task.percent));
@@ -225,12 +236,20 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
   const pageRecords = completed.slice((safePage - 1) * pageSize, safePage * pageSize);
   const result = task.error || (noop
     ? "同步完成，本次没有产生媒体下载"
-    : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : "任务失败"));
-  const sparkValues = series.slice(-28).map((sample) => sample.now);
-  const sparkMax = Math.max(1, ...sparkValues);
-  const sparkPoints = sparkValues.map((value, index) =>
-    `${(index / Math.max(1, sparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / sparkMax) * 24).toFixed(2)}`
-  ).join(" ");
+    : task.detail || (task.state === "done" ? "任务完成" : task.state === "running" ? "任务进行中" : partial ? "部分媒体未能下载" : paused ? "任务已暂停" : "任务失败"));
+  const displayResult = failed ? `失败原因：${result}` : partial ? `部分完成：${result}` : paused ? "任务已暂停，已完成文件和记录会保留" : result;
+  const pause = async () => {
+    if (busyAction) return;
+    setBusyAction("pause");
+    try {
+      await call("pause");
+      toast("正在暂停任务，已完成文件会保留");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
+  };
 
   const resume = async () => {
     if (!task.slug || busyAction) return;
@@ -266,7 +285,13 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
           <ArrowLeft size={14} /> 返回任务中心
         </button>
         <div className="actions">
-          {task.slug && failed && (
+          {running && (
+            <button className="btn ghost" disabled={!!busyAction} onClick={() => void pause()}>
+              {busyAction === "pause" ? <Loader2 size={13} className="spin" /> : <Pause size={13} />}
+              暂停
+            </button>
+          )}
+          {task.slug && (failed || partial || paused) && (
             <button className="btn primary" disabled={!!busyAction} onClick={() => void resume()}>
               {busyAction === "resume" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
               继续下载
@@ -289,7 +314,7 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
         </div>
       </div>
 
-      <section className={`download-hero ${running ? "running" : failed ? "failed" : "done"}`}>
+      <section className={`download-hero ${running ? "running" : warning ? "warning" : failed ? "failed" : "done"}`}>
         <div
           className="download-hero-icon"
           role="progressbar"
@@ -298,36 +323,33 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
           aria-valuemax={100}
           style={running ? { background: `conic-gradient(var(--accent) ${percent}%, var(--surface-3) ${percent}% 100%)` } : undefined}
         >
-          {running ? <b>{Math.round(percent)}%</b> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
+          {running ? <b>{Math.round(percent)}%</b> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
-          <div className="download-hero-title">
-            <h2>{taskTitle(task)}</h2>
-            {task.chat && <span className="download-hero-chat">{task.chat}</span>}
-            <span className={`tag ${failed ? "bad" : ""}`}>{statusLabel(task.state)}</span>
-          </div>
-          <p className={`download-hero-desc ${failed ? "bad" : ""}`} title={result}>{failed ? `失败原因：${result}` : result}</p>
-          {running && (
-            <div className="download-hero-progress" aria-hidden="true">
-              <i style={{ width: `${percent}%` }} />
+          <div className="download-hero-topline">
+            <div className="download-hero-heading">
+              <span className="download-hero-kicker">下载聊天</span>
+              <div className="download-hero-title">
+                <h2>{task.chat || taskTitle(task)}</h2>
+              </div>
             </div>
-          )}
-        </div>
-        {running && (
-          <div className="download-hero-meter running">
-            <span className="download-meter-label"><i />实时速度</span>
-            <div className="download-meter-value"><b>{speed.value}</b><em>{speed.unit}</em></div>
-            {sparkValues.length > 1 && (
-              <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
-                <polygon points={`0,28 ${sparkPoints} 100,28`} />
-                <polyline points={sparkPoints} vectorEffect="non-scaling-stroke" />
-              </svg>
+            {running && (
+              <div className="download-live-speed">
+                <span className="download-meter-label"><i />实时速度</span>
+                <b>{speed.value}</b><em>{speed.unit}</em>
+              </div>
             )}
           </div>
-        )}
+          <p className={`download-hero-desc ${failed ? "bad" : warning ? "warn" : ""}`} title={result}>{displayResult}</p>
+          <div className="download-hero-info">
+            <span>开始 <b>{dateTime(task.startedAt)}</b></span>
+            <span>峰值速度 <b>{rate(task.peakSpeed ?? 0)}</b></span>
+            {task.finishedAt ? <span>结束 <b>{dateTime(task.finishedAt)}</b></span> : null}
+          </div>
+        </div>
         {!running && (
           <span className="download-hero-watermark" aria-hidden="true">
-            {failed ? <X size={132} strokeWidth={1.4} /> : <Check size={144} strokeWidth={1.4} />}
+            {partial ? <AlertTriangle size={126} strokeWidth={1.4} /> : paused ? <Pause size={126} strokeWidth={1.4} /> : failed ? <X size={132} strokeWidth={1.4} /> : <Check size={144} strokeWidth={1.4} />}
           </span>
         )}
       </section>
@@ -370,14 +392,6 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
       </section>
       )}
 
-      <section className="panel">
-        <div className="panel-head">
-          <h3><ChartPie size={14} /> 速度曲线</h3>
-          <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
-        </div>
-        <TaskSpeedChart task={task} />
-      </section>
-
       {running && (
         <section className="panel">
           <div className="panel-head">
@@ -419,6 +433,14 @@ export function TaskDetailView({ task, onBack, toast }: { task: TaskDetail; onBa
           )}
         </section>
       )}
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3><ChartPie size={14} /> 速度曲线</h3>
+          <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
+        </div>
+        <TaskSpeedChart task={task} />
+      </section>
 
       <section className="panel">
         <div className="panel-head">
@@ -697,7 +719,7 @@ export function TasksPage({
                   >
                     <td className="task-col-state">
                       <span className={`task-state ${t.state}`}>
-                        {t.state === "running" ? <Loader2 size={12} className="spin" /> : t.state === "done" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                        {t.state === "running" ? <Loader2 size={12} className="spin" /> : t.state === "done" ? <CheckCircle2 size={12} /> : t.state === "partial" ? <AlertTriangle size={12} /> : t.state === "paused" ? <Pause size={12} /> : <XCircle size={12} />}
                         {statusLabel(t.state)}
                       </span>
                     </td>

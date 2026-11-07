@@ -49,6 +49,8 @@ type OperationDTO struct {
 type DoneDTO struct {
 	OpID     string `json:"opId"`
 	OK       bool   `json:"ok"`
+	Paused   bool   `json:"paused,omitempty"`
+	Partial  bool   `json:"partial,omitempty"`
 	Error    string `json:"error,omitempty"`
 	Stage    string `json:"stage,omitempty"`
 	Messages int    `json:"messages,omitempty"`
