@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,6 +181,97 @@ func (a *App) buildOfficialArchive(slug string) (*Archive, error) {
 		arc.Chat.Type = meta.Chat.Type
 	}
 	return arc, nil
+}
+
+// persistOfficialSource writes a normalized result.json for an official-only
+// workspace. Online updates then know the highest local message id and can
+// fetch only genuinely new messages instead of re-counting the whole history.
+func (a *App) persistOfficialSource(slug string, arc *Archive) error {
+	path := a.sourcePath(slug)
+	if fileExists(path) {
+		return nil
+	}
+	root := officialResultRoot(arc)
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func officialResultRoot(arc *Archive) map[string]any {
+	root := map[string]any{
+		"name":     arc.Chat.Name,
+		"type":     fallback(arc.Chat.Type, "official"),
+		"messages": []any{},
+	}
+	if arc.Chat.ID != "" {
+		root["id"] = arc.Chat.ID
+	}
+	arr := make([]any, 0, len(arc.Messages))
+	for _, m := range arc.Messages {
+		var id any = m.ID
+		if n, err := strconv.ParseInt(m.ID, 10, 64); err == nil {
+			id = n
+		}
+		date := m.Date
+		if date == "" && m.TS > 0 {
+			date = time.Unix(m.TS, 0).Local().Format("2006-01-02 15:04:05")
+		}
+		item := map[string]any{
+			"id":            id,
+			"type":          fallback(m.Type, "message"),
+			"date":          date,
+			"date_unixtime": strconv.FormatInt(m.TS, 10),
+			"from":          m.From,
+			"text":          m.Text,
+		}
+		if len(m.Media) > 0 {
+			first := m.Media[0]
+			switch first.Kind {
+			case "image":
+				item["media_type"] = "photo"
+				item["photo"] = first.Name
+			case "video":
+				item["media_type"] = "video_file"
+				item["file"] = first.Name
+			case "audio":
+				item["media_type"] = "audio_file"
+				item["file"] = first.Name
+			default:
+				item["media_type"] = "document"
+				item["file"] = first.Name
+			}
+			item["file_size"] = first.Size
+		}
+		arr = append(arr, item)
+	}
+	root["messages"] = arr
+	return root
+}
+
+func (a *App) ensureOfficialSource(slug string) (bool, error) {
+	if fileExists(a.sourcePath(slug)) || !a.hasOfficialExport(slug) {
+		return false, nil
+	}
+	arc, err := a.buildOfficialArchive(slug)
+	if err != nil {
+		return false, err
+	}
+	if err := a.persistOfficialSource(slug, arc); err != nil {
+		return false, err
+	}
+	if err := a.buildLibrary(); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func (a *App) managedOfficialRoot(slug, sourceName string) string {

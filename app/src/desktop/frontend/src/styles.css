@@ -655,6 +655,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .art-video-wrap.is-ready .art-player { opacity: 1; }
 .art-video-wrap:not(.controls-awake) .art-video-player .art-bottom { opacity: 0 !important; pointer-events: none !important; }
 .art-video-wrap.controls-awake .art-video-player .art-bottom { opacity: 1; }
+.art-video-wrap.is-switching .art-state { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
 .art-video-wrap {
   position: relative; width: 100%; height: 100%; display: grid; place-items: center;
   border-radius: 12px; overflow: hidden; background: #000;
@@ -1215,6 +1216,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .download-detail-head { align-items: center; }
 .download-hero {
   position: relative; overflow: hidden; display: flex; align-items: center; gap: 18px;
+  min-height: 156px;
   padding: 20px 22px; border: 1px solid var(--line); border-radius: 16px;
   box-shadow: var(--shadow-sm);
 }
@@ -1256,12 +1258,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 .download-hero-icon > * { position: relative; z-index: 1; }
 .download-hero-icon b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.download-hero-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.download-hero-main { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 9px; }
 .download-hero-title { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .download-hero-title h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .download-hero-chat { color: var(--muted); font-size: 12px; }
 .download-hero-desc {
-  margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55;
+  margin: 0; color: var(--muted); font-size: 12px; line-height: 23px; min-height: 23px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .download-hero-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin-top: 5px; max-width: 660px; }
@@ -2123,6 +2125,8 @@ html[data-theme="dark"] .chat-detail-tile { background: rgba(255, 255, 255, .05)
   color: var(--warn); font-size: 11.5px;
 }
 .online-banner span { flex: 1; min-width: 0; }
+.online-banner.ok { border-color: rgba(18, 162, 106, .28); background: rgba(18, 162, 106, .08); }
+.online-banner.ok svg { color: var(--ok); }
 .online-empty {
   display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 54px 20px;
   text-align: center; color: var(--muted);
@@ -2481,7 +2485,7 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 }
 .download-hero-desc.bad {
   white-space: normal; overflow: visible; text-overflow: clip;
-  line-height: 1.55; color: var(--danger);
+  line-height: 23px; color: var(--danger);
 }
 
 /* ===================== Compact task hero / pause states ===================== */
@@ -2491,7 +2495,7 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 .download-hero-title { gap: 9px; }
 .download-hero-title h2 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 760; letter-spacing: -.025em; }
 .download-hero-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.download-hero-configline { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.download-hero-configline { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-height: 23px; }
 .download-config-chip {
   display: inline-flex; align-items: baseline; gap: 3px; padding: 2px 8px;
   border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
@@ -2555,7 +2559,7 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 .download-live-speed .download-meter-label { font-size: 9.5px; }
 .download-live-speed b { color: var(--text); font-size: 22px; line-height: 1; font-weight: 760; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
 .download-live-speed em { color: var(--muted); font-size: 10px; font-style: normal; font-weight: 600; }
-.download-hero-info { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 3px; color: var(--faint); font-size: 10px; line-height: 1.5; }
+.download-hero-info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 16px; margin-top: 3px; color: var(--faint); font-size: 10px; line-height: 1.5; }
 .download-hero-info b { color: var(--muted); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .download-hero-info b.mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 9.5px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
 .download-hero.warning {
@@ -2567,7 +2571,7 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
   box-shadow: inset 0 0 0 1px rgba(201, 138, 29, .2), 0 6px 18px rgba(201, 138, 29, .08);
 }
 .tag.warn { border-color: rgba(201, 138, 29, .32); background: rgba(201, 138, 29, .1); color: var(--warn); }
-.download-hero-desc.warn { color: var(--warn); white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.55; }
+.download-hero-desc.warn { color: var(--warn); white-space: normal; overflow: visible; text-overflow: clip; line-height: 23px; }
 .task-state.partial, .task-state.paused { color: var(--warn); }
 .task-state.stopped { color: var(--muted); }
 @media (max-width: 900px) {
@@ -2613,17 +2617,27 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 .image-loading-guard .load-spinner { width: 38px; height: 38px; border-color: rgba(255, 255, 255, .34); border-top-color: #fff; }
 .viewer-fs-cover {
   position: fixed; inset: 0; z-index: 9999; overflow: hidden; pointer-events: all;
-  background: rgba(5, 8, 13, .985);
+  background: #070b13;
   opacity: 1;
   transition: opacity .2s ease;
 }
+.viewer-fs-backdrop {
+  position: fixed; inset: -52px; width: calc(100% + 104px); height: calc(100% + 104px);
+  z-index: 0; object-fit: cover;
+  filter: blur(38px) saturate(1.12) brightness(.72);
+  opacity: .82;
+  transform: scale(1.03);
+  pointer-events: none;
+}
 .viewer-fs-cover::before {
-  content: ""; position: absolute; inset: 0;
-  background: radial-gradient(46% 42% at 50% 50%, rgba(47, 107, 255, .1), transparent 70%);
+  content: ""; position: absolute; inset: 0; z-index: 1;
+  background:
+    radial-gradient(48% 44% at 50% 50%, rgba(47, 107, 255, .08), transparent 72%),
+    rgba(5, 8, 14, .42);
 }
 .viewer-fs-cover.settle { opacity: 0; }
 .viewer-fs-ghost {
-  position: fixed; z-index: 1; object-fit: contain;
+  position: fixed; z-index: 2; object-fit: contain;
   background: #05070b;
   box-shadow: 0 28px 90px rgba(0, 0, 0, .55);
   will-change: left, top, width, height;

@@ -767,8 +767,12 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 		arc, err = archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug))
 	} else if a.hasOfficialExport(slug) {
 		// Official HTML exports have no result.json. Parse their pages directly so
-		// thumbnails, search, date navigation and offline pages still work.
+		// thumbnails, search, date navigation and offline pages still work, then
+		// keep a normalized source so later online updates are incremental.
 		arc, err = a.buildOfficialArchive(slug)
+		if err == nil {
+			err = a.persistOfficialSource(slug, arc)
+		}
 	} else {
 		return nil, fmt.Errorf("找不到聊天源数据: %s", jsonPath)
 	}

@@ -1338,9 +1338,12 @@ const ArtVideo = forwardRef<VideoApi, {
     let revealed = false;
     let revealFrame = 0;
     let revealFallback = 0;
+    let switchFallback = 0;
     const finishReveal = () => {
       if (!revealed) return;
       window.clearTimeout(revealFallback);
+      window.clearTimeout(switchFallback);
+      wrap.current?.classList.remove("is-switching");
       hideControls();
       window.requestAnimationFrame(() => {
         hideControls();
@@ -1381,6 +1384,11 @@ const ArtVideo = forwardRef<VideoApi, {
     };
     const prepareSource = (nextSrc: string, nextPoster: string) => {
       resetReveal();
+      // switchUrl briefly parks the element in a paused state; hide ArtPlayer's
+      // center play/pause glyph until the new source actually starts playing.
+      wrap.current?.classList.add("is-switching");
+      window.clearTimeout(switchFallback);
+      switchFallback = window.setTimeout(() => wrap.current?.classList.remove("is-switching"), 3000);
       setReady(false);
       setShowBusy(false);
       setLoadPercent(0);
@@ -1507,6 +1515,8 @@ const ArtVideo = forwardRef<VideoApi, {
         audioCtx.current = null;
         gainNode.current = null;
       }
+      window.clearTimeout(switchFallback);
+      wrap.current?.classList.remove("is-switching");
       player.destroy(false);
       playerRef.current = null;
       switchSourceRef.current = null;
@@ -1581,18 +1591,47 @@ function nextPaint(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
-function waitForViewport(ms = 420): Promise<void> {
+function buildFullscreenCover(snapshot: string): Promise<string> {
+  if (!snapshot) return Promise.resolve("");
   return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      window.removeEventListener("resize", onResize);
-      resolve();
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const aspect = Math.max(0.5, Math.min(3, window.screen.width / Math.max(1, window.screen.height)));
+        const w = 960;
+        const h = Math.max(2, Math.round(w / aspect));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve("");
+          return;
+        }
+        ctx.fillStyle = "#070b13";
+        ctx.fillRect(0, 0, w, h);
+        const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+        const dw = img.naturalWidth * scale;
+        const dh = img.naturalHeight * scale;
+        ctx.save();
+        ctx.globalAlpha = 0.82;
+        ctx.filter = "blur(22px) saturate(1.12) brightness(.72)";
+        ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+        ctx.restore();
+        ctx.fillStyle = "rgba(5, 8, 14, 0.42)";
+        ctx.fillRect(0, 0, w, h);
+        const glow = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.48);
+        glow.addColorStop(0, "rgba(47, 107, 255, 0.08)");
+        glow.addColorStop(1, "rgba(47, 107, 255, 0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        resolve("");
+      }
     };
-    const onResize = () => window.setTimeout(finish, 80);
-    window.addEventListener("resize", onResize);
-    window.setTimeout(finish, ms);
+    img.onerror = () => resolve("");
+    img.src = snapshot;
   });
 }
 
@@ -1653,11 +1692,12 @@ function MediaViewer({
   immersiveRef.current = immersive;
   const [windowFs, setWindowFs] = useState(false);
   const windowFsRef = useRef(false);
-  windowFsRef.current = windowFs;
   const fsBusy = useRef(false);
   const [fsGhost, setFsGhost] = useState<FsGhost | null>(null);
+  const [fsShowGhost, setFsShowGhost] = useState(false);
   const [fsGhostLive, setFsGhostLive] = useState(false);
   const [fsFade, setFsFade] = useState(false);
+  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null } | null>(null);
 
   useEffect(() => {
     setImageReady(false);
@@ -1727,8 +1767,20 @@ function MediaViewer({
     setOffset({ x: 0, y: 0 });
   };
 
-  const applyWindowFullscreen = (on: boolean) => {
-    call("setWindowFullscreen", { fullscreen: on }).catch(() => undefined);
+  const applyWindowFullscreen = async (on: boolean, cover = "") => {
+    try {
+      await call("setWindowFullscreen", { fullscreen: on, cover });
+    } catch {
+      /* layout still settles; the cover is removed by the caller */
+    }
+  };
+
+  const hideFullscreenCover = async () => {
+    try {
+      await call("hideFullscreenCover");
+    } catch {
+      /* the native window hides it together with fullscreen exit */
+    }
   };
 
   const transitionFullscreen = async (enter: boolean, hideChrome = false) => {
@@ -1740,31 +1792,104 @@ function MediaViewer({
     const measured = modalEl ? mediaBox(modalEl, isVideo) : null;
     const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, poster) : "";
     const ratio = measured ? measured.width / measured.height : 16 / 9;
-    // Even when the media has not painted yet, an opaque cover must hide the
-    // window resize. The dark fallback is removed after the same short beat.
-    const from = measured || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-    setFsGhost({ src: snapshot, from, to: from, radius: isVideo ? 10 : 12 });
+    const radius = isVideo ? 10 : 12;
+    const full = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    // A blurred copy of the current frame acts as the cover. It is the only
+    // thing visible while the native window grows; the sharp media appears
+    // afterwards, already centered, and scales up from there.
+    setFsGhost({ src: snapshot, from: measured || full, to: measured || full, radius });
+    setFsShowGhost(false);
     setFsGhostLive(false);
     setFsFade(false);
     await nextPaint();
-    windowFsRef.current = enter;
-    setWindowFs(enter);
+
     if (enter) {
+      fsReturn.current = {
+        windowX: window.screenX,
+        windowY: window.screenY,
+        screenX: window.screenX,
+        screenY: window.screenY,
+        rect: measured,
+      };
+      windowFsRef.current = true;
+      const nativeCover = measured && snapshot ? await buildFullscreenCover(snapshot) : "";
+      const resizeAt = performance.now();
+      await applyWindowFullscreen(true, nativeCover);
+      await nextPaint();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 70));
+      if (fsReturn.current) {
+        fsReturn.current.screenX = window.screenX;
+        fsReturn.current.screenY = window.screenY;
+      }
+      // Switch the viewer to its fullscreen layout only after the native window
+      // and the cover-owned frame have settled: doing React layout work in the
+      // resize turn makes WebView2 present the old surface for longer, which is
+      // the top-left flash this transition exists to hide.
+      setWindowFs(true);
       if (hideChrome) setImmersive(true);
-      applyWindowFullscreen(true);
+      await nextPaint();
+      const target = mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
+      if (measured && snapshot) {
+        const start = {
+          left: (window.innerWidth - measured.width) / 2,
+          top: (window.innerHeight - measured.height) / 2,
+          width: measured.width,
+          height: measured.height,
+        };
+        setFsGhost({ src: snapshot, from: start, to: start, radius });
+        // WebView2 presents the old-size surface for ~200ms after the native
+        // resize. The native cover owns the screen during that window; hiding it
+        // before the first resized frame would bring the top-left strip back.
+        const hold = 300 - (performance.now() - resizeAt);
+        if (nativeCover && hold > 0) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, hold));
+        }
+        if (nativeCover) await hideFullscreenCover();
+        setFsShowGhost(true);
+        await nextPaint();
+        setFsGhost((ghost) => (ghost ? { ...ghost, to: target } : ghost));
+        setFsGhostLive(true);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 280));
+      } else {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      }
+      setFsFade(true);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      if (nativeCover) await hideFullscreenCover();
     } else {
+      await hideFullscreenCover();
+      const ret = fsReturn.current;
+      setFsShowGhost(Boolean(measured && snapshot));
+      await nextPaint();
+      if (measured && snapshot && ret?.rect) {
+        const target = {
+          left: ret.windowX - ret.screenX + ret.rect.left,
+          top: ret.windowY - ret.screenY + ret.rect.top,
+          width: ret.rect.width,
+          height: ret.rect.height,
+        };
+        setFsGhost({ src: snapshot, from: measured, to: target, radius });
+        setFsGhostLive(true);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 280));
+      } else {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      }
+      // The shrunk frame is already sitting where the window will reappear.
+      // Hide it before the viewport changes; the blurred cover finishes the
+      // hand-off and avoids clipping the full-size image to the smaller window.
+      setFsShowGhost(false);
+      windowFsRef.current = false;
+      await applyWindowFullscreen(false);
+      await nextPaint();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 60));
+      setWindowFs(false);
       if (hideChrome) setImmersive(false);
-      applyWindowFullscreen(false);
+      await nextPaint();
+      setFsFade(true);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
     }
-    await waitForViewport();
-    await nextPaint();
-    const to = mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
-    setFsGhost((ghost) => (ghost ? { ...ghost, to } : ghost));
-    setFsGhostLive(true);
-    await new Promise<void>((resolve) => window.setTimeout(resolve, measured ? 300 : 160));
-    setFsFade(true);
-    await new Promise<void>((resolve) => window.setTimeout(resolve, measured ? 220 : 140));
     setFsGhost(null);
+    setFsShowGhost(false);
     setFsGhostLive(false);
     setFsFade(false);
     fsBusy.current = false;
@@ -1794,7 +1919,7 @@ function MediaViewer({
     if (windowFsRef.current) {
       windowFsRef.current = false;
       setWindowFs(false);
-      applyWindowFullscreen(false);
+      void applyWindowFullscreen(false);
     }
     onClose();
   };
@@ -1802,7 +1927,7 @@ function MediaViewer({
   useEffect(() => () => {
     if (windowFsRef.current) {
       windowFsRef.current = false;
-      applyWindowFullscreen(false);
+      void applyWindowFullscreen(false);
     }
   }, []);
 
@@ -1963,6 +2088,11 @@ function MediaViewer({
       {fsGhost && (
         <div className={`viewer-fs-cover ${fsFade ? "settle" : ""}`} aria-hidden="true">
           {fsGhost.src ? (
+            <img className="viewer-fs-backdrop" src={fsGhost.src} alt="" draggable={false} />
+          ) : (
+            <span className="viewer-fs-empty" />
+          )}
+          {fsShowGhost && fsGhost.src && (
             <img
               className={`viewer-fs-ghost ${fsGhostLive ? "live" : ""}`}
               src={fsGhost.src}
@@ -1976,8 +2106,6 @@ function MediaViewer({
                 borderRadius: `${fsGhost.radius}px`,
               }}
             />
-          ) : (
-            <span className="viewer-fs-empty" />
           )}
         </div>
       )}

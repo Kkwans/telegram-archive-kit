@@ -784,9 +784,30 @@ type localOnlineArchive struct {
 }
 
 func (b *Bridge) localOnlineArchive(chat OnlineChat) localOnlineArchive {
-	idText := strconv.FormatInt(chat.ID, 10)
+	return b.localWorkspaceByID(strconv.FormatInt(chat.ID, 10))
+}
+
+func (b *Bridge) localWorkspaceByID(id string) localOnlineArchive {
+	if id == "" {
+		return localOnlineArchive{}
+	}
 	for _, c := range b.facade.ListChats() {
-		if c.ID == idText {
+		if c.ID == id {
+			return localOnlineArchive{
+				slug: c.Slug, dir: c.Dir, existed: true,
+				messages: c.Messages, media: c.Media, updatedAt: c.UpdatedAt,
+			}
+		}
+	}
+	return localOnlineArchive{}
+}
+
+func (b *Bridge) localWorkspaceBySlug(slug string) localOnlineArchive {
+	if slug == "" {
+		return localOnlineArchive{}
+	}
+	for _, c := range b.facade.ListChats() {
+		if c.Slug == slug {
 			return localOnlineArchive{
 				slug: c.Slug, dir: c.Dir, existed: true,
 				messages: c.Messages, media: c.Media, updatedAt: c.UpdatedAt,
@@ -985,9 +1006,16 @@ func onlineStats(messages []map[string]any) (service, images, videos, audio, fil
 
 // OnlineExportPreview counts what an archive run would add and keeps the
 // fetched messages so confirmation does not read the same history twice.
-func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int) (OnlineExportPreview, error) {
+func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetSlug string) (OnlineExportPreview, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
+	if targetSlug != "" {
+		// Official-only workspaces gain a normalized source on first preview so the
+		// local message ceiling is known before walking Telegram history.
+		if err := b.facade.EnsureOfficialSource(targetSlug); err != nil {
+			return OnlineExportPreview{}, err
+		}
+	}
 	exportTimeout := time.Duration(timeout) * time.Second
 	if exportTimeout <= 0 {
 		exportTimeout = 180 * time.Second
@@ -1011,6 +1039,9 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int) (Online
 		return OnlineExportPreview{}, err
 	}
 	local := b.localOnlineArchive(chat)
+	if targetSlug != "" && !local.existed {
+		local = b.localWorkspaceBySlug(targetSlug)
+	}
 	minID := 0
 	if local.existed && local.dir != "" {
 		minID = localMaxMessageID(local.dir)
@@ -1101,9 +1132,12 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token, targetS
 	}
 	idText := strconv.FormatInt(chat.ID, 10)
 	if targetSlug != "" {
-		// Official ChatExports have no id. Persist the resolved Telegram identity
-		// first so ImportJSONFiles merges the new history into that workspace by
-		// strong id instead of creating a duplicate chat.
+		// Official ChatExports have no id. Persist a normalized source and the
+		// resolved Telegram identity first so ImportJSONFiles merges only the new
+		// history into that workspace by strong id instead of creating a duplicate.
+		if err := b.facade.EnsureOfficialSource(targetSlug); err != nil {
+			return OnlineExportResult{}, err
+		}
 		if err := b.facade.BindChatIdentity(targetSlug, idText, chat.Name, desktopChatType(chat)); err != nil {
 			return OnlineExportResult{}, err
 		}

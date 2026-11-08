@@ -71,8 +71,17 @@ func TestOfficialOnlyWorkspaceBuildsPagesWithoutResultJSON(t *testing.T) {
 	if arc.Stats.Messages != 1 || arc.Stats.MediaFiles != 1 || arc.Messages[0].Text != "hello" {
 		t.Fatalf("archive = %+v", arc.Stats)
 	}
-	if fileExists(a.sourcePath(slug)) {
-		t.Fatal("source/result.json should stay absent")
+	if !fileExists(a.sourcePath(slug)) {
+		t.Fatal("official build should persist a normalized source/result.json")
+	}
+	source, err := os.ReadFile(a.sourcePath(slug))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{`"id": 7`, `"date_unixtime"`, `"media_type": "photo"`, `"photo": "photo.jpg"`} {
+		if !strings.Contains(string(source), needle) {
+			t.Fatalf("normalized source missing %s: %s", needle, string(source))
+		}
 	}
 	for _, rel := range []string{"data/archive-data.js", "data/search-index.js", "data/date-index.js", "messages.html", "archive-report.json"} {
 		if !fileExists(filepath.Join(ws, filepath.FromSlash(rel))) {

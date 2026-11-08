@@ -39,6 +39,21 @@ type Bridge struct {
 	previewMu       sync.Mutex
 	previewProgress OnlineExportProgress
 	previewCancel   context.CancelFunc
+
+	fsWindow fsWindowState
+}
+
+// fsWindowState is a screen-covering window placement used instead of Wails'
+// fullscreen style switch. SetWindowPos resizes the WebView2 child in the same
+// message turn, while the fullscreen style change leaves unpainted pixels for
+// several frames on this WebView2 build.
+type fsWindowState struct {
+	Active    bool
+	X, Y      int
+	Width     int
+	Height    int
+	Maximised bool
+	AlwaysTop bool
 }
 
 // SessionCheckReply adds the live Telegram profile to the existing check result.
@@ -215,6 +230,7 @@ type apiParams struct {
 	Width               int                 `json:"width"`
 	Height              int                 `json:"height"`
 	Fullscreen          bool                `json:"fullscreen"`
+	Cover               string              `json:"cover"`
 	Concurrent          int                 `json:"concurrent"`
 	Threads             int                 `json:"threads"`
 	StallTimeoutSeconds int                 `json:"stallTimeoutSeconds"`
@@ -426,14 +442,12 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		if b.window == nil {
 			return nil, errors.New("窗口尚未初始化")
 		}
-		if p.Fullscreen {
-			b.window.Fullscreen()
-		} else {
-			b.window.UnFullscreen()
-		}
-		return map[string]bool{"fullscreen": p.Fullscreen}, nil
+		return map[string]bool{"fullscreen": b.setScreenFullscreen(p.Fullscreen, p.Cover)}, nil
+	case "hideFullscreenCover":
+		hideFsCover()
+		return nil, nil
 	case "windowFullscreenState":
-		return map[string]bool{"fullscreen": b.window != nil && b.window.IsFullscreen()}, nil
+		return map[string]bool{"fullscreen": b.fsWindow.Active}, nil
 	case "onlineChats":
 		return b.OnlineChats(p.Timeout)
 	case "onlineChatsCached":
@@ -443,7 +457,7 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "onlineAvatars":
 		return b.OnlineAvatars(p.Peers, p.Timeout)
 	case "onlineExportPreview":
-		return b.OnlineExportPreview(p.Peer, p.Timeout, p.Limit)
+		return b.OnlineExportPreview(p.Peer, p.Timeout, p.Limit, p.Slug)
 	case "onlineExportPreviewProgress":
 		return b.OnlineExportPreviewProgress(), nil
 	case "onlineExportPreviewCancel":
@@ -629,6 +643,62 @@ func (b *Bridge) showWindow() {
 // window; an unowned dialog still comes to the foreground when shown.
 func (b *Bridge) owner() uintptr {
 	return 0
+}
+
+// setScreenFullscreen covers the primary monitor with a normal borderless
+// window instead of toggling WS_POPUP fullscreen. The latter exposes several
+// frames of the old WebView2 surface (white/unpainted) before Chromium commits
+// the enlarged frame. A regular SetWindowPos resize keeps the child and page
+// geometry in the same WM_SIZE turn.
+func (b *Bridge) setScreenFullscreen(on bool, cover string) bool {
+	if on {
+		if b.fsWindow.Active {
+			return true
+		}
+		x, y := b.window.Position()
+		w, h := b.window.Size()
+		b.fsWindow = fsWindowState{
+			Active: true, X: x, Y: y, Width: w, Height: h,
+			Maximised: b.window.IsMaximised(),
+		}
+		screen := application.Get().Screen.GetPrimary()
+		if screen == nil {
+			b.fsWindow.Active = false
+			return false
+		}
+		if b.fsWindow.Maximised {
+			// A maximized window ignores move/resize; reset to normal first.
+			b.window.UnMaximise()
+		}
+		r1, r2 := applyDarkWindowFrame(b.window.NativeWindow())
+		if r1 != 0 && r2 != 0 {
+			log.Printf("dark window frame failed: hr20=%#x hr19=%#x", r1, r2)
+		}
+		b.window.SetAlwaysOnTop(true)
+		// The cover must be above the (now topmost) main window, and it must be
+		// visible before SetWindowPos grows the window: WebView2 presents the old
+		// surface for a few frames and the exposed strip would otherwise show the
+		// Mica base colour.
+		if cover != "" {
+			showFsCover(cover)
+		}
+		b.window.SetPosition(screen.Bounds.X, screen.Bounds.Y)
+		b.window.SetSize(screen.Bounds.Width, screen.Bounds.Height)
+		return true
+	}
+	if !b.fsWindow.Active {
+		return false
+	}
+	hideFsCover()
+	state := b.fsWindow
+	b.fsWindow.Active = false
+	b.window.SetAlwaysOnTop(state.AlwaysTop)
+	b.window.SetPosition(state.X, state.Y)
+	b.window.SetSize(state.Width, state.Height)
+	if state.Maximised {
+		b.window.Maximise()
+	}
+	return true
 }
 
 func (b *Bridge) closeWindow() {

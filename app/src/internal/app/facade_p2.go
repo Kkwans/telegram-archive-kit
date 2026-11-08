@@ -214,6 +214,11 @@ func (f *Facade) importOfficial(folder, slug, mode string, progress func(Operati
 	return ChatDTO{}, nil
 }
 
+func (f *Facade) EnsureOfficialSource(slug string) error {
+	_, err := f.a.ensureOfficialSource(slug)
+	return err
+}
+
 // BindChatIdentity attaches the live Telegram id/name to an official-imported
 // workspace before an online export, so the new result.json merges into it
 // instead of creating a duplicate chat.

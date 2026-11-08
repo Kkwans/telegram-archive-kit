@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
+  CheckCircle2,
   CloudDownload,
   FileText,
   HardDrive,
@@ -69,6 +70,7 @@ export function OnlineUpdateDialog({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [previewProgress, setPreviewProgress] = useState<OnlineExportProgress | null>(null);
+  const [upToDate, setUpToDate] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [floodUntil, setFloodUntil] = useState(0);
@@ -137,18 +139,20 @@ export function OnlineUpdateDialog({
     const id = ++seq.current;
     setPreview(null);
     setPreviewError("");
+    setUpToDate(false);
     setPreviewProgress({ active: true, stage: "准备统计", detail: "正在连接 Telegram", percent: 1, messages: 0, media: 0 });
     setPreviewLoading(true);
     loadingRef.current = true;
     try {
-      const res = await call<OnlineExportPreview>("onlineExportPreview", { peer: target.peer, timeout: 300 });
+      const res = await call<OnlineExportPreview>("onlineExportPreview", { peer: target.peer, timeout: 300, slug: target.slug || "" });
       if (id !== seq.current) {
         if (res.token) void call("onlineExportDiscard", { token: res.token }).catch(() => undefined);
         return;
       }
       if (res.upToDate) {
-        close();
-        toast("已是最新，没有需要归档的新消息");
+        // Keep the dialog open: a silently disappearing window looks like a crash.
+        setPreview(res);
+        setUpToDate(true);
         return;
       }
       token.current = res.token || "";
@@ -201,8 +205,8 @@ export function OnlineUpdateDialog({
     try {
       const res = await call<OnlineExportResult>("onlineExport", { peer: preview.peer, timeout: 300, token: preview.token || "", slug: target.slug || "" });
       if (res.upToDate) {
-        close();
-        toast("已是最新，没有需要归档的新消息");
+        setUpToDate(true);
+        setPreview((current) => current ? { ...current, messages: 0, media: 0, bytes: 0 } : current);
         return;
       }
       token.current = "";
@@ -262,6 +266,14 @@ export function OnlineUpdateDialog({
                   <span>发现 <b>{(previewProgress?.media ?? 0).toLocaleString()}</b> 个媒体</span>
                 </div>
               </div>
+            ) : upToDate ? (
+              <div className="online-banner ok" role="status">
+                <CheckCircle2 size={15} />
+                <span>
+                  已是最新，没有新消息需要归档。本地已有 {(preview?.localMessages ?? 0).toLocaleString()} 条消息、
+                  {(preview?.localMedia ?? 0).toLocaleString()} 个媒体；窗口会保留，可直接关闭。
+                </span>
+              </div>
             ) : preview ? (
               <>
                 <div className="export-preview-lead">
@@ -313,9 +325,9 @@ export function OnlineUpdateDialog({
 
             <div className="modal-actions">
               <button className="btn ghost" disabled={exporting} onClick={requestClose}>
-                {preview ? "取消" : "关闭"}
+                {preview && !upToDate ? "取消" : "关闭"}
               </button>
-              {preview ? (
+              {preview && !upToDate ? (
                 <button className="btn primary" disabled={exporting || floodLeft > 0} onClick={() => void runExport()}>
                   {exporting ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />}
                   {exporting ? "正在归档…" : floodLeft > 0 ? `等待 ${floodLeft} 秒` : "开始归档"}
