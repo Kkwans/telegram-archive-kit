@@ -59,25 +59,26 @@ var (
 )
 
 const (
-	wsPopup        = 0x80000000
-	wsExTopmost    = 0x00000008
-	wsExToolWindow = 0x00000080
-	wsExLayered    = 0x00080000
-	wsExNoActivate = 0x08000000
-	swpNoActivate  = 0x0010
-	swpShowWindow  = 0x0040
-	swpNoMove      = 0x0002
-	swpNoSize      = 0x0001
-	hwndTopmost    = ^uintptr(0) // -1
-	swHide         = 0
-	wmPaint        = 0x000F
-	wmEraseBkgnd   = 0x0014
-	halftone       = 4
-	srcCopy        = 0x00CC0020
-	biRGB          = 0
-	dibRGBColors   = 0
-	lwaAlpha       = 0x00000002
-	coverClassName = "TAKFullscreenCover"
+	wsPopup          = 0x80000000
+	wsExTopmost      = 0x00000008
+	wsExToolWindow   = 0x00000080
+	wsExLayered      = 0x00080000
+	wsExNoActivate   = 0x08000000
+	swpNoActivate    = 0x0010
+	swpShowWindow    = 0x0040
+	swpNoMove        = 0x0002
+	swpNoSize        = 0x0001
+	hwndTopmost      = ^uintptr(0) // -1
+	swHide           = 0
+	swShowNoActivate = 8
+	wmPaint          = 0x000F
+	wmEraseBkgnd     = 0x0014
+	halftone         = 4
+	srcCopy          = 0x00CC0020
+	biRGB            = 0
+	dibRGBColors     = 0
+	lwaAlpha         = 0x00000002
+	coverClassName   = "TAKFullscreenCover"
 )
 
 type winRect struct {
@@ -449,7 +450,9 @@ func startCoverTicker(hwnd uintptr, gen int64, duration time.Duration) {
 				return
 			}
 			application.InvokeSync(paintCover)
-			time.Sleep(15 * time.Millisecond)
+			// Sample faster than the display refresh so every composited frame
+			// gets a fresh position; 15ms beat against 16.7ms vsync and juddered.
+			time.Sleep(8 * time.Millisecond)
 		}
 		application.InvokeSync(paintCover)
 	}()
@@ -478,10 +481,14 @@ func showFsCoverAnimated(coverURL, sharpURL string, from, to []int, radius, dura
 	application.InvokeSync(func() {
 		setCoverBitmap(bw, bh, bpix)
 		setSharpBitmap(sw, sh, spix)
-		hwnd := showCoverWindow()
+		hwnd := ensureCoverWindow()
 		if hwnd == 0 {
 			return
 		}
+		hideCoverWindow(hwnd)
+		coverAlpha.Store(255)
+		coverVisible.Store(true)
+		placeCoverWindow(hwnd, false)
 		scale := coverDPIScale(hwnd)
 		cfrom := coverRectFromCSS(from, scale)
 		cto := coverRectFromCSS(to, scale)
@@ -493,6 +500,7 @@ func showFsCoverAnimated(coverURL, sharpURL string, from, to []int, radius, dura
 		coverAnimating = durationMS > 0 && cto.valid()
 		coverMu.Unlock()
 		paintCover()
+		procShowWindow.Call(hwnd, swShowNoActivate)
 		if durationMS > 0 {
 			startCoverTicker(hwnd, coverAnimGen.Load(), coverAnimDur)
 		}
@@ -540,14 +548,14 @@ func raiseFsCover() {
 	})
 }
 
-func showCoverWindow() uintptr {
-	hwnd := ensureCoverWindow()
-	if hwnd == 0 {
-		return 0
-	}
+// placeCoverWindow positions and sizes the cover to the primary monitor. The
+// caller paints the fresh frame before showing it: a layered window keeps its
+// last surface while hidden, and showing it first would flash the previous
+// video's cover for a frame when entering fullscreen on a new item.
+func placeCoverWindow(hwnd uintptr, show bool) {
 	screen := application.Get().Screen.GetPrimary()
 	if screen == nil {
-		return 0
+		return
 	}
 	dpi, _, _ := procGetDpiForWindow.Call(hwnd)
 	if dpi == 0 {
@@ -558,10 +566,17 @@ func showCoverWindow() uintptr {
 	y := int32(math.Round(float64(screen.Bounds.Y) * scale))
 	w := int32(math.Round(float64(screen.Bounds.Width) * scale))
 	h := int32(math.Round(float64(screen.Bounds.Height) * scale))
+	flags := uintptr(swpNoActivate)
+	if show {
+		flags |= swpShowWindow
+	}
+	procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(w), uintptr(h), flags)
+}
+
+func hideCoverWindow(hwnd uintptr) {
+	procShowWindow.Call(hwnd, swHide)
+	coverVisible.Store(false)
 	coverAlpha.Store(255)
-	procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoActivate|swpShowWindow)
-	coverVisible.Store(true)
-	return hwnd
 }
 
 // showFsCover paints dataURL over the primary monitor before the window is
@@ -578,8 +593,16 @@ func showFsCover(dataURL string) bool {
 	coverFade.Add(1) // cancel a fade that may still be running
 	application.InvokeSync(func() {
 		setCoverBitmap(w, h, pix)
-		showCoverWindow()
+		hwnd := ensureCoverWindow()
+		if hwnd == 0 {
+			return
+		}
+		hideCoverWindow(hwnd)
+		coverAlpha.Store(255)
+		coverVisible.Store(true)
+		placeCoverWindow(hwnd, false)
 		paintCover()
+		procShowWindow.Call(hwnd, swShowNoActivate)
 	})
 	return true
 }
@@ -600,9 +623,7 @@ func hideFsCover(fadeMs int) {
 	if fadeMs <= 0 {
 		application.InvokeSync(func() {
 			if coverHWND == hwnd {
-				procShowWindow.Call(hwnd, swHide)
-				coverAlpha.Store(255)
-				coverVisible.Store(false)
+				hideCoverWindow(hwnd)
 			}
 		})
 		return
@@ -630,9 +651,7 @@ func hideFsCover(fadeMs int) {
 			if coverHWND != hwnd {
 				return
 			}
-			procShowWindow.Call(hwnd, swHide)
-			coverAlpha.Store(255)
-			coverVisible.Store(false)
+			hideCoverWindow(hwnd)
 		})
 	}()
 }
