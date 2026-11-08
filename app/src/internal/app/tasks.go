@@ -28,6 +28,10 @@ type TaskDTO struct {
 	Target              string  `json:"target,omitempty"`
 	Messages            int     `json:"messages,omitempty"`
 	Media               int     `json:"media,omitempty"`
+	Images              int     `json:"images,omitempty"`
+	Videos              int     `json:"videos,omitempty"`
+	Audio               int     `json:"audio,omitempty"`
+	Files               int     `json:"files,omitempty"`
 	FilesDone           int     `json:"filesDone,omitempty"`
 	FilesTotal          int     `json:"filesTotal,omitempty"`
 	Detail              string  `json:"detail,omitempty"`
@@ -130,6 +134,23 @@ func (t *backgroundTask) setStats(messages, media int) {
 	}
 	if media > 0 {
 		t.dto.Media = media
+	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setMediaStats(images, videos, audio, files int) {
+	t.mu.Lock()
+	if images > 0 {
+		t.dto.Images = images
+	}
+	if videos > 0 {
+		t.dto.Videos = videos
+	}
+	if audio > 0 {
+		t.dto.Audio = audio
+	}
+	if files > 0 {
+		t.dto.Files = files
 	}
 	t.mu.Unlock()
 }
@@ -481,6 +502,53 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 				d.Percent = int(pct + 0.5)
 			}
 		}
+		// Task records written by older builds do not carry the type-specific
+		// metadata. Recover it from the workspace on demand so the detail view
+		// still shows chat id, counts and media composition.
+		if d.Kind != "sync" && d.Kind != "sync-all" &&
+			(d.ChatID == "" || d.Messages == 0 || d.Media == 0 || d.Images+d.Videos+d.Audio+d.Files == 0 ||
+				(d.TotalBytes == 0 && (d.Kind == "import-official" || d.Kind == "export"))) {
+			if meta, ok := f.a.workspaceMetaForTask(d.Slug, d.Chat); ok {
+				if d.Slug == "" {
+					d.Slug = meta.Slug
+				}
+				if d.Chat == "" {
+					d.Chat = meta.Chat.Name
+				}
+				if d.ChatID == "" {
+					d.ChatID = meta.Chat.ID
+				}
+				if d.Messages == 0 {
+					d.Messages = meta.MessageCount
+				}
+				if d.Media == 0 {
+					d.Media = meta.MediaCount
+				}
+				img, vid, aud, fl := f.a.workspaceReportStats(meta.Slug)
+				if d.Images == 0 {
+					d.Images = img
+				}
+				if d.Videos == 0 {
+					d.Videos = vid
+				}
+				if d.Audio == 0 {
+					d.Audio = aud
+				}
+				if d.Files == 0 {
+					d.Files = fl
+				}
+				if d.TotalBytes == 0 && (d.Kind == "import-official" || d.Kind == "export") {
+					d.TotalBytes = f.a.workspaceSize(meta.Slug)
+				}
+				if d.Source == "" && d.Kind == "import-official" && len(meta.OfficialExports) > 0 {
+					root := filepath.FromSlash(meta.OfficialExports[0].Root)
+					if !filepath.IsAbs(root) {
+						root = filepath.Join(f.a.workspaceDir(meta.Slug), root)
+					}
+					d.Source = root
+				}
+			}
+		}
 		if d.Concurrent <= 0 {
 			d.Concurrent = f.a.Settings.Concurrent
 		}
@@ -705,10 +773,18 @@ func (f *Facade) StartImportOfficial(folder, slug, mode string) (string, error) 
 		if name := strings.TrimSpace(filepath.Base(folder)); name != "" && name != "." {
 			t.setChat(name)
 		}
+		if slug != "" {
+			t.setSlug(slug)
+			if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
+				t.setChat(meta.Chat.Name)
+				t.setInfo(meta.Chat.ID, mode, folder, "", meta.MessageCount, meta.MediaCount)
+			}
+		}
 		t.update(5, "分析导出目录")
 		chat, err := f.importOfficial(folder, slug, mode, func(meta archive.OfficialExportMeta) {
 			t.setChat(meta.Name)
 			t.setInfo("", mode, folder, "", meta.MessageCount, meta.MediaFiles)
+			t.setMediaStats(meta.Images, meta.Videos, meta.Audio, meta.Files)
 			t.setTotalBytes(meta.TotalBytes)
 			t.update(10, fmt.Sprintf("统计完成 · %s · %d 条消息 · %d 个媒体", humanBytes(meta.TotalBytes), meta.MessageCount, meta.MediaFiles))
 		}, func(p OperationProgress) {
@@ -736,10 +812,52 @@ func (f *Facade) StartImportOfficial(folder, slug, mode string) (string, error) 
 			return err
 		}
 		t.setChat(chat.Name)
+		t.setSlug(chat.Slug)
 		t.setInfo(chat.ID, mode, folder, "", chat.Messages, chat.Media)
+		if img, vid, aud, fl := f.a.workspaceReportStats(chat.Slug); img+vid+aud+fl > 0 {
+			t.setMediaStats(img, vid, aud, fl)
+		}
 		t.update(100, "已登记："+chat.Name)
 		return nil
 	}), nil
+}
+
+// workspaceReportStats reads the media breakdown written by the last build.
+func (a *App) workspaceReportStats(slug string) (images, videos, audio, files int) {
+	b, err := os.ReadFile(filepath.Join(a.workspaceDir(slug), "archive-report.json"))
+	if err != nil {
+		return 0, 0, 0, 0
+	}
+	var report struct {
+		Stats struct {
+			Images int `json:"images"`
+			Videos int `json:"videos"`
+			Audio  int `json:"audio"`
+			Files  int `json:"files"`
+		} `json:"stats"`
+	}
+	if json.Unmarshal(b, &report) != nil {
+		return 0, 0, 0, 0
+	}
+	return report.Stats.Images, report.Stats.Videos, report.Stats.Audio, report.Stats.Files
+}
+
+func (a *App) workspaceMetaForTask(slug, chat string) (WorkspaceMeta, bool) {
+	if slug != "" {
+		if meta, err := a.readWorkspaceMeta(slug); err == nil {
+			return meta, true
+		}
+	}
+	name := strings.TrimSpace(chat)
+	if name == "" {
+		return WorkspaceMeta{}, false
+	}
+	for _, meta := range a.listWorkspaces() {
+		if strings.EqualFold(strings.TrimSpace(meta.Chat.Name), name) {
+			return meta, true
+		}
+	}
+	return WorkspaceMeta{}, false
 }
 
 // workspaceSize sums the files an export would copy. Directory entries are
@@ -778,6 +896,9 @@ func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
 		t.setChat(name)
 		t.setTitle("导出聊天：" + name)
 		t.setInfo(chatID, "", f.a.Settings.LibraryRoot, dstRoot, messages, media)
+		if img, vid, aud, fl := f.a.workspaceReportStats(slug); img+vid+aud+fl > 0 {
+			t.setMediaStats(img, vid, aud, fl)
+		}
 		t.update(5, "统计聊天数据")
 		if total := f.a.workspaceSize(slug); total > 0 {
 			t.setTotalBytes(total)
@@ -805,6 +926,9 @@ func (f *Facade) StartRefreshWeb(slug string) (string, error) {
 		t.setChat(name)
 		t.setTitle("重建网页：" + name)
 		t.setInfo(chatID, "", f.a.workspaceDir(slug), "", messages, media)
+		if img, vid, aud, fl := f.a.workspaceReportStats(slug); img+vid+aud+fl > 0 {
+			t.setMediaStats(img, vid, aud, fl)
+		}
 		t.update(30, "扫描与渲染")
 		if err := f.RefreshWeb(slug); err != nil {
 			return err

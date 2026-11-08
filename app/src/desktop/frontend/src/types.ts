@@ -239,6 +239,10 @@ export interface TaskInfo {
   target?: string;
   messages?: number;
   media?: number;
+  images?: number;
+  videos?: number;
+  audio?: number;
+  files?: number;
   filesDone?: number;
   filesTotal?: number;
   detail?: string;

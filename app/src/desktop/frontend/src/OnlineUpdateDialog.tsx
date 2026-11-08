@@ -268,14 +268,14 @@ export function OnlineUpdateDialog({
               </div>
             ) : upToDate ? (
               <div className="online-banner ok" role="status">
-                <CheckCircle2 size={16} />
-                <div className="online-banner-text">
+                <div className="online-banner-title">
+                  <CheckCircle2 size={15} />
                   <b>已是最新</b>
-                  <span>
-                    没有需要归档的新消息。本地已有 {(preview?.localMessages ?? 0).toLocaleString()} 条消息、
-                    {(preview?.localMedia ?? 0).toLocaleString()} 个媒体。
-                  </span>
                 </div>
+                <span>
+                  没有需要归档的新消息。本地已有 {(preview?.localMessages ?? 0).toLocaleString()} 条消息、
+                  {(preview?.localMedia ?? 0).toLocaleString()} 个媒体。
+                </span>
               </div>
             ) : preview ? (
               <>

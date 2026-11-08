@@ -106,47 +106,64 @@ function wrapPath(value: string): ReactNode[] {
   return nodes;
 }
 
-function taskInfoRows(task: TaskDetail): Array<{ label: string; value: string; mono?: boolean }> {
-  const rows: Array<{ label: string; value: string; mono?: boolean }> = [];
-  const add = (label: string, value: string, mono = false) => {
-    if (value && value !== "--") rows.push({ label, value, mono });
+interface TaskInfoCard {
+  label: string;
+  value: string;
+  mono?: boolean;
+  wide?: boolean;
+}
+
+function taskInfoCards(task: TaskDetail): TaskInfoCard[] {
+  const cards: TaskInfoCard[] = [];
+  const add = (label: string, value: string, opts: { mono?: boolean; wide?: boolean } = {}) => {
+    if (value && value !== "--") cards.push({ label, value, ...opts });
   };
-  const counts = () => {
-    if (task.messages) add("消息", `${task.messages.toLocaleString()} 条`);
-    if (task.media) add("媒体", `${task.media.toLocaleString()} 个`);
-  };
+  const content = [task.messages ? `${task.messages.toLocaleString()} 条消息` : "", task.media ? `${task.media.toLocaleString()} 个媒体` : ""].filter(Boolean).join(" · ");
   if (task.kind === "import-official") {
     add("导入方式", modeLabel(task.mode));
-    add("聊天", task.chat || "");
-    add("Chat ID", task.chatId || "在线更新时识别");
-    counts();
     if (task.totalBytes) add("数据大小", bytes(task.totalBytes));
-    if (task.filesTotal) add("复制文件", `${(task.filesDone ?? 0).toLocaleString()} / ${task.filesTotal.toLocaleString()}`);
-    add("源目录", task.source || "", true);
+    add("内容", content);
+    if (task.filesTotal) add("复制文件", `${(task.filesDone ?? 0).toLocaleString()} / ${task.filesTotal.toLocaleString()} 个`);
+    add("源目录", task.source || "", { mono: true, wide: true });
   } else if (task.kind === "export") {
-    add("聊天", task.chat || "");
-    add("Chat ID", task.chatId || "在线更新时识别");
-    counts();
     if (task.totalBytes) add("数据大小", bytes(task.totalBytes));
-    add("源档案库", task.source || "", true);
-    add("目标档案库", task.target || "", true);
+    add("内容", content);
+    add("源档案库", task.source || "", { mono: true, wide: true });
+    add("目标档案库", task.target || "", { mono: true, wide: true });
   } else if (task.kind === "refresh") {
-    add("聊天", task.chat || "");
-    add("Chat ID", task.chatId || "在线更新时识别");
-    counts();
-    add("归档目录", task.source || "", true);
+    add("内容", content);
+    add("归档目录", task.source || "", { mono: true, wide: true });
   } else if (task.kind === "refresh-all") {
     if (task.filesTotal) add("聊天", `${task.filesDone ?? 0} / ${task.filesTotal} 个`);
-    add("档案库", task.target || "", true);
+    add("档案库", task.target || "", { mono: true, wide: true });
   } else if (task.kind === "merge") {
     if (task.filesTotal) add("聊天", `${task.filesDone ?? 0} / ${task.filesTotal} 个`);
-    add("源档案库", task.source || "", true);
-    add("目标档案库", task.target || "", true);
+    add("源档案库", task.source || "", { mono: true, wide: true });
+    add("目标档案库", task.target || "", { mono: true, wide: true });
   } else if (task.kind === "import-json") {
     if (task.filesTotal) add("文件", `${task.filesDone ?? 0} / ${task.filesTotal} 个`);
-    add("源目录", task.source || "", true);
+    add("源目录", task.source || "", { mono: true, wide: true });
+  } else if (task.detail) {
+    add("任务说明", task.detail, { wide: true });
   }
-  return rows;
+  return cards;
+}
+
+function taskMediaParts(task: TaskDetail): Array<{ label: string; value: number }> {
+  return [
+    { label: "图片", value: task.images ?? 0 },
+    { label: "视频", value: task.videos ?? 0 },
+    { label: "音频", value: task.audio ?? 0 },
+    { label: "文件", value: task.files ?? 0 },
+  ];
+}
+
+function taskChatIdLabel(task: TaskDetail): string {
+  if (task.chatId) return `Chat ID ${task.chatId}`;
+  if (task.kind === "import-official" || task.kind === "export" || task.kind === "refresh") {
+    return "Chat ID 未记录（在线更新后补全）";
+  }
+  return "";
 }
 
 const STATUS_FILTERS = [
@@ -1010,7 +1027,10 @@ export function TasksPage({
   const modalPercent = modalTask ? (modalTask.state === "done" ? 100 : Math.max(0, Math.min(100, modalTask.percent))) : 0;
   const modalChat = modalTask?.chat?.trim() || "";
   const modalHeading = modalTask ? (modalChat || taskTitle(modalTask)) : "";
-  const modalRows = modalTask ? taskInfoRows(modalTask) : [];
+  const modalCards = modalTask ? taskInfoCards(modalTask) : [];
+  const modalMedia = modalTask ? taskMediaParts(modalTask) : [];
+  const modalShowMedia = Boolean(modalTask && ((modalTask.media ?? 0) > 0 || modalMedia.some((part) => part.value > 0)));
+  const modalChatLabel = modalTask ? taskChatIdLabel(modalTask) : "";
   const modalShowError = Boolean(modalTask?.error) && (modalTask?.state === "failed" || modalTask?.state === "partial");
 
   return (
@@ -1149,19 +1169,22 @@ export function TasksPage({
           <div className="modal task-modal task-info-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
             <div className="task-modal-head task-info-head">
               <div className="task-info-heading">
-                {modalMeta && (
-                  <span className={`kind-chip group-${modalMeta.group}`}>
-                    {ModalIcon && <ModalIcon size={11} />} {modalMeta.label}
-                  </span>
-                )}
-                <h2 id="task-modal-title">{modalHeading}</h2>
-                <div className="task-info-sub">
-                  {modalChat && modalChat !== modalHeading && <b>{modalChat}</b>}
-                  {modalTask.chatId && <span className="mono">Chat ID {modalTask.chatId}</span>}
+                <div className="task-info-title-row">
+                  <h2 id="task-modal-title">{modalHeading}</h2>
                   <span className={`task-state ${modalTask.state}`}>
                     {modalTask.state === "running" ? <Loader2 size={12} className="spin" /> : modalTask.state === "done" ? <CheckCircle2 size={12} /> : modalTask.state === "partial" ? <AlertTriangle size={12} /> : modalTask.state === "paused" ? <Pause size={12} /> : modalTask.state === "stopped" ? <Square size={12} /> : <XCircle size={12} />}
                     {statusLabel(modalTask.state)}
                   </span>
+                </div>
+                <div className="task-info-sub">
+                  {modalMeta && (
+                    <span className={`kind-chip group-${modalMeta.group}`}>
+                      {ModalIcon && <ModalIcon size={11} />} {modalMeta.label}
+                    </span>
+                  )}
+                  {modalChatLabel && <span className="mono">{modalChatLabel}</span>}
+                  {modalTask.mode && <span className="task-info-mode">{modeLabel(modalTask.mode)}</span>}
+                  {modalChat && modalChat !== modalHeading && <b>{modalChat}</b>}
                 </div>
               </div>
               <button className="icon-btn" aria-label="关闭任务详情" onClick={() => setModalTask(null)}>
@@ -1186,14 +1209,27 @@ export function TasksPage({
               </div>
             </div>
 
-            {modalRows.length > 0 && (
-              <div className="task-info-rows">
-                {modalRows.map((row) => (
-                  <div key={row.label}>
-                    <span>{row.label}</span>
-                    <b className={row.mono ? "mono" : ""}>{row.mono ? wrapPath(row.value) : row.value}</b>
+            {(modalCards.length > 0 || modalShowMedia) && (
+              <div className="task-info-grid">
+                {modalCards.map((card) => (
+                  <div key={card.label} className={`task-info-card ${card.wide ? "wide" : ""}`}>
+                    <span>{card.label}</span>
+                    <b className={card.mono ? "mono" : ""}>{card.mono ? wrapPath(card.value) : card.value}</b>
                   </div>
                 ))}
+                {modalShowMedia && (
+                  <div className="task-info-card wide task-media-card">
+                    <span>媒体构成</span>
+                    <div className="task-media-grid">
+                      {modalMedia.map((part) => (
+                        <div key={part.label}>
+                          <em>{part.label}</em>
+                          <b>{part.value.toLocaleString()}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
