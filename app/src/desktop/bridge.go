@@ -339,6 +339,10 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		return nil, nil
 	case "startOneClick":
 		return b.facade.StartOneClick(p.Slug)
+	case "previewBackfill":
+		return b.facade.PreviewBackfill(p.Slug)
+	case "previewSyncAll":
+		return b.facade.PreviewSyncAll()
 	case "setDownloadConfig":
 		return b.facade.SetDownloadConfig(takapp.DownloadConfigDTO{
 			Concurrent: p.Concurrent, Threads: p.Threads,

@@ -23,6 +23,8 @@ import (
 	tgpeer "github.com/gotd/td/telegram/message/peer"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
+
+	takapp "telegramarchivekit/internal/app"
 )
 
 type OnlineExportResult struct {
@@ -60,6 +62,7 @@ type OnlineExportPreview struct {
 	Token          string `json:"token,omitempty"`
 	Existed        bool   `json:"existed"`
 	UpToDate       bool   `json:"upToDate,omitempty"`
+	BackfillOnly   bool   `json:"backfillOnly,omitempty"`
 	Messages       int    `json:"messages"`
 	Service        int    `json:"service"`
 	Images         int    `json:"images"`
@@ -72,6 +75,11 @@ type OnlineExportPreview struct {
 	LocalMessages  int    `json:"localMessages,omitempty"`
 	LocalMedia     int    `json:"localMedia,omitempty"`
 	LocalUpdatedAt string `json:"localUpdatedAt,omitempty"`
+	LocalMissing   int    `json:"localMissing,omitempty"`
+	MissingBytes   int64  `json:"missingBytes,omitempty"`
+	FreeBytes      int64  `json:"freeBytes,omitempty"`
+	SpaceNeedBytes int64  `json:"spaceNeedBytes,omitempty"`
+	SpaceShort     bool   `json:"spaceShort,omitempty"`
 }
 
 var floodWaitPattern = regexp.MustCompile(`FLOOD_WAIT[^0-9]*(\d+)`)
@@ -1042,6 +1050,12 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	if targetSlug != "" && !local.existed {
 		local = b.localWorkspaceBySlug(targetSlug)
 	}
+	var backfill takapp.BackfillPreviewDTO
+	if local.existed && local.slug != "" {
+		if p, e := b.facade.PreviewBackfill(local.slug); e == nil {
+			backfill = p
+		}
+	}
 	minID := 0
 	if local.existed && local.dir != "" {
 		minID = localMaxMessageID(local.dir)
@@ -1059,9 +1073,25 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	out := OnlineExportPreview{
 		Peer: peerKey, Chat: chat.Name, Existed: local.existed,
 		LocalMessages: local.messages, LocalMedia: local.media, LocalUpdatedAt: local.updatedAt,
+		LocalMissing: backfill.Missing, MissingBytes: backfill.KnownBytes, FreeBytes: backfill.FreeBytes,
 	}
 	if len(messages) == 0 {
 		if minID > 0 {
+			if backfill.Missing > 0 {
+				// result.json already holds the newest messages, but files from a
+				// stopped download are still missing; offer to finish them.
+				out.BackfillOnly = true
+				out.Media = backfill.Missing
+				out.Images = backfill.Images
+				out.Videos = backfill.Videos
+				out.Audio = backfill.Audio
+				out.Files = backfill.Files
+				out.Other = backfill.Other
+				out.Bytes = backfill.KnownBytes
+				out.SpaceNeedBytes = backfill.KnownBytes
+				out.SpaceShort = backfill.SpaceShort
+				return out, nil
+			}
 			out.UpToDate = true
 			return out, nil
 		}
@@ -1077,9 +1107,13 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	out.Other = other
 	out.Media = media
 	out.Bytes = size
+	out.SpaceNeedBytes = size + backfill.KnownBytes
+	out.SpaceShort = backfill.FreeBytes > 0 && out.SpaceNeedBytes > 0 && backfill.FreeBytes < out.SpaceNeedBytes+onlineSpaceReserve
 	out.Token = b.online.Prepare(info.Namespace, peerKey, chat, messages, media)
 	return out, nil
 }
+
+const onlineSpaceReserve = int64(256 << 20)
 
 func (b *Bridge) setPreviewProgress(p OnlineExportProgress) {
 	b.previewMu.Lock()
@@ -1149,6 +1183,12 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token, targetS
 		existingSlug = targetSlug
 		existed = true
 	}
+	var backfill takapp.BackfillPreviewDTO
+	if existingSlug != "" {
+		if p, e := b.facade.PreviewBackfill(existingSlug); e == nil {
+			backfill = p
+		}
+	}
 	if len(messages) == 0 {
 		minID := 0
 		if existed && local.dir != "" {
@@ -1160,6 +1200,18 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token, targetS
 		}
 		if len(messages) == 0 {
 			if minID > 0 {
+				if backfill.Missing > 0 {
+					// Nothing new to read, but a stopped download left files
+					// missing; finish them from the local result.json.
+					taskID, err := b.facade.StartOneClick(existingSlug)
+					if err != nil {
+						return OnlineExportResult{}, err
+					}
+					return OnlineExportResult{
+						Slug: existingSlug, Chat: chat.Name, TaskID: taskID,
+						Media: backfill.Missing, Existed: true,
+					}, nil
+				}
 				return OnlineExportResult{Chat: chat.Name, Slug: existingSlug, Existed: true, UpToDate: true}, nil
 			}
 			return OnlineExportResult{}, errors.New("该会话没有可导出的消息")

@@ -1171,6 +1171,51 @@ func (a *App) estimateMissingMedia(slug string) (count int, knownCount int, know
 	return count, knownCount, knownBytes, nil
 }
 
+// estimateMissingPlan reports every currently missing media message together
+// with the expected sizes available in result.json. It is read-only: previews
+// use it before a download task exists, without touching the paused task plan.
+func (a *App) estimateMissingPlan(slug string) (downloadPlan, *Archive, error) {
+	arc, err := a.buildArchiveForWorkspace(slug)
+	if err != nil {
+		return downloadPlan{}, nil, err
+	}
+	if len(arc.Missing) == 0 {
+		return downloadPlan{}, arc, nil
+	}
+	missing := make(map[string]bool, len(arc.Missing))
+	for _, id := range arc.Missing {
+		missing[id] = true
+	}
+	b, err := os.ReadFile(a.sourcePath(slug))
+	if err != nil {
+		return downloadPlan{}, nil, err
+	}
+	var root map[string]any
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return downloadPlan{}, nil, err
+	}
+	arr, _ := root["messages"].([]any)
+	filtered := make([]any, 0, len(missing))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if ok && missing[archive.AnyString(m["id"])] {
+			filtered = append(filtered, item)
+		}
+	}
+	root["messages"] = filtered
+	out, err := json.Marshal(root)
+	if err != nil {
+		return downloadPlan{}, nil, err
+	}
+	plan, err := parseDownloadPlan(out)
+	if err != nil {
+		return downloadPlan{}, nil, err
+	}
+	return plan, arc, nil
+}
+
 func (a *App) normalizeWorkspaceSlugs() bool {
 	changed := false
 	entries, _ := os.ReadDir(a.chatsDir())

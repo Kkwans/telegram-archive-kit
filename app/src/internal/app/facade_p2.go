@@ -50,6 +50,92 @@ type StatsDTO struct {
 	MissingVideos int `json:"missingVideos"`
 }
 
+// BackfillPreviewDTO describes what "按 result.json 补全" would download. It is
+// computed read-only so the UI can warn about disk space before a task exists.
+type BackfillPreviewDTO struct {
+	Slug       string `json:"slug"`
+	Chat       string `json:"chat"`
+	Messages   int    `json:"messages"`
+	Media      int    `json:"media"`
+	Missing    int    `json:"missing"`
+	KnownCount int    `json:"knownCount"`
+	KnownBytes int64  `json:"knownBytes"`
+	Images     int    `json:"images"`
+	Videos     int    `json:"videos"`
+	Audio      int    `json:"audio"`
+	Files      int    `json:"files"`
+	Other      int    `json:"other"`
+	FreeBytes  int64  `json:"freeBytes"`
+	SpaceShort bool   `json:"spaceShort"`
+}
+
+const downloadSpaceReserve = int64(256 << 20)
+
+func (f *Facade) PreviewBackfill(slug string) (BackfillPreviewDTO, error) {
+	if strings.TrimSpace(slug) == "" {
+		return BackfillPreviewDTO{}, errors.New("缺少聊天标识")
+	}
+	meta, err := f.a.readWorkspaceMeta(slug)
+	if err != nil {
+		return BackfillPreviewDTO{}, fmt.Errorf("读取聊天失败: %w", err)
+	}
+	plan, arc, err := f.a.estimateMissingPlan(slug)
+	if err != nil {
+		return BackfillPreviewDTO{}, err
+	}
+	out := BackfillPreviewDTO{
+		Slug: slug, Chat: meta.Chat.Name,
+		Missing: plan.Total, KnownCount: plan.KnownCount, KnownBytes: plan.KnownBytes,
+		Images: plan.Images, Videos: plan.Videos, Audio: plan.Audio,
+		Files: plan.Files, Other: plan.Other,
+	}
+	if arc != nil {
+		out.Messages = arc.Stats.Messages
+		out.Media = arc.Stats.MediaFiles
+	}
+	out.FreeBytes = int64(platform.FreeSpaceBytes(f.a.workspaceDir(slug)))
+	out.SpaceShort = out.FreeBytes > 0 && out.KnownBytes > 0 && out.FreeBytes < out.KnownBytes+downloadSpaceReserve
+	return out, nil
+}
+
+// BulkPreviewDTO is the combined download estimate for "同步全部缺失".
+type BulkPreviewDTO struct {
+	Chats      int   `json:"chats"`
+	Missing    int   `json:"missing"`
+	KnownBytes int64 `json:"knownBytes"`
+	Images     int   `json:"images"`
+	Videos     int   `json:"videos"`
+	Audio      int   `json:"audio"`
+	Files      int   `json:"files"`
+	Other      int   `json:"other"`
+	FreeBytes  int64 `json:"freeBytes"`
+	SpaceShort bool  `json:"spaceShort"`
+}
+
+func (f *Facade) PreviewSyncAll() (BulkPreviewDTO, error) {
+	var out BulkPreviewDTO
+	for _, c := range f.ListChats() {
+		if c.Missing <= 0 {
+			continue
+		}
+		plan, _, err := f.a.estimateMissingPlan(c.Slug)
+		if err != nil || plan.Total == 0 {
+			continue
+		}
+		out.Chats++
+		out.Missing += plan.Total
+		out.KnownBytes += plan.KnownBytes
+		out.Images += plan.Images
+		out.Videos += plan.Videos
+		out.Audio += plan.Audio
+		out.Files += plan.Files
+		out.Other += plan.Other
+	}
+	out.FreeBytes = int64(platform.FreeSpaceBytes(f.a.Settings.LibraryRoot))
+	out.SpaceShort = out.FreeBytes > 0 && out.KnownBytes > 0 && out.FreeBytes < out.KnownBytes+downloadSpaceReserve
+	return out, nil
+}
+
 type SettingsDTO struct {
 	LibraryRoot           string  `json:"libraryRoot"`
 	Concurrent            int     `json:"concurrent"`

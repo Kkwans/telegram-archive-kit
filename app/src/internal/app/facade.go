@@ -12,6 +12,7 @@ import (
 
 	"telegramarchivekit/internal/archive"
 	"telegramarchivekit/internal/media"
+	"telegramarchivekit/internal/platform"
 )
 
 // ErrOperationRunning is returned when the desktop asks for a second write
@@ -331,6 +332,11 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	}
 	if !fileExists(f.a.sourcePath(slug)) {
 		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+	}
+	if plan, _, perr := f.a.estimateMissingPlan(slug); perr == nil && plan.Total > 0 && plan.KnownBytes > 0 {
+		if free := int64(platform.FreeSpaceBytes(f.a.workspaceDir(slug))); free > 0 && free < plan.KnownBytes+downloadSpaceReserve {
+			return "", fmt.Errorf("磁盘空间不足：仍需下载约 %s，当前可用 %s。请清理空间或更换档案库位置后再试", humanBytes(plan.KnownBytes), humanBytes(free))
+		}
 	}
 
 	f.mu.Lock()

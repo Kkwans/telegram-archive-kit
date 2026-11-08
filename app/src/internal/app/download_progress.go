@@ -22,6 +22,11 @@ type downloadPlan struct {
 	Total      int
 	KnownBytes int64
 	KnownCount int
+	Images     int
+	Videos     int
+	Audio      int
+	Files      int
+	Other      int
 }
 
 func loadDownloadPlan(path string) (downloadPlan, error) {
@@ -29,6 +34,10 @@ func loadDownloadPlan(path string) (downloadPlan, error) {
 	if err != nil {
 		return downloadPlan{}, err
 	}
+	return parseDownloadPlan(b)
+}
+
+func parseDownloadPlan(b []byte) (downloadPlan, error) {
 	var root map[string]any
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.UseNumber()
@@ -49,6 +58,18 @@ func loadDownloadPlan(path string) (downloadPlan, error) {
 		sz := archive.AnyInt64(m["file_size"])
 		if _, seen := p.IDs[id]; !seen {
 			p.Total++
+			switch archive.AnyString(m["media_type"]) {
+			case "photo":
+				p.Images++
+			case "video_file", "video_message", "animation":
+				p.Videos++
+			case "voice_message", "audio_file":
+				p.Audio++
+			case "file", "sticker":
+				p.Files++
+			default:
+				p.Other++
+			}
 		}
 		p.IDs[id] = sz
 		name := archive.FirstNonEmpty(archive.AnyString(m["file_name"]), archive.AnyString(m["file"]), archive.AnyString(m["photo"]))
