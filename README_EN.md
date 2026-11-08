@@ -2,17 +2,18 @@
 
 # Telegram Archive Kit
 
-**Turn your Telegram chats into a fully offline, searchable, beautifully rendered local web archive.**
+**Turn your Telegram chats into a fully offline, searchable, long-lived local web archive.**
 
-Windows desktop client + console edition. Powered by [tdl](https://github.com/iyear/tdl) as the download engine and Telegram Desktop's official export data,
-it handles everything end to end: media download → archive management → a gorgeous static website. All data stays on your own disk.
+Windows desktop client + console edition. Powered by [tdl](https://github.com/iyear/tdl) as the download engine and compatible with Telegram Desktop exports,
+it connects media download → incremental archiving → static web generation → everyday browsing. All chats and media stay on your own disk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D6?logo=windows11&logoColor=white)](#-requirements)
+[![Version](https://img.shields.io/badge/version-3.0-2f6bff.svg)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-requirements)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
 
-[简体中文](README.md) · English
+[简体中文](README.md) · English · [Latest release](https://github.com/Kkwans/telegram-archive-kit/releases/latest) · [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -21,21 +22,26 @@ it handles everything end to end: media download → archive management → a go
 ## Contents
 
 - [What is this?](#what-is-this)
-- [✨ Features](#-features)
-- [🖥 Requirements](#-requirements)
-- [🚀 Quick Start](#-quick-start)
-- [🔭 How It Works](#-how-it-works)
-- [📁 Archive Library Layout](#-archive-library-layout)
-- [🛠 Building from Source](#-building-from-source)
-- [📚 Documentation](#-documentation)
-- [❓ FAQ](#-faq)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
-- [🙏 Acknowledgements](#-acknowledgements)
+- [3.0 highlights](#-30-highlights)
+- [Features](#-features)
+- [Requirements](#-requirements)
+- [Download & install](#-download--install)
+- [First run](#-first-run)
+- [Online chat & incremental archiving](#-online-chat--incremental-archiving)
+- [Download preview](#-download-preview)
+- [How it works](#-how-it-works)
+- [Archive library layout](#-archive-library-layout)
+- [Building from source](#-building-from-source)
+- [Documentation](#-documentation)
+- [Data, privacy & security](#-data-privacy--security)
+- [FAQ](#-faq)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Acknowledgements](#-acknowledgements)
 
 ## What is this?
 
-**Telegram Archive Kit (TAK)** is an interactive archiving workbench that runs in a Windows terminal. It solves a specific problem:
+**Telegram Archive Kit (TAK)** is a Windows desktop archiving client (with a console edition for troubleshooting and server scenarios). It solves a specific problem:
 
 - Telegram Desktop's built-in export gives you a `result.json` and a folder of HTML pages, but it **can't batch-download missing media, can't update incrementally, and gets painfully slow with chats tens of gigabytes large**;
 - [tdl](https://github.com/iyear/tdl) is a powerful downloader, but it **only downloads — it doesn't organize or present anything**.
@@ -44,7 +50,25 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 
 > ⚠️ This tool is intended for **backing up and reading your own chat history**. Please comply with the Telegram Terms of Service and applicable local laws. Do not use it for mass-scraping other people's data.
 
+## ✨ 3.0 highlights
+
+- **Online chat**: reuses the local tdl session and reads the full conversation list (type, unread, pinned, last message, real avatars) through gotd, with filters and search.
+- **Incremental online archiving**: fetches only messages newer than the local maximum Message ID; the preview also checks **media actually missing from the archive**, so a stopped download is never mistaken for "up to date" just because `result.json` is current.
+- **Preview before every download**: online update, result.json backfill, sync selected chat, continue download and sync-all-missing all share one statistics dialog with media counts, types, estimated size and free disk space. Insufficient space blocks task creation.
+- **Remote libraries**: SMB / UNC locations, an rclone mount wizard and SSHFS-Win guidance, with an offline banner and local thumbnail cache.
+- **Viewer improvements**: single-click image zoom / double-click reset, wheel zoom anchored at the cursor, drag to pan; video supports HTML fullscreen and window-level immersive fullscreen, speed control, picture-in-picture and auto-next.
+
 ## ✨ Features
+
+### 🖥️ Desktop client
+
+- Double-click `TelegramArchiveKit.exe`: light/dark themes, borderless title bar with Win11 Mica, tray residency
+- Home dashboard: media composition, storage usage, top chats, recent chats and tasks
+- Task center: imports, official ChatExport inheritance, exports, rebuilds, library merges, online archiving and media backfill all leave a record
+- Download board: progress ring, real-time / average / peak speed, speed curve, ETA and per-file table
+- In-app QR / phone / 2FA login, Ctrl+K command palette, drag-and-drop import and taskbar progress
+- Online chat page: conversation list, filters, real avatars and incremental archiving
+- Remote libraries: SMB / UNC, rclone mounts and SSHFS guidance
 
 ### 📥 Smart media download (powered by tdl)
 
@@ -53,6 +77,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 - No-progress watchdog: when a download stalls at 0 B/s, stalled files are set aside and the queue continues with the rest (an engineering safety net for [tdl#1071](https://github.com/iyear/tdl/issues/1071))
 - A dedicated retry queue for stubborn files with adjustable transfer strategies; proxy support and configurable concurrency (1–8) × threads (1–16)
 - Live progress: total speed, elapsed time, ETA, active and recently completed transfers
+- **Preview before download**: every download entry shows missing media counts, types and estimated size, and checks free disk space before creating a task
 
 ### 🏛️ Inherit official ChatExport
 
@@ -78,10 +103,12 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 - Completed media is **never deleted**; 0-byte leftovers are cleaned automatically; deleting a chat requires explicit confirmation
 - Every operation is logged under `Library/.logs/`; each build produces an `archive-report.json` with statistics and a missing-media report
 - The library is self-contained and movable — no absolute-path dependencies
+- Nothing is uploaded: chats, media and indexes stay in your local or remote library
+- The desktop and console editions refuse to write to the same library at the same time (named mutex + session file); set `TAK_ALLOW_CONCURRENT=1` only for troubleshooting
 
 ### 🖥️ Friendly UX
 
-- A Windows terminal TUI that requires no command-line knowledge; **drag a `result.json` or a ChatExport folder onto the EXE** to import
+- Desktop client with a visual interface, or a Windows terminal TUI for troubleshooting; **drag a `result.json` or a ChatExport folder onto the EXE** to import
 - CLI subcommands are also available: `version` / `selftest` / `build` / `verify`
 
 ## 🖥 Requirements
@@ -90,26 +117,59 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 |---|---|
 | OS | Windows 10 / 11 (x64) |
 | Runtime dependencies | None (tdl and FFmpeg are auto-installed on demand; manual placement also works) |
-| Network | Needed for login and download; browsing the archive is fully offline |
+| WebView2 | The desktop client uses the system WebView2 runtime (bundled with Win11; install the Microsoft Edge WebView2 Runtime on Win10 if missing) |
+| Network | Needed for login, online archiving and download; browsing the archive is fully offline |
 | Disk | Depends on your media volume; NTFS recommended |
 
-## 🚀 Quick Start
+## ⬇️ Download & install
+
+1. Open [Releases](https://github.com/Kkwans/telegram-archive-kit/releases/latest) and download `TelegramArchiveKit_v3.0_windows-x64.zip`.
+2. Extract it to any folder (do not run it from inside the ZIP).
+3. Double-click `TelegramArchiveKit.exe` for the desktop client, or run `TelegramArchiveKit-Console.exe` for the console edition. Both share the same library.
+4. On first launch, choose the archive library location. **Never delete this directory when upgrading.**
+
+## 🚀 First run
 
 1. **Export from Telegram Desktop**: open the target chat → top-right menu → **Export chat history** → choose *Machine-readable JSON format*. This produces `result.json`.
-2. **Download & run**: grab the ZIP from [Releases](https://github.com/Kkwans/telegram-archive-kit/releases), extract anywhere, and double-click `TelegramArchiveKit.exe`.
-3. **Pick a library location**: on first launch, choose where the archive lives (default: `Documents\Telegram Archive Library`, or portable mode). **Never delete this directory when upgrading.**
-4. **Log in**: menu "Telegram 账号与会话" (Account & Session) → sign in via QR code or verification code.
-5. **Import & sync**: drag `result.json` onto the EXE (or pick it under "添加/更新聊天" / Add & Update Chats), then run **"一键完成"** (One-click Complete) — TAK pre-flights the environment, downloads missing media, generates thumbnails and web pages.
-6. **Browse**: the archive home page `index.html` opens automatically when the build finishes.
+2. **Pick a library location**: choose where the archive lives on first launch; later upgrades only need to point at the same directory.
+3. **Log in**: open "Account & Session" and scan the QR code, or use a phone code / 2FA.
+4. **Import**: drag `result.json` or a ChatExport folder into the window, or import it from the Chats page.
+5. **Sync**: click "Sync selected" or "Sync all missing", review the download statistics, then start.
+6. **Browse**: after the build finishes, open the archive home page `index.html`.
 
-> 💡 Already have an official ChatExport HTML export? Run "Inherit official ChatExport" first, then import the current `result.json` — old media will be reused. See the [Usage Guide](docs/USAGE.md).
+> 💡 Already have an official ChatExport HTML export? Run "Inherit official ChatExport" first, then merge the current `result.json` — existing media is reused.
 >
-> 💡 Upgrading: extract the new version into a **new folder**, point it at the existing library, and run "Chats → Regenerate web pages only". No media is re-downloaded.
+> 💡 Upgrading: extract the new version into a **new folder**, point it at the existing library, and run "Rebuild web pages". No media is re-downloaded.
+
+## 🌐 Online chat & incremental archiving
+
+3.0 adds an "Online chat" page that reuses the local tdl session (no extra password storage):
+
+- Full conversation list with type, unread, pinned, last message and real avatars
+- Filters for private chats / groups / channels / archived chats, plus search and sorting
+- "Online update" on an archived chat fetches only messages newer than the local maximum Message ID
+- The preview shows new messages, media composition and estimated size
+- **It also checks media actually missing from the archive**: if a previous download was stopped, the dialog reports "messages are up to date, but N local media files are missing" and offers to finish them
+- Free disk space is checked before starting; insufficient space disables the action instead of creating a doomed task
+
+## 📊 Download preview
+
+Since 3.0 every download entry opens the same statistics dialog before writing anything:
+
+| Entry | What is shown | When disk space is insufficient |
+|---|---|---|
+| Online update | New messages + local missing media, media types, estimated size | "Start archiving" is disabled |
+| result.json backfill | Local missing media, types, estimated size | "Start backfill" is disabled |
+| Sync selected / one-click sync | Missing media of the current chat, types, size | "Start sync" is disabled |
+| Sync all missing | Combined media count and size across affected chats | "Start sync" is disabled |
+| Task center "Continue download" | Remaining missing media, types, size | "Start sync" is disabled |
+
+The estimate uses the same known-file-size basis as the downloader (`file_size` in `result.json`) plus a 256 MB reserve. Media with unknown sizes is not included, so actual usage can be slightly higher.
 
 ## 🔭 How It Works
 
 ```text
-┌───────────────────────────── Telegram Archive Kit (TUI) ─────────────────────────────┐
+┌──────────────────────── Telegram Archive Kit (Desktop / Console) ────────────────────────┐
 │                                                                                      │
 │  Telegram Desktop export      tdl (download engine, auto-installed)    Archive Library│
 │  ┌────────────────┐          ┌──────────────────────┐          ┌──────────────────┐  │
@@ -157,39 +217,54 @@ Full data-safety rules (exact behaviour of merge, extract and delete) are descri
 
 ## 🛠 Building from Source
 
+Requirements: Go **1.26.4+** (desktop module; console edition needs Go 1.23+), Node.js 20+ / npm, Python 3.
+
 ```bash
-# Requirements: Go 1.26+ (desktop module), Node.js 20+/npm (frontend), Python 3 (build script)
 git clone https://github.com/Kkwans/telegram-archive-kit.git
 cd telegram-archive-kit
 
-# One-shot build (unit tests → go vet → Win64 cross-compile → PE check)
-python scripts/build_windows.py
+# Build both clients: console tests/vet → frontend npm ci + build → two Win64 targets → PE subsystem check
+python scripts/build_windows.py --target all
 
-# Output: TelegramArchiveKit.exe in the repo root (Windows console app)
+# Outputs:
+#   TelegramArchiveKit.exe          desktop client (Windows GUI, subsystem 2)
+#   TelegramArchiveKit-Console.exe  console edition (subsystem 3)
 ```
 
-Or build manually:
+Or build separately:
 
 ```bash
+# Console edition: still zero-dependency and offline-capable
 cd app/src
 go test ./...
 go vet ./...
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../TelegramArchiveKit.exe .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../TelegramArchiveKit-Console.exe .
+
+# Desktop client: frontend + Wails
+cd desktop/frontend && npm ci && npm run build && cd ..
+go build -trimpath -tags production -ldflags="-s -w -H windowsgui" -o ../../TelegramArchiveKit.exe .
+
+# Package a zip for local acceptance
+python scripts/build_windows.py --target all --zip
 ```
 
-> Note: do NOT add `-H=windowsgui` — the app needs a real console to read keyboard input.
+> The console edition needs a real console for keyboard input — do NOT add `-H=windowsgui` to `-Console.exe`. The desktop client must use `-H windowsgui` with `-tags production`.
 
 ## 📚 Documentation
 
 | Document | Contents |
 |---|---|
+| [Documentation index](docs/README.md) | Navigation for all documents (Chinese) |
 | [Usage Guide](docs/USAGE.md) | Install, login, import, ChatExport inheritance, multi-disk management, download settings |
+| [Online capabilities & incremental archiving](docs/ONLINE_TDL_3.0.md) | tdl integration, gotd online sessions, merge strategy |
+| [Remote libraries](docs/REMOTE_LIBRARY_3.0.md) | SMB / UNC, rclone mounts, SSHFS, cache and offline behaviour |
 | [Data & Directory Structure](docs/DATA_FORMAT.md) | Library layout, data-safety rules, config file locations |
+| [Storage & SQLite](docs/STORAGE_SQLITE.md) | Index and storage design |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | 0 B/s downloads, login issues, thumbnails, web page caching, and more |
 | [Changelog](CHANGELOG.md) | Release notes for every version |
 | [Third-party Components](docs/THIRD_PARTY.md) | Sources and licenses of tdl, beautifier and other dependencies |
 
-> The docs in this repository are currently written in Chinese; English translations are welcome via PR.
+> The detailed docs in this repository are currently written in Chinese; English translations are welcome via PR.
 
 ## ❓ FAQ
 
@@ -197,6 +272,18 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o .
 <summary><b>Download speed is stuck at 0 B/s</b></summary>
 
 This is a known tdl issue on Windows ([iyear/tdl#1071](https://github.com/iyear/tdl/issues/1071)): a healthy login check does not guarantee the media's data center is currently reachable. TAK sets stalled files aside after 60 seconds without real progress, rebuilds the queue and keeps downloading the rest, with a single diagnostic restart of the engine. If it still fails repeatedly, restore the default 2×4 concurrency, configure a proxy explicitly, and inspect tdl's raw logs under `Library/.logs/`.
+</details>
+
+<details>
+<summary><b>Online update says "up to date" but local media is incomplete</b></summary>
+
+Since 3.0 the preview no longer trusts `result.json` alone: it also checks media actually missing from the archive. If a previous download was stopped, the dialog reports "messages are up to date, but N local media files are missing" and offers to finish them; you can also use "Backfill from result.json" on the chat page.
+</details>
+
+<details>
+<summary><b>Why does every download now open a statistics dialog first?</b></summary>
+
+To avoid creating a task that immediately fails because the disk is full, and to avoid assuming an archive is complete when files are missing, every download entry previews missing media and required space first. The task is created only after confirmation; when space is insufficient the action is disabled.
 </details>
 
 <details>
@@ -214,7 +301,7 @@ Video posters require FFmpeg. TAK downloads and installs it automatically when n
 <details>
 <summary><b>Linux / macOS support?</b></summary>
 
-The TUI depends on the Windows console API and is designed for Windows 10/11 x64. A few CLI subcommands (`version`, `selftest`, `verify`) run on other platforms, but full functionality is Windows-only.
+Both the desktop client and the TUI depend on Windows APIs and target Windows 10/11 x64. A few CLI subcommands (`version`, `selftest`, `verify`) run on other platforms, but full functionality is Windows-only.
 </details>
 
 For anything else, see [Troubleshooting](docs/TROUBLESHOOTING.md) or open an [Issue](https://github.com/Kkwans/telegram-archive-kit/issues).
