@@ -1860,6 +1860,12 @@ html[data-theme="dark"] .palette {
 }
 .viewer-stage.image { padding: 10px 26px 8px; overflow: hidden; }
 .viewer-stage.video { cursor: var(--cursor-close); }
+/* While panning, the pointer can fall outside the moving media for a frame;
+   the whole stage must keep the grab cursor instead of the close cursor. */
+.viewer-stage.dragging { cursor: grabbing; }
+.viewer-stage.video.dragging,
+.viewer-stage.video.dragging .art-video-wrap,
+.viewer-stage.video.dragging .art-video-wrap video { cursor: grabbing !important; }
 /* ArtPlayer forces "cursor: none !important" on every child once its controls
    auto-hide; the video surface should keep a normal, zoom or grab cursor. */
 .viewer-stage.video .art-video-wrap,
@@ -1874,14 +1880,14 @@ html[data-theme="dark"] .palette {
   overflow: hidden; touch-action: none; cursor: var(--cursor-close);
 }
 .image-stage img {
-  max-width: 97%; max-height: 100%; object-fit: contain; border-radius: 12px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+  max-width: 94%; max-height: 94%; object-fit: contain; border-radius: 12px;
   user-select: none; -webkit-user-drag: none;
   transition: transform .08s linear;
   cursor: zoom-in;
 }
-.image-stage.zoomed img { transition: none; cursor: grab; }
-.image-stage.dragging img { cursor: grabbing; }
+.image-stage.zoomed img { cursor: grab; }
+.image-stage.dragging { cursor: grabbing; }
+.image-stage.dragging img { transition: none; cursor: grabbing; }
 .image-zoom-badge {
   position: absolute; right: 18px; bottom: 14px; padding: 3px 8px; border-radius: 99px;
   background: rgba(8, 10, 16, .62); color: #e9eefb; font-size: 10.5px; font-variant-numeric: tabular-nums;

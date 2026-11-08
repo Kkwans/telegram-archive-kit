@@ -1604,7 +1604,24 @@ function viewerFrameSource(modal: HTMLElement | null, isVideo: boolean, poster: 
     return poster;
   }
   const img = modal?.querySelector<HTMLImageElement>(".image-stage img");
-  return img?.currentSrc || img?.src || "";
+  if (!img) return "";
+  // Sending the original file as a data URL can mean tens of megabytes over
+  // the RPC bridge; a 1920px JPEG is indistinguishable during the scale.
+  const nw = img.naturalWidth || img.width;
+  const nh = img.naturalHeight || img.height;
+  if (!nw || !nh) return img.currentSrc || img.src || "";
+  try {
+    const scale = Math.min(1, 1920 / Math.max(nw, nh));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(nw * scale));
+    canvas.height = Math.max(1, Math.round(nh * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return img.currentSrc || img.src || "";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.84);
+  } catch {
+    return img.currentSrc || img.src || "";
+  }
 }
 
 function nextPaint(): Promise<void> {
@@ -1721,10 +1738,13 @@ function MediaViewer({
   const hold = useRef<{ key: string; timer: number; long: boolean; direction: number } | null>(null);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const dragMoved = useRef(false);
-  const suppressVideoClick = useRef(false);
+  const stagePress = useRef<{ target: HTMLElement; dragged: boolean } | null>(null);
+  const wheelAccum = useRef(0);
+  const imageZoomedAt = useRef(0);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [imageBox, setImageBox] = useState<{ w: number; h: number } | null>(null);
   const [imageReady, setImageReady] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
@@ -1756,6 +1776,34 @@ function MediaViewer({
     const timer = window.setTimeout(() => setImageBusy(true), 350);
     return () => window.clearTimeout(timer);
   }, [item.rel, isVideo]);
+
+  useEffect(() => {
+    if (isVideo) {
+      setImageBox(null);
+      return;
+    }
+    const stageEl = stage.current;
+    if (!stageEl) return;
+    const fit = () => {
+      const imgEl = stageEl.querySelector<HTMLImageElement>("img");
+      const nw = imgEl?.naturalWidth || 0;
+      const nh = imgEl?.naturalHeight || 0;
+      if (!nw || !nh) return;
+      const r = stageEl.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) return;
+      const scale = Math.min((r.width * 0.94) / nw, (r.height * 0.94) / nh);
+      setImageBox({ w: Math.max(1, Math.round(nw * scale)), h: Math.max(1, Math.round(nh * scale)) });
+    };
+    fit();
+    const imgEl = stageEl.querySelector<HTMLImageElement>("img");
+    imgEl?.addEventListener("load", fit);
+    const observer = new ResizeObserver(fit);
+    observer.observe(stageEl);
+    return () => {
+      imgEl?.removeEventListener("load", fit);
+      observer.disconnect();
+    };
+  }, [isVideo, item.rel]);
 
   useEffect(() => {
     if (imageReady) setImageBusy(false);
@@ -1805,6 +1853,9 @@ function MediaViewer({
     setOffset({ x: 0, y: 0 });
     setDragging(false);
     setShowKeys(false);
+    stagePress.current = null;
+    wheelAccum.current = 0;
+    imageZoomedAt.current = 0;
     if (hold.current) {
       window.clearTimeout(hold.current.timer);
       hold.current = null;
@@ -1815,6 +1866,20 @@ function MediaViewer({
   const resetZoom = () => {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
+  };
+
+  const imageTargetRect = (): ViewerRect | null => {
+    const stageEl = stage.current;
+    const imgEl = modal.current?.querySelector<HTMLImageElement>(".image-stage img");
+    const nw = imgEl?.naturalWidth || 0;
+    const nh = imgEl?.naturalHeight || 0;
+    if (!stageEl || !nw || !nh) return null;
+    const r = stageEl.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return null;
+    const scale = Math.min((r.width * 0.94) / nw, (r.height * 0.94) / nh);
+    const width = nw * scale;
+    const height = nh * scale;
+    return { left: r.left + (r.width - width) / 2, top: r.top + (r.height - height) / 2, width, height };
   };
 
   const applyWindowFullscreen = async (on: boolean, cover = "") => {
@@ -1875,7 +1940,6 @@ function MediaViewer({
       if (native && startScreen) {
         await applyWindowFullscreen(true, "");
         await nextPaint();
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
         if (fsReturn.current) {
           fsReturn.current.screenX = window.screenX;
           fsReturn.current.screenY = window.screenY;
@@ -1883,16 +1947,16 @@ function MediaViewer({
         setWindowFs(true);
         if (hideChrome) setImmersive(true);
         await nextPaint();
-        const target = mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
+        const target = (isVideo ? mediaBox(modal.current, isVideo) : imageTargetRect()) || mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
         const endScreen = screenRect(target) || startScreen;
         try {
-          await call("animateFullscreenCover", { from: startScreen, to: endScreen, radius, duration: 230 });
+          await call("animateFullscreenCover", { from: startScreen, to: endScreen, radius, duration: 200 });
         } catch {
           /* the static frame still covers the resize */
         }
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
-        await hideFullscreenCover(140);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 140));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 210));
+        await hideFullscreenCover(120);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
         setFsGhost(null);
         setFsShowGhost(false);
         setFsGhostLive(false);
@@ -1927,7 +1991,7 @@ function MediaViewer({
           height: measured.height,
         };
         setFsGhost({ src: snapshot, from: start, to: start, radius });
-        const hold = 230 - (performance.now() - resizeAt);
+        const hold = 200 - (performance.now() - resizeAt);
         if (nativeCover && hold > 0) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, hold));
         }
@@ -1957,7 +2021,7 @@ function MediaViewer({
       if (backdrop && snapshot && currentScreen && targetScreen) {
         try {
           const res = await call<{ shown: boolean }>("showFullscreenCover", {
-            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: 230,
+            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: 200,
           });
           native = Boolean(res?.shown);
         } catch {
@@ -1972,9 +2036,9 @@ function MediaViewer({
         setWindowFs(false);
         if (hideChrome) setImmersive(false);
         await nextPaint();
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 170));
-        await hideFullscreenCover(140);
         await new Promise<void>((resolve) => window.setTimeout(resolve, 140));
+        await hideFullscreenCover(120);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
         setFsGhost(null);
         setFsShowGhost(false);
         setFsGhostLive(false);
@@ -2204,18 +2268,28 @@ function MediaViewer({
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     if (!rect) return;
+    // One fixed small step per wheel notch; a high-resolution or accelerated
+    // first event used to jump several steps at once.
+    wheelAccum.current += e.deltaY;
+    if (Math.abs(wheelAccum.current) < 80) return;
+    const direction = wheelAccum.current < 0 ? 1 : -1;
+    wheelAccum.current = 0;
     const cx = e.clientX - rect.left - rect.width / 2;
     const cy = e.clientY - rect.top - rect.height / 2;
     setZoom((prev) => {
-      const next = Math.max(1, Math.min(6, Math.round(prev * (e.deltaY < 0 ? 1.12 : 0.9) * 100) / 100));
+      const next = Math.max(1, Math.min(6, Math.round((prev + direction * 0.08) * 100) / 100));
       if (next === 1) {
         setOffset({ x: 0, y: 0 });
-      } else {
+      } else if (next !== prev) {
         const ratio = next / prev;
         setOffset((o) => ({ x: cx - ratio * (cx - o.x), y: cy - ratio * (cy - o.y) }));
       }
       return next;
     });
+  };
+
+  const onStagePointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    stagePress.current = { target: e.target as HTMLElement, dragged: false };
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2226,15 +2300,38 @@ function MediaViewer({
   };
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drag.current) return;
-    setOffset({ x: drag.current.ox + e.clientX - drag.current.x, y: drag.current.oy + e.clientY - drag.current.y });
+    const dx = e.clientX - drag.current.x;
+    const dy = e.clientY - drag.current.y;
+    if (stagePress.current && !stagePress.current.dragged && Math.hypot(dx, dy) >= 4) {
+      stagePress.current.dragged = true;
+    }
+    setOffset({ x: drag.current.ox + dx, y: drag.current.oy + dy });
   };
   const onPointerUp = () => {
     drag.current = null;
     setDragging(false);
   };
 
+  const onImageClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName !== "IMG" || zoom > 1) return;
+    const rect = stage.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    setZoom(2);
+    setOffset({ x: -cx, y: -cy });
+    imageZoomedAt.current = performance.now();
+  };
+
   const onBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) return;
+    const press = stagePress.current;
+    stagePress.current = null;
+    if (press?.dragged) return;
+    // Pointer capture retargets the click to the stage, so the original
+    // pointer-down target decides whether this was a real backdrop click.
+    const origin = (press?.target ?? e.target) as HTMLElement;
+    if (origin.closest?.(".art-video-player, .image-stage img")) return;
     if (immersiveRef.current) {
       setImmersive(false);
       return;
@@ -2249,6 +2346,7 @@ function MediaViewer({
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
     dragMoved.current = false;
+    if (stagePress.current) stagePress.current.dragged = false;
     setDragging(true);
   };
   const onVideoPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2258,6 +2356,7 @@ function MediaViewer({
     if (!dragMoved.current) {
       if (Math.hypot(dx, dy) < 4) return;
       dragMoved.current = true;
+      if (stagePress.current) stagePress.current.dragged = true;
     }
     setOffset({ x: drag.current.ox + dx, y: drag.current.oy + dy });
   };
@@ -2265,16 +2364,6 @@ function MediaViewer({
     if (!drag.current) return;
     drag.current = null;
     setDragging(false);
-    if (dragMoved.current) {
-      suppressVideoClick.current = true;
-      window.setTimeout(() => { suppressVideoClick.current = false; }, 0);
-    }
-  };
-  const onVideoClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!suppressVideoClick.current) return;
-    e.preventDefault();
-    e.stopPropagation();
-    suppressVideoClick.current = false;
   };
 
   useEffect(() => {
@@ -2344,11 +2433,11 @@ function MediaViewer({
         className={`media-modal-main viewer-stage ${isVideo ? "video" : "image"} ${zoom > 1 ? "zoomed" : ""} ${dragging ? "dragging" : ""}`}
         onWheel={isVideo ? onWheel : undefined}
         onClick={onBackdropClick}
+        onPointerDownCapture={onStagePointerDownCapture}
         onPointerDown={isVideo ? onVideoPointerDown : undefined}
         onPointerMove={isVideo ? onVideoPointerMove : undefined}
         onPointerUp={isVideo ? onVideoPointerUp : undefined}
         onPointerCancel={isVideo ? onVideoPointerUp : undefined}
-        onClickCapture={isVideo ? onVideoClickCapture : undefined}
       >
         {isVideo ? (
           <ArtVideo
@@ -2367,14 +2456,13 @@ function MediaViewer({
             ref={stage}
             className={`image-stage ${zoom > 1 ? "zoomed" : ""} ${dragging ? "dragging" : ""}`}
             onWheel={onWheel}
-            onClick={onBackdropClick}
+            onClick={onImageClick}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
             onDoubleClick={() => {
-              if (zoom > 1) resetZoom();
-              else setZoom(2);
+              if (zoom > 1 && performance.now() - imageZoomedAt.current > 350) resetZoom();
             }}
           >
             <img
@@ -2384,7 +2472,11 @@ function MediaViewer({
               loading="eager"
               onLoad={() => setImageReady(true)}
               onError={() => setImageReady(true)}
-              style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
+              style={{
+                width: imageBox ? `${imageBox.w}px` : undefined,
+                height: imageBox ? `${imageBox.h}px` : undefined,
+                transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+              }}
             />
             {!imageReady && imageBusy && (
               <div className="image-loading-guard" role="status">
@@ -2410,7 +2502,8 @@ function MediaViewer({
                 <>
                   <dt>← / →</dt><dd>上一张 / 下一张</dd>
                   <dt>滚轮</dt><dd>以鼠标位置缩放</dd>
-                  <dt>双击</dt><dd>1× / 2× 切换</dd>
+                  <dt>单击 / 双击</dt><dd>放大 / 恢复原始大小</dd>
+                  <dt>拖动</dt><dd>放大后按住移动画面</dd>
                   <dt>+ / −</dt><dd>放大 / 缩小</dd>
                   <dt>0</dt><dd>恢复原始大小</dd>
                 </>

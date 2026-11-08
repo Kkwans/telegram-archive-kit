@@ -437,6 +437,9 @@ export default function App() {
 
   useEffect(() => {
     if (!tasksReady.current) {
+      // The first render still has no tasks; seed from the first non-empty
+      // snapshot so history restored from disk never replays as new toasts.
+      if (tasks.length === 0) return;
       tasks.forEach((t) => seenTasks.current.set(t.id, t.state));
       tasksReady.current = true;
       return;
@@ -446,8 +449,7 @@ export default function App() {
       const prev = seenTasks.current.get(t.id);
       seenTasks.current.set(t.id, t.state);
       const justFinished = prev === "running" && t.state !== "running";
-      const finishedBeforeFirstPoll = prev === undefined && t.state !== "running";
-      if (justFinished || finishedBeforeFirstPoll) {
+      if (justFinished) {
         completed = true;
         const text = t.state === "done"
           ? `任务完成：${t.title}`
