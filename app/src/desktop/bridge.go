@@ -231,6 +231,7 @@ type apiParams struct {
 	Height              int                 `json:"height"`
 	Fullscreen          bool                `json:"fullscreen"`
 	Cover               string              `json:"cover"`
+	Fade                int                 `json:"fade"`
 	Concurrent          int                 `json:"concurrent"`
 	Threads             int                 `json:"threads"`
 	StallTimeoutSeconds int                 `json:"stallTimeoutSeconds"`
@@ -444,8 +445,10 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		}
 		return map[string]bool{"fullscreen": b.setScreenFullscreen(p.Fullscreen, p.Cover)}, nil
 	case "hideFullscreenCover":
-		hideFsCover()
+		hideFsCover(p.Fade)
 		return nil, nil
+	case "showFullscreenCover":
+		return map[string]bool{"shown": showFsCover(p.Cover)}, nil
 	case "windowFullscreenState":
 		return map[string]bool{"fullscreen": b.fsWindow.Active}, nil
 	case "onlineChats":
@@ -689,7 +692,9 @@ func (b *Bridge) setScreenFullscreen(on bool, cover string) bool {
 	if !b.fsWindow.Active {
 		return false
 	}
-	hideFsCover()
+	// The cover is owned by the transition: on exit the frontend keeps it
+	// visible while the window shrinks and fades it out after the page cover
+	// has settled at the restored size.
 	state := b.fsWindow
 	b.fsWindow.Active = false
 	b.window.SetAlwaysOnTop(state.AlwaysTop)

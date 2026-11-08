@@ -9,7 +9,9 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -49,12 +51,14 @@ var (
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procSetStretchBltMode  = gdi32.NewProc("SetStretchBltMode")
 	procStretchBlt         = gdi32.NewProc("StretchBlt")
+	procSetLayeredAttrs    = user32.NewProc("SetLayeredWindowAttributes")
 )
 
 const (
 	wsPopup        = 0x80000000
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
+	wsExLayered    = 0x00080000
 	wsExNoActivate = 0x08000000
 	swpNoActivate  = 0x0010
 	swpShowWindow  = 0x0040
@@ -66,6 +70,7 @@ const (
 	srcCopy        = 0x00CC0020
 	biRGB          = 0
 	dibRGBColors   = 0
+	lwaAlpha       = 0x00000002
 	coverClassName = "TAKFullscreenCover"
 )
 
@@ -124,6 +129,7 @@ var (
 	coverBmpW  int
 	coverBmpH  int
 	coverProc  = syscall.NewCallback(coverWndProc)
+	coverFade  atomic.Int64
 )
 
 func coverWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
@@ -168,7 +174,7 @@ func ensureCoverWindow() uintptr {
 	}
 	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
 	hwnd, _, _ := procCreateWindowExW.Call(
-		wsExTopmost|wsExToolWindow|wsExNoActivate,
+		wsExTopmost|wsExToolWindow|wsExNoActivate|wsExLayered,
 		uintptr(unsafe.Pointer(class)),
 		uintptr(unsafe.Pointer(title)),
 		wsPopup,
@@ -271,6 +277,7 @@ func showCoverWindow() {
 	w := int32(math.Round(float64(screen.Bounds.Width) * scale))
 	h := int32(math.Round(float64(screen.Bounds.Height) * scale))
 	procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoActivate|swpShowWindow)
+	procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
 	procInvalidateRect.Call(hwnd, 0, 0)
 }
 
@@ -285,6 +292,7 @@ func showFsCover(dataURL string) bool {
 	if err != nil {
 		return false
 	}
+	coverFade.Add(1) // cancel a fade that may still be running
 	application.InvokeSync(func() {
 		setCoverBitmap(w, h, pix)
 		showCoverWindow()
@@ -292,12 +300,56 @@ func showFsCover(dataURL string) bool {
 	return true
 }
 
-func hideFsCover() {
+// hideFsCover removes the cover. A non-zero fadeMs cross-fades the native
+// window into the page-owned cover, which is what makes the exit hand-off
+// invisible: both surfaces show the same blurred frame at the same geometry.
+func hideFsCover(fadeMs int) {
+	gen := coverFade.Add(1)
+	var hwnd uintptr
 	application.InvokeSync(func() {
-		if coverHWND != 0 {
-			procShowWindow.Call(coverHWND, swHide)
+		hwnd = coverHWND
+		if hwnd != 0 {
+			procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
 		}
 	})
+	if hwnd == 0 {
+		return
+	}
+	if fadeMs <= 0 {
+		application.InvokeSync(func() {
+			if coverHWND == hwnd {
+				procShowWindow.Call(hwnd, swHide)
+				procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
+			}
+		})
+		return
+	}
+	go func() {
+		duration := time.Duration(fadeMs) * time.Millisecond
+		started := time.Now()
+		for {
+			if coverFade.Load() != gen {
+				return
+			}
+			elapsed := time.Since(started)
+			if elapsed >= duration {
+				break
+			}
+			alpha := uintptr(math.Round(255 * (1 - float64(elapsed)/float64(duration))))
+			procSetLayeredAttrs.Call(hwnd, 0, alpha, lwaAlpha)
+			time.Sleep(16 * time.Millisecond)
+		}
+		if coverFade.Load() != gen {
+			return
+		}
+		application.InvokeSync(func() {
+			if coverHWND != hwnd {
+				return
+			}
+			procShowWindow.Call(hwnd, swHide)
+			procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
+		})
+	}()
 }
 
 type coverError string

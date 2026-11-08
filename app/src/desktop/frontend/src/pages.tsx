@@ -1005,8 +1005,10 @@ const ArtVideo = forwardRef<VideoApi, {
   knownRatio: number;
   hasNext: boolean;
   autoNext: boolean;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
   onNext: () => void;
-}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, onNext }, ref) {
+}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, fullscreen, onToggleFullscreen, onNext }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const fitRef = useRef<() => void>(() => undefined);
@@ -1016,6 +1018,11 @@ const ArtVideo = forwardRef<VideoApi, {
   const onNextRef = useRef(onNext);
   autoNextRef.current = autoNext;
   onNextRef.current = onNext;
+  const onToggleFsRef = useRef(onToggleFullscreen);
+  onToggleFsRef.current = onToggleFullscreen;
+  const fsButtonRef = useRef<HTMLElement | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const switchTimer = useRef(0);
   const frameAspectRef = useRef(frameAspect);
   const knownRatioRef = useRef(knownRatio);
   const hasNextRef = useRef(hasNext);
@@ -1338,22 +1345,25 @@ const ArtVideo = forwardRef<VideoApi, {
     let revealed = false;
     let revealFrame = 0;
     let revealFallback = 0;
-    let switchFallback = 0;
     const finishReveal = () => {
       if (!revealed) return;
       window.clearTimeout(revealFallback);
-      window.clearTimeout(switchFallback);
-      wrap.current?.classList.remove("is-switching");
       hideControls();
       window.requestAnimationFrame(() => {
         hideControls();
         setReady(true);
       });
+      // ArtPlayer fades its center mask over 200ms after playback starts.
+      // Keep the switch guard through that fade so the pause glyph can never
+      // flash between "loaded" and the first visible frame.
+      window.clearTimeout(switchTimer.current);
+      switchTimer.current = window.setTimeout(() => setSwitching(false), 260);
     };
     const revealFirstFrame = () => {
       if (revealed) return;
       revealed = true;
       hideControls();
+      if (playerRef.current) playerRef.current.mask.show = false;
       const video = player.video as HTMLVideoElement & {
         requestVideoFrameCallback?: (callback: () => void) => number;
         cancelVideoFrameCallback?: (handle: number) => void;
@@ -1386,9 +1396,11 @@ const ArtVideo = forwardRef<VideoApi, {
       resetReveal();
       // switchUrl briefly parks the element in a paused state; hide ArtPlayer's
       // center play/pause glyph until the new source actually starts playing.
-      wrap.current?.classList.add("is-switching");
-      window.clearTimeout(switchFallback);
-      switchFallback = window.setTimeout(() => wrap.current?.classList.remove("is-switching"), 3000);
+      // This has to be React state: the wrap's className is rendered by React
+      // and an imperatively added class is wiped by the next re-render.
+      setSwitching(true);
+      window.clearTimeout(switchTimer.current);
+      switchTimer.current = window.setTimeout(() => setSwitching(false), 3000);
       setReady(false);
       setShowBusy(false);
       setLoadPercent(0);
@@ -1437,11 +1449,36 @@ const ArtVideo = forwardRef<VideoApi, {
         return `<span class="tak-rate-label">${value.toFixed(2)}×</span>`;
       },
     });
+    // ArtPlayer's own fullscreen is disabled because it uses the HTML
+    // Fullscreen API, which leaves the WebView viewport stale. The control is
+    // kept in its usual bottom-right slot but drives the window-level viewer
+    // transition instead, matching the top-bar fullscreen button.
+    const fsIcon = document.createElement("div");
+    fsIcon.className = "art-icon tak-fs-toggle";
+    fsIcon.innerHTML = `<span class="tak-fs-enter">${player.icons.fullscreenOff.outerHTML}</span><span class="tak-fs-exit">${player.icons.fullscreenOn.outerHTML}</span>`;
+    const fsButton = player.controls.add({
+      name: "tak-window-fullscreen",
+      position: "right",
+      html: fsIcon,
+      tooltip: "全屏",
+      click() {
+        onToggleFsRef.current();
+      },
+    });
+    // Artplayer's add() can return undefined while still mounting the control,
+    // so resolve the element from the DOM to keep the state-driven icon/title.
+    fsButtonRef.current = (player.template.$controlsRight.querySelector(".art-control-tak-window-fullscreen") as HTMLElement | null) || fsButton || null;
+    if (fsButton) {
+      fsButton.title = "全屏";
+      fsButton.setAttribute("aria-label", "全屏");
+    }
     const volumeControl = player.template.$controlsLeft.querySelector(".art-control-volume");
     const settingControl = player.template.$controlsRight.querySelector(".art-control-setting");
     if (volumeControl && volumeControl.parentElement !== player.template.$controlsRight) {
       player.template.$controlsRight.insertBefore(volumeControl, settingControl);
     }
+    const fsControl = player.template.$controlsRight.querySelector(".art-control-tak-window-fullscreen");
+    if (fsControl) player.template.$controlsRight.appendChild(fsControl);
     const timeAbove = document.createElement("div");
     timeAbove.className = "tak-time-above";
     const clock = (value: number) => {
@@ -1515,18 +1552,25 @@ const ArtVideo = forwardRef<VideoApi, {
         audioCtx.current = null;
         gainNode.current = null;
       }
-      window.clearTimeout(switchFallback);
-      wrap.current?.classList.remove("is-switching");
+      window.clearTimeout(switchTimer.current);
       player.destroy(false);
       playerRef.current = null;
       switchSourceRef.current = null;
       nextButtonRef.current = null;
+      fsButtonRef.current = null;
     };
   }, []);
 
+  useEffect(() => {
+    const button = fsButtonRef.current;
+    if (!button) return;
+    button.title = fullscreen ? "退出全屏" : "全屏";
+    button.setAttribute("aria-label", button.title);
+  }, [fullscreen]);
+
   return (
     <>
-      <div ref={wrap} className={`art-video-wrap ${ready ? "is-ready" : "is-loading"} ${framed ? "" : "is-pre-meta"}`}>
+      <div ref={wrap} className={`art-video-wrap ${switching ? "is-switching" : ""} ${fullscreen ? "is-window-fs" : ""} ${ready ? "is-ready" : "is-loading"} ${framed ? "" : "is-pre-meta"}`}>
         <div ref={box} className={`art-player ${fit}`} />
         {framed && !ready && (
           <div className={`art-video-loading ${frameAspect === "original" ? "" : "fixed"}`} aria-live="polite">
@@ -1591,13 +1635,15 @@ function nextPaint(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
-function buildFullscreenCover(snapshot: string): Promise<string> {
+function buildFullscreenCover(snapshot: string, inset?: { rect: ViewerRect; radius: number }): Promise<string> {
   if (!snapshot) return Promise.resolve("");
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       try {
-        const aspect = Math.max(0.5, Math.min(3, window.screen.width / Math.max(1, window.screen.height)));
+        const screenW = Math.max(1, window.screen.width);
+        const screenH = Math.max(1, window.screen.height);
+        const aspect = Math.max(0.5, Math.min(3, screenW / screenH));
         const w = 960;
         const h = Math.max(2, Math.round(w / aspect));
         const canvas = document.createElement("canvas");
@@ -1625,6 +1671,24 @@ function buildFullscreenCover(snapshot: string): Promise<string> {
         glow.addColorStop(1, "rgba(47, 107, 255, 0)");
         ctx.fillStyle = glow;
         ctx.fillRect(0, 0, w, h);
+        if (inset && inset.rect.width > 4 && inset.rect.height > 4) {
+          const sx = w / screenW;
+          const sy = h / screenH;
+          const x = inset.rect.left * sx;
+          const y = inset.rect.top * sy;
+          const iw = inset.rect.width * sx;
+          const ih = inset.rect.height * sy;
+          ctx.save();
+          ctx.beginPath();
+          const radius = Math.max(0, inset.radius * sx);
+          if (typeof ctx.roundRect === "function") ctx.roundRect(x, y, iw, ih, radius);
+          else ctx.rect(x, y, iw, ih);
+          ctx.clip();
+          ctx.fillStyle = "#05070b";
+          ctx.fillRect(x, y, iw, ih);
+          ctx.drawImage(img, x, y, iw, ih);
+          ctx.restore();
+        }
         resolve(canvas.toDataURL("image/jpeg", 0.82));
       } catch {
         resolve("");
@@ -1775,11 +1839,11 @@ function MediaViewer({
     }
   };
 
-  const hideFullscreenCover = async () => {
+  const hideFullscreenCover = async (fade = 0) => {
     try {
-      await call("hideFullscreenCover");
+      await call("hideFullscreenCover", { fade });
     } catch {
-      /* the native window hides it together with fullscreen exit */
+      /* the cover window lives in the same process and disappears with it */
     }
   };
 
@@ -1844,7 +1908,7 @@ function MediaViewer({
         if (nativeCover && hold > 0) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, hold));
         }
-        if (nativeCover) await hideFullscreenCover();
+        if (nativeCover) await hideFullscreenCover(120);
         setFsShowGhost(true);
         await nextPaint();
         setFsGhost((ghost) => (ghost ? { ...ghost, to: target } : ghost));
@@ -1857,36 +1921,65 @@ function MediaViewer({
       await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
       if (nativeCover) await hideFullscreenCover();
     } else {
-      await hideFullscreenCover();
       const ret = fsReturn.current;
       setFsShowGhost(Boolean(measured && snapshot));
       await nextPaint();
+      let targetScreen: ViewerRect | null = null;
       if (measured && snapshot && ret?.rect) {
-        const target = {
+        targetScreen = {
           left: ret.windowX - ret.screenX + ret.rect.left,
           top: ret.windowY - ret.screenY + ret.rect.top,
           width: ret.rect.width,
           height: ret.rect.height,
         };
-        setFsGhost({ src: snapshot, from: measured, to: target, radius });
+        setFsGhost({ src: snapshot, from: measured, to: targetScreen, radius });
         setFsGhostLive(true);
         await new Promise<void>((resolve) => window.setTimeout(resolve, 280));
       } else {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
       }
-      // The shrunk frame is already sitting where the window will reappear.
-      // Hide it before the viewport changes; the blurred cover finishes the
-      // hand-off and avoids clipping the full-size image to the smaller window.
+      // Freeze the last frame into a native full-screen cover that already
+      // contains the sharp media at its restored-window position. The window
+      // can then shrink and the WebView can reflow underneath without any of
+      // it reaching the screen.
+      const exitCover = measured && snapshot && targetScreen
+        ? await buildFullscreenCover(snapshot, { rect: targetScreen, radius })
+        : "";
+      if (exitCover) {
+        try {
+          await call("showFullscreenCover", { cover: exitCover });
+        } catch {
+          /* the dark frame still hides the resize */
+        }
+      }
       setFsShowGhost(false);
       windowFsRef.current = false;
       await applyWindowFullscreen(false);
       await nextPaint();
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 60));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
       setWindowFs(false);
       if (hideChrome) setImmersive(false);
       await nextPaint();
+      if (snapshot && (ret?.rect || mediaBox(modal.current, isVideo))) {
+        const settled = mediaBox(modal.current, isVideo) || ret?.rect;
+        if (settled) {
+          const settle = {
+            left: settled.left,
+            top: settled.top,
+            width: settled.width,
+            height: settled.height,
+          };
+          setFsGhost({ src: snapshot, from: settle, to: settle, radius });
+          setFsShowGhost(true);
+          await nextPaint();
+        }
+      }
+      if (exitCover) {
+        await hideFullscreenCover(140);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 140));
+      }
       setFsFade(true);
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 220));
     }
     setFsGhost(null);
     setFsShowGhost(false);
@@ -1919,6 +2012,7 @@ function MediaViewer({
     if (windowFsRef.current) {
       windowFsRef.current = false;
       setWindowFs(false);
+      void hideFullscreenCover(0);
       void applyWindowFullscreen(false);
     }
     onClose();
@@ -1927,6 +2021,7 @@ function MediaViewer({
   useEffect(() => () => {
     if (windowFsRef.current) {
       windowFsRef.current = false;
+      void call("hideFullscreenCover", { fade: 0 }).catch(() => undefined);
       void applyWindowFullscreen(false);
     }
   }, []);
@@ -2153,6 +2248,8 @@ function MediaViewer({
             knownRatio={knownRatio}
             hasNext={index < items.length - 1}
             autoNext={items[index + 1]?.kind === "video"}
+            fullscreen={windowFs}
+            onToggleFullscreen={toggleFullscreen}
             onNext={() => onIndex(index + 1)}
           />
         ) : (

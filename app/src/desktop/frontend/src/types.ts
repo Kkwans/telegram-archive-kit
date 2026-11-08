@@ -232,7 +232,15 @@ export interface TaskInfo {
   kind: string;
   title: string;
   chat?: string;
+  chatId?: string;
   slug?: string;
+  mode?: string;
+  source?: string;
+  target?: string;
+  messages?: number;
+  media?: number;
+  filesDone?: number;
+  filesTotal?: number;
   detail?: string;
   state: "running" | "done" | "failed" | "partial" | "paused" | "stopped";
   percent: number;

@@ -11,11 +11,14 @@ import (
 )
 
 type OperationProgress struct {
-	Stage   string
-	Detail  string
-	Current int64
-	Total   int64
-	Unit    string
+	Stage      string
+	Detail     string
+	Current    int64
+	Total      int64
+	Unit       string
+	Percent    int
+	FilesDone  int
+	FilesTotal int
 }
 
 type operationResult struct{ err error }

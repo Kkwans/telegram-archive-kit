@@ -134,16 +134,19 @@ func (f *Facade) AnalyzeOfficial(folder string) (OfficialPreviewDTO, error) {
 }
 
 func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
-	return f.importOfficial(folder, slug, mode, nil)
+	return f.importOfficial(folder, slug, mode, nil, nil)
 }
 
-func (f *Facade) importOfficial(folder, slug, mode string, progress func(OperationProgress)) (ChatDTO, error) {
+func (f *Facade) importOfficial(folder, slug, mode string, onMeta func(archive.OfficialExportMeta), progress func(OperationProgress)) (ChatDTO, error) {
 	if st, err := os.Stat(folder); err != nil || !st.IsDir() {
 		return ChatDTO{}, errors.New("所选目录无效")
 	}
 	meta, _, err := archive.AnalyzeOfficialExport(folder, f.a.Settings.LibraryRoot, "referenced")
 	if err != nil {
 		return ChatDTO{}, err
+	}
+	if onMeta != nil {
+		onMeta(meta)
 	}
 	if strings.TrimSpace(slug) == "" {
 		m, err := f.a.ensureProvisionalWorkspace(meta.Name, meta.LastTS)
@@ -154,12 +157,38 @@ func (f *Facade) importOfficial(folder, slug, mode string, progress func(Operati
 	}
 	switch mode {
 	case "reference":
+		if progress != nil {
+			progress(OperationProgress{Stage: "登记官方导出", Detail: "引用原目录，不复制文件", Percent: 20})
+		}
 		if _, err := f.a.registerOfficialExport(slug, folder, "referenced"); err != nil {
 			return ChatDTO{}, err
 		}
 	case "copy":
 		dst := f.a.managedOfficialRoot(slug, meta.Name)
-		if _, err := transfer.DirIncremental(context.Background(), folder, dst, false, nil); err != nil {
+		if progress != nil {
+			progress(OperationProgress{Stage: "正在复制导出文件", Detail: "准备复制 " + humanBytes(meta.TotalBytes), Percent: 10})
+		}
+		if _, err := transfer.DirIncremental(context.Background(), folder, dst, false, func(p transfer.Progress) {
+			if progress == nil {
+				return
+			}
+			pct := 10
+			if p.BytesTotal > 0 {
+				pct = 10 + int(p.BytesDone*68/p.BytesTotal)
+				if pct > 78 {
+					pct = 78
+				}
+			}
+			detail := fmt.Sprintf("已复制 %s / %s · %d/%d 个文件", humanBytes(p.BytesDone), humanBytes(p.BytesTotal), p.FilesDone, p.FilesTotal)
+			if p.Current != "" && p.FilesTotal <= 200 {
+				detail = fmt.Sprintf("已复制 %s / %s · %s", humanBytes(p.BytesDone), humanBytes(p.BytesTotal), truncatePlain(p.Current, 60))
+			}
+			progress(OperationProgress{
+				Stage: "正在复制导出文件", Detail: detail,
+				Current: p.BytesDone, Total: p.BytesTotal, Unit: "字节",
+				Percent: pct, FilesDone: p.FilesDone, FilesTotal: p.FilesTotal,
+			})
+		}); err != nil {
 			return ChatDTO{}, err
 		}
 		if _, err := f.a.registerOfficialExport(slug, dst, "copied"); err != nil {
@@ -169,6 +198,9 @@ func (f *Facade) importOfficial(folder, slug, mode string, progress func(Operati
 		dst := f.a.managedOfficialRoot(slug, meta.Name)
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 			return ChatDTO{}, err
+		}
+		if progress != nil {
+			progress(OperationProgress{Stage: "正在纳管导出目录", Detail: "同盘快速移动，不复制媒体", Percent: 20})
 		}
 		if err := os.Rename(folder, dst); err != nil {
 			return ChatDTO{}, fmt.Errorf("无法直接纳管（通常因为源目录与档案库不在同一磁盘）：请改用“复制”模式。%v", err)
@@ -200,7 +232,19 @@ func (f *Facade) importOfficial(folder, slug, mode string, progress func(Operati
 	// messages.html. Do the full build here so an import immediately shows covers
 	// and a browsable archive instead of an empty shell.
 	if fileExists(f.a.sourcePath(slug)) || f.a.hasOfficialExport(slug) {
-		if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), slug, true, progress); err != nil {
+		buildProgress := progress
+		if progress != nil {
+			buildProgress = func(p OperationProgress) {
+				if p.Percent <= 0 && p.Total > 0 {
+					p.Percent = 80 + int(p.Current*18/p.Total)
+					if p.Percent > 98 {
+						p.Percent = 98
+					}
+				}
+				progress(p)
+			}
+		}
+		if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), slug, true, buildProgress); err != nil {
 			return ChatDTO{}, err
 		}
 	} else if err := f.a.buildLibrary(); err != nil {

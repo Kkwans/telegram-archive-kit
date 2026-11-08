@@ -21,7 +21,15 @@ type TaskDTO struct {
 	Kind                string  `json:"kind"`
 	Title               string  `json:"title"`
 	Chat                string  `json:"chat,omitempty"`
+	ChatID              string  `json:"chatId,omitempty"`
 	Slug                string  `json:"slug,omitempty"`
+	Mode                string  `json:"mode,omitempty"`
+	Source              string  `json:"source,omitempty"`
+	Target              string  `json:"target,omitempty"`
+	Messages            int     `json:"messages,omitempty"`
+	Media               int     `json:"media,omitempty"`
+	FilesDone           int     `json:"filesDone,omitempty"`
+	FilesTotal          int     `json:"filesTotal,omitempty"`
 	Detail              string  `json:"detail,omitempty"`
 	State               string  `json:"state"` // running|done|failed
 	Percent             int     `json:"percent"`
@@ -76,9 +84,94 @@ func (t *backgroundTask) setChat(chat string) {
 	t.mu.Unlock()
 }
 
+func (t *backgroundTask) setTitle(title string) {
+	t.mu.Lock()
+	if title != "" {
+		t.dto.Title = title
+	}
+	t.mu.Unlock()
+}
+
 func (t *backgroundTask) setSlug(slug string) {
 	t.mu.Lock()
 	t.dto.Slug = slug
+	t.mu.Unlock()
+}
+
+// setInfo fills the type-specific detail fields. Only non-zero values replace
+// existing data so callers can update one aspect at a time.
+func (t *backgroundTask) setInfo(chatID, mode, source, target string, messages, media int) {
+	t.mu.Lock()
+	if chatID != "" {
+		t.dto.ChatID = chatID
+	}
+	if mode != "" {
+		t.dto.Mode = mode
+	}
+	if source != "" {
+		t.dto.Source = source
+	}
+	if target != "" {
+		t.dto.Target = target
+	}
+	if messages > 0 {
+		t.dto.Messages = messages
+	}
+	if media > 0 {
+		t.dto.Media = media
+	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setStats(messages, media int) {
+	t.mu.Lock()
+	if messages > 0 {
+		t.dto.Messages = messages
+	}
+	if media > 0 {
+		t.dto.Media = media
+	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setTotalBytes(total int64) {
+	t.mu.Lock()
+	if total > 0 {
+		t.dto.TotalBytes = total
+	}
+	t.mu.Unlock()
+}
+
+// copyStats advances byte/file counters for copy-style tasks without
+// clobbering the generic download fields used by sync tasks.
+func (t *backgroundTask) copyStats(doneBytes, totalBytes int64, filesDone, filesTotal, percent int, detail string) {
+	t.mu.Lock()
+	if totalBytes > 0 {
+		t.dto.TotalBytes = totalBytes
+	}
+	t.dto.Bytes = doneBytes
+	if filesTotal > 0 {
+		t.dto.FilesDone = filesDone
+		t.dto.FilesTotal = filesTotal
+	}
+	if percent >= 0 {
+		if percent > 100 {
+			percent = 100
+		}
+		t.dto.Percent = percent
+	}
+	if detail != "" {
+		t.dto.Detail = detail
+	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) fileProgress(done, total int) {
+	t.mu.Lock()
+	if total > 0 {
+		t.dto.FilesDone = done
+		t.dto.FilesTotal = total
+	}
 	t.mu.Unlock()
 }
 
@@ -577,9 +670,14 @@ func (f *Facade) StartImportJSON(paths []string) (string, error) {
 		return "", fmt.Errorf("没有选择文件")
 	}
 	return f.startTask("import-json", fmt.Sprintf("导入 %d 个 result.json", len(paths)), func(t *backgroundTask) error {
+		if dir := filepath.Dir(paths[0]); dir != "" {
+			t.setInfo("", "", dir, "", 0, 0)
+		}
+		t.fileProgress(0, len(paths))
 		var firstErr error
 		ok := 0
 		for i, p := range paths {
+			t.fileProgress(i, len(paths))
 			t.update(i*100/len(paths), filepath.Base(p))
 			if _, _, err := f.a.importResultJSONMode(p, false); err != nil {
 				if firstErr == nil {
@@ -588,6 +686,7 @@ func (f *Facade) StartImportJSON(paths []string) (string, error) {
 				continue
 			}
 			ok++
+			t.fileProgress(i+1, len(paths))
 		}
 		if firstErr != nil {
 			return fmt.Errorf("成功 %d/%d：%w", ok, len(paths), firstErr)
@@ -602,37 +701,87 @@ func (f *Facade) StartImportOfficial(folder, slug, mode string) (string, error) 
 		return "", fmt.Errorf("所选目录无效")
 	}
 	return f.startTask("import-official", "继承官方 ChatExport", func(t *backgroundTask) error {
-		t.update(20, "分析导出目录")
-		chat, err := f.importOfficial(folder, slug, mode, func(p OperationProgress) {
-			pct := 20
-			if p.Total > 0 {
-				pct = 20 + int(p.Current*78/p.Total)
-			}
-			if pct > 98 {
-				pct = 98
+		t.setInfo("", mode, folder, "", 0, 0)
+		if name := strings.TrimSpace(filepath.Base(folder)); name != "" && name != "." {
+			t.setChat(name)
+		}
+		t.update(5, "分析导出目录")
+		chat, err := f.importOfficial(folder, slug, mode, func(meta archive.OfficialExportMeta) {
+			t.setChat(meta.Name)
+			t.setInfo("", mode, folder, "", meta.MessageCount, meta.MediaFiles)
+			t.setTotalBytes(meta.TotalBytes)
+			t.update(10, fmt.Sprintf("统计完成 · %s · %d 条消息 · %d 个媒体", humanBytes(meta.TotalBytes), meta.MessageCount, meta.MediaFiles))
+		}, func(p OperationProgress) {
+			pct := p.Percent
+			if pct <= 0 {
+				pct = 20
+				if p.Total > 0 {
+					pct = 20 + int(p.Current*78/p.Total)
+				}
+				if pct > 98 {
+					pct = 98
+				}
 			}
 			detail := strings.TrimSpace(p.Stage)
 			if strings.TrimSpace(p.Detail) != "" {
 				detail += " · " + p.Detail
 			}
-			t.update(pct, detail)
+			if p.FilesTotal > 0 {
+				t.copyStats(p.Current, p.Total, p.FilesDone, p.FilesTotal, pct, detail)
+			} else {
+				t.update(pct, detail)
+			}
 		})
 		if err != nil {
 			return err
 		}
 		t.setChat(chat.Name)
+		t.setInfo(chat.ID, mode, folder, "", chat.Messages, chat.Media)
 		t.update(100, "已登记："+chat.Name)
 		return nil
 	}), nil
 }
 
-func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
-	name := slug
-	if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
-		name = meta.Chat.Name
+// workspaceSize sums the files an export would copy. Directory entries are
+// metadata-only, so this stays fast even for large archives on a local disk.
+func (a *App) workspaceSize(slug string) int64 {
+	ws := a.workspaceDir(slug)
+	if ws == "" {
+		return 0
 	}
-	return f.startTask("export", "导出聊天："+name, func(t *backgroundTask) error {
+	var total int64
+	for _, dir := range []string{a.mediaDir(slug), a.filesDir(slug), filepath.Join(ws, "source"), filepath.Join(ws, "official_exports")} {
+		_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, er := d.Info(); er == nil && info.Size() > 0 {
+				total += info.Size()
+			}
+			return nil
+		})
+	}
+	return total
+}
+
+func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
+	return f.startTask("export", "导出聊天："+slug, func(t *backgroundTask) error {
+		name := slug
+		chatID := ""
+		messages, media := 0, 0
+		if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
+			name = meta.Chat.Name
+			chatID = meta.Chat.ID
+			messages = meta.MessageCount
+			media = meta.MediaCount
+		}
 		t.setChat(name)
+		t.setTitle("导出聊天：" + name)
+		t.setInfo(chatID, "", f.a.Settings.LibraryRoot, dstRoot, messages, media)
+		t.update(5, "统计聊天数据")
+		if total := f.a.workspaceSize(slug); total > 0 {
+			t.setTotalBytes(total)
+		}
 		t.update(15, "复制聊天文件")
 		if err := f.ExportChat(slug, dstRoot); err != nil {
 			return err
@@ -643,12 +792,19 @@ func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
 }
 
 func (f *Facade) StartRefreshWeb(slug string) (string, error) {
-	name := slug
-	if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
-		name = meta.Chat.Name
-	}
-	return f.startTask("refresh", "重建网页："+name, func(t *backgroundTask) error {
+	return f.startTask("refresh", "重建网页："+slug, func(t *backgroundTask) error {
+		name := slug
+		chatID := ""
+		messages, media := 0, 0
+		if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
+			name = meta.Chat.Name
+			chatID = meta.Chat.ID
+			messages = meta.MessageCount
+			media = meta.MediaCount
+		}
 		t.setChat(name)
+		t.setTitle("重建网页：" + name)
+		t.setInfo(chatID, "", f.a.workspaceDir(slug), "", messages, media)
 		t.update(30, "扫描与渲染")
 		if err := f.RefreshWeb(slug); err != nil {
 			return err
@@ -661,19 +817,24 @@ func (f *Facade) StartRefreshWeb(slug string) (string, error) {
 func (f *Facade) StartRefreshAllWeb() (string, error) {
 	return f.startTask("refresh-all", "重建全部网页", func(t *backgroundTask) error {
 		list := f.a.listWorkspaces()
+		t.setInfo("", "", "", f.a.Settings.LibraryRoot, 0, 0)
+		t.fileProgress(0, len(list))
 		failures := 0
 		ok := 0
 		for i, m := range list {
 			t.update(i*100/len(list), m.Chat.Name)
 			if _, err := os.Stat(filepath.Join(f.a.dataDir(m.Slug), "archive-data.js")); err != nil {
+				t.fileProgress(i+1, len(list))
 				continue
 			}
 			if err := f.a.refreshWorkspaceWeb(m.Slug); err != nil {
 				failures++
+				t.fileProgress(i+1, len(list))
 				continue
 			}
 			ok++
 			t.update((i+1)*100/len(list), m.Chat.Name)
+			t.fileProgress(i+1, len(list))
 		}
 		if err := f.a.buildLibrary(); err != nil {
 			return err
@@ -699,20 +860,24 @@ func (f *Facade) StartSyncAllMissing() (string, error) {
 		return "", fmt.Errorf("没有缺失媒体的聊天")
 	}
 	return f.startTask("sync-all", fmt.Sprintf("批量下载缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
+		t.fileProgress(0, len(targets))
 		failures := 0
 		for i, m := range targets {
 			t.setChat(m.Chat.Name)
 			t.update(i*100/len(targets), m.Chat.Name)
+			t.fileProgress(i, len(targets))
 			rep := &eventReporter{opID: "sync-all", emit: f.send}
 			rep.Phase(context.Background(), "sync", "同步缺失媒体", m.Chat.Name)
 			if err := f.a.smartSyncCtx(context.Background(), m.Slug, rep); err != nil {
 				failures++
+				t.fileProgress(i+1, len(targets))
 				continue
 			}
 			if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), m.Slug, true, nil); err != nil {
 				failures++
 			}
 			t.update((i+1)*100/len(targets), m.Chat.Name)
+			t.fileProgress(i+1, len(targets))
 		}
 		if err := f.a.buildLibrary(); err != nil {
 			return err
@@ -741,13 +906,17 @@ func (f *Facade) StartMergeLibrary(srcRoot string) (string, error) {
 		if len(slugs) == 0 {
 			return fmt.Errorf("源档案库没有可合并的聊天")
 		}
+		t.setInfo("", "", srcRoot, f.a.Settings.LibraryRoot, 0, 0)
+		t.fileProgress(0, len(slugs))
 		ok := 0
 		for i, slug := range slugs {
 			t.update(i*100/len(slugs), slug)
+			t.fileProgress(i, len(slugs))
 			if _, err := f.a.copyChatFromLibrary(srcRoot, slug); err != nil {
 				continue
 			}
 			ok++
+			t.fileProgress(i+1, len(slugs))
 		}
 		if err := f.a.buildLibrary(); err != nil {
 			return err
