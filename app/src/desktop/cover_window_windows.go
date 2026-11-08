@@ -6,6 +6,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
 	"math"
 	"strings"
 	"sync"
@@ -52,6 +53,9 @@ var (
 	procSetStretchBltMode  = gdi32.NewProc("SetStretchBltMode")
 	procStretchBlt         = gdi32.NewProc("StretchBlt")
 	procSetLayeredAttrs    = user32.NewProc("SetLayeredWindowAttributes")
+	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
+	procSelectClipRgn      = gdi32.NewProc("SelectClipRgn")
+	procUpdateLayered      = user32.NewProc("UpdateLayeredWindow")
 )
 
 const (
@@ -62,6 +66,8 @@ const (
 	wsExNoActivate = 0x08000000
 	swpNoActivate  = 0x0010
 	swpShowWindow  = 0x0040
+	swpNoMove      = 0x0002
+	swpNoSize      = 0x0001
 	hwndTopmost    = ^uintptr(0) // -1
 	swHide         = 0
 	wmPaint        = 0x000F
@@ -121,16 +127,154 @@ type bitmapInfo struct {
 	Colors [1]uint32
 }
 
+type coverPoint struct {
+	X, Y int32
+}
+
+type coverSize struct {
+	CX, CY int32
+}
+
+type blendFunction struct {
+	BlendOp             byte
+	BlendFlags          byte
+	SourceConstantAlpha byte
+	AlphaFormat         byte
+}
+
+// coverRect uses physical screen pixels relative to the primary monitor.
+type coverRect struct {
+	X, Y, W, H int32
+}
+
+func (r coverRect) valid() bool { return r.W > 2 && r.H > 2 }
+
 var (
-	coverMu    sync.Mutex
-	coverHWND  uintptr
-	coverMemDC uintptr
-	coverDIB   uintptr
-	coverBmpW  int
-	coverBmpH  int
-	coverProc  = syscall.NewCallback(coverWndProc)
-	coverFade  atomic.Int64
+	coverMu      sync.Mutex
+	coverHWND    uintptr
+	coverMemDC   uintptr
+	coverDIB     uintptr
+	coverBmpW    int
+	coverBmpH    int
+	coverProc    = syscall.NewCallback(coverWndProc)
+	coverFade    atomic.Int64
+	coverVisible atomic.Bool
+
+	coverSharpDC  uintptr
+	coverSharpDIB uintptr
+	coverSharpW   int
+	coverSharpH   int
+
+	coverFrom      coverRect
+	coverTo        coverRect
+	coverRadius    int32
+	coverAnimStart time.Time
+	coverAnimDur   time.Duration
+	coverAnimating bool
+	coverAnimGen   atomic.Int64
+	coverAlpha     atomic.Int32
+
+	coverComposeDC  uintptr
+	coverComposeDIB uintptr
+	coverComposeW   int
+	coverComposeH   int
 )
+
+// ensureCoverCompose returns a memory DC backed by a DIB the size of the cover
+// client. The whole frame is composed there and copied to the window in one
+// BitBlt, so DWM never composites the blurred background without the sharp
+// media frame while the animation is running.
+func ensureCoverCompose(w, h int) uintptr {
+	if w <= 0 || h <= 0 {
+		return 0
+	}
+	if coverComposeDC != 0 && coverComposeW == w && coverComposeH == h {
+		return coverComposeDC
+	}
+	if coverComposeDC != 0 {
+		procDeleteDC.Call(coverComposeDC)
+		coverComposeDC = 0
+	}
+	if coverComposeDIB != 0 {
+		procDeleteObject.Call(coverComposeDIB)
+		coverComposeDIB = 0
+	}
+	mem, dib := buildCoverDIB(w, h, make([]byte, w*h*4))
+	if mem == 0 {
+		return 0
+	}
+	coverComposeDC, coverComposeDIB = mem, dib
+	coverComposeW, coverComposeH = w, h
+	return mem
+}
+
+// paintCover composes the blurred background and the sharp media frame into
+// one surface and updates the layered window atomically. GDI painting directly
+// to the window could let DWM composite the background before the sharp frame,
+// which looked like the media disappeared for a frame.
+func paintCover() {
+	hwnd := coverHWND
+	if hwnd == 0 || !coverVisible.Load() {
+		return
+	}
+	var rc winRect
+	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
+	cw, ch := rc.Right-rc.Left, rc.Bottom-rc.Top
+	compose := ensureCoverCompose(int(cw), int(ch))
+	if compose == 0 {
+		return
+	}
+	coverMu.Lock()
+	mem, bw, bh := coverMemDC, coverBmpW, coverBmpH
+	sharp, sw, sh := coverSharpDC, coverSharpW, coverSharpH
+	from, to, radius := coverFrom, coverTo, coverRadius
+	animating, started, duration := coverAnimating, coverAnimStart, coverAnimDur
+	coverMu.Unlock()
+	if mem == 0 || bw <= 0 || bh <= 0 {
+		return
+	}
+	procSetStretchBltMode.Call(compose, halftone)
+	procStretchBlt.Call(compose, 0, 0, uintptr(cw), uintptr(ch), mem, 0, 0, uintptr(bw), uintptr(bh), srcCopy)
+	if sharp != 0 && sw > 0 && sh > 0 {
+		rect := from
+		if animating && duration > 0 {
+			t := float64(time.Since(started)) / float64(duration)
+			if t > 1 {
+				t = 1
+			}
+			ease := 1 - math.Pow(1-t, 3)
+			rect = coverRect{
+				X: int32(math.Round(float64(from.X) + float64(to.X-from.X)*ease)),
+				Y: int32(math.Round(float64(from.Y) + float64(to.Y-from.Y)*ease)),
+				W: int32(math.Round(float64(from.W) + float64(to.W-from.W)*ease)),
+				H: int32(math.Round(float64(from.H) + float64(to.H-from.H)*ease)),
+			}
+		}
+		if rect.valid() {
+			rgn, _, _ := procCreateRoundRectRgn.Call(uintptr(rect.X), uintptr(rect.Y), uintptr(rect.X+rect.W+1), uintptr(rect.Y+rect.H+1), uintptr(radius*2), uintptr(radius*2))
+			if rgn != 0 {
+				procSelectClipRgn.Call(compose, rgn)
+			}
+			procStretchBlt.Call(compose, uintptr(rect.X), uintptr(rect.Y), uintptr(rect.W), uintptr(rect.H), sharp, 0, 0, uintptr(sw), uintptr(sh), srcCopy)
+			if rgn != 0 {
+				procSelectClipRgn.Call(compose, 0)
+				procDeleteObject.Call(rgn)
+			}
+		}
+	}
+	screen, _, _ := procGetDC.Call(0)
+	if screen == 0 {
+		return
+	}
+	sz := coverSize{CX: int32(cw), CY: int32(ch)}
+	src := coverPoint{0, 0}
+	// AlphaFormat must stay 0: the composed DIB is fully opaque and GDI does
+	// not preserve the alpha byte through StretchBlt, so AC_SRC_ALPHA would
+	// make most of the surface transparent and let the WebView show through.
+	blend := blendFunction{BlendOp: 0, BlendFlags: 0, SourceConstantAlpha: byte(coverAlpha.Load()), AlphaFormat: 0}
+	procUpdateLayered.Call(hwnd, screen, 0, uintptr(unsafe.Pointer(&sz)), compose, uintptr(unsafe.Pointer(&src)), 0, uintptr(unsafe.Pointer(&blend)), 2)
+	procReleaseDC.Call(0, screen)
+}
 
 func coverWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	switch msg {
@@ -140,15 +284,6 @@ func coverWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		var ps paintStruct
 		hdc, _, _ := procBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		if hdc != 0 {
-			coverMu.Lock()
-			mem, bw, bh := coverMemDC, coverBmpW, coverBmpH
-			if mem != 0 && bw > 0 && bh > 0 {
-				var rc winRect
-				procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-				procSetStretchBltMode.Call(hdc, halftone)
-				procStretchBlt.Call(hdc, 0, 0, uintptr(rc.Right-rc.Left), uintptr(rc.Bottom-rc.Top), mem, 0, 0, uintptr(bw), uintptr(bh), srcCopy)
-			}
-			coverMu.Unlock()
 			procEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		}
 		return 0
@@ -217,10 +352,10 @@ func decodeCoverImage(dataURL string) (int, int, []byte, error) {
 	return w, h, pix, nil
 }
 
-func setCoverBitmap(w, h int, pix []byte) {
+func buildCoverDIB(w, h int, pix []byte) (uintptr, uintptr) {
 	dc, _, _ := procGetDC.Call(0)
 	if dc == 0 {
-		return
+		return 0, 0
 	}
 	mem, _, _ := procCreateCompatibleDC.Call(dc)
 	var bmi bitmapInfo
@@ -240,11 +375,18 @@ func setCoverBitmap(w, h int, pix []byte) {
 		if dib != 0 {
 			procDeleteObject.Call(dib)
 		}
-		return
+		return 0, 0
 	}
 	procSelectObject.Call(mem, dib)
 	copy(unsafe.Slice((*byte)(bits), len(pix)), pix)
+	return mem, dib
+}
 
+func setCoverBitmap(w, h int, pix []byte) {
+	mem, dib := buildCoverDIB(w, h, pix)
+	if mem == 0 {
+		return
+	}
 	coverMu.Lock()
 	oldDC, oldDIB := coverMemDC, coverDIB
 	coverMemDC, coverDIB = mem, dib
@@ -258,14 +400,154 @@ func setCoverBitmap(w, h int, pix []byte) {
 	}
 }
 
-func showCoverWindow() {
+func setSharpBitmap(w, h int, pix []byte) {
+	mem, dib := buildCoverDIB(w, h, pix)
+	if mem == 0 {
+		return
+	}
+	coverMu.Lock()
+	oldDC, oldDIB := coverSharpDC, coverSharpDIB
+	coverSharpDC, coverSharpDIB = mem, dib
+	coverSharpW, coverSharpH = w, h
+	coverMu.Unlock()
+	if oldDC != 0 {
+		procDeleteDC.Call(oldDC)
+	}
+	if oldDIB != 0 {
+		procDeleteObject.Call(oldDIB)
+	}
+}
+
+func coverDPIScale(hwnd uintptr) float64 {
+	dpi, _, _ := procGetDpiForWindow.Call(hwnd)
+	if dpi == 0 {
+		dpi = 96
+	}
+	return float64(dpi) / 96
+}
+
+func coverRectFromCSS(values []int, scale float64) coverRect {
+	if len(values) < 4 {
+		return coverRect{}
+	}
+	return coverRect{
+		X: int32(math.Round(float64(values[0]) * scale)),
+		Y: int32(math.Round(float64(values[1]) * scale)),
+		W: int32(math.Round(float64(values[2]) * scale)),
+		H: int32(math.Round(float64(values[3]) * scale)),
+	}
+}
+
+func startCoverTicker(hwnd uintptr, gen int64, duration time.Duration) {
+	if hwnd == 0 || duration <= 0 {
+		return
+	}
+	go func() {
+		deadline := time.Now().Add(duration + 50*time.Millisecond)
+		for time.Now().Before(deadline) {
+			if coverAnimGen.Load() != gen || coverHWND != hwnd {
+				return
+			}
+			application.InvokeSync(paintCover)
+			time.Sleep(15 * time.Millisecond)
+		}
+		application.InvokeSync(paintCover)
+	}()
+}
+
+// showFsCoverAnimated paints a blurred full-screen background plus the sharp
+// media frame and optionally animates that frame from one screen rect to
+// another. Running the zoom in the native cover keeps the media visible while
+// the OS window and WebView2 surface are being resized.
+func showFsCoverAnimated(coverURL, sharpURL string, from, to []int, radius, durationMS int) bool {
+	if coverURL == "" || sharpURL == "" {
+		return false
+	}
+	bw, bh, bpix, err := decodeCoverImage(coverURL)
+	if err != nil {
+		log.Printf("cover anim: background decode failed: %v", err)
+		return false
+	}
+	sw, sh, spix, err := decodeCoverImage(sharpURL)
+	if err != nil {
+		log.Printf("cover anim: sharp decode failed: %v", err)
+		return false
+	}
+	coverFade.Add(1)
+	coverAnimGen.Add(1)
+	application.InvokeSync(func() {
+		setCoverBitmap(bw, bh, bpix)
+		setSharpBitmap(sw, sh, spix)
+		hwnd := showCoverWindow()
+		if hwnd == 0 {
+			return
+		}
+		scale := coverDPIScale(hwnd)
+		cfrom := coverRectFromCSS(from, scale)
+		cto := coverRectFromCSS(to, scale)
+		coverMu.Lock()
+		coverFrom, coverTo = cfrom, cto
+		coverRadius = int32(math.Round(float64(radius) * scale))
+		coverAnimStart = time.Now()
+		coverAnimDur = time.Duration(durationMS) * time.Millisecond
+		coverAnimating = durationMS > 0 && cto.valid()
+		coverMu.Unlock()
+		paintCover()
+		if durationMS > 0 {
+			startCoverTicker(hwnd, coverAnimGen.Load(), coverAnimDur)
+		}
+	})
+	return true
+}
+
+// animateFsCover updates the native sharp frame animation without reloading
+// the bitmaps; the enter transition measures its final rect after the resize.
+func animateFsCover(from, to []int, radius, durationMS int) bool {
+	var ok bool
+	application.InvokeSync(func() {
+		hwnd := coverHWND
+		if hwnd == 0 || coverSharpDC == 0 {
+			return
+		}
+		scale := coverDPIScale(hwnd)
+		cfrom := coverRectFromCSS(from, scale)
+		cto := coverRectFromCSS(to, scale)
+		gen := coverAnimGen.Add(1)
+		coverMu.Lock()
+		coverFrom, coverTo = cfrom, cto
+		coverRadius = int32(math.Round(float64(radius) * scale))
+		coverAnimStart = time.Now()
+		coverAnimDur = time.Duration(durationMS) * time.Millisecond
+		coverAnimating = durationMS > 0 && cto.valid()
+		coverMu.Unlock()
+		paintCover()
+		if durationMS > 0 {
+			startCoverTicker(hwnd, gen, coverAnimDur)
+		}
+		ok = true
+	})
+	return ok
+}
+
+// raiseFsCover keeps the cover above the main window after the main window is
+// switched to topmost.
+func raiseFsCover() {
+	application.InvokeSync(func() {
+		if coverHWND != 0 && coverVisible.Load() {
+			procSetWindowPos.Call(coverHWND, hwndTopmost, 0, 0, 0, 0, swpNoActivate|swpNoMove|swpNoSize|swpShowWindow)
+			paintCover()
+		}
+	})
+}
+
+func showCoverWindow() uintptr {
 	hwnd := ensureCoverWindow()
 	if hwnd == 0 {
-		return
+		return 0
 	}
 	screen := application.Get().Screen.GetPrimary()
 	if screen == nil {
-		return
+		return 0
 	}
 	dpi, _, _ := procGetDpiForWindow.Call(hwnd)
 	if dpi == 0 {
@@ -276,9 +558,10 @@ func showCoverWindow() {
 	y := int32(math.Round(float64(screen.Bounds.Y) * scale))
 	w := int32(math.Round(float64(screen.Bounds.Width) * scale))
 	h := int32(math.Round(float64(screen.Bounds.Height) * scale))
+	coverAlpha.Store(255)
 	procSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoActivate|swpShowWindow)
-	procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
-	procInvalidateRect.Call(hwnd, 0, 0)
+	coverVisible.Store(true)
+	return hwnd
 }
 
 // showFsCover paints dataURL over the primary monitor before the window is
@@ -296,6 +579,7 @@ func showFsCover(dataURL string) bool {
 	application.InvokeSync(func() {
 		setCoverBitmap(w, h, pix)
 		showCoverWindow()
+		paintCover()
 	})
 	return true
 }
@@ -304,13 +588,11 @@ func showFsCover(dataURL string) bool {
 // window into the page-owned cover, which is what makes the exit hand-off
 // invisible: both surfaces show the same blurred frame at the same geometry.
 func hideFsCover(fadeMs int) {
+	coverAnimGen.Add(1)
 	gen := coverFade.Add(1)
 	var hwnd uintptr
 	application.InvokeSync(func() {
 		hwnd = coverHWND
-		if hwnd != 0 {
-			procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
-		}
 	})
 	if hwnd == 0 {
 		return
@@ -319,7 +601,8 @@ func hideFsCover(fadeMs int) {
 		application.InvokeSync(func() {
 			if coverHWND == hwnd {
 				procShowWindow.Call(hwnd, swHide)
-				procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
+				coverAlpha.Store(255)
+				coverVisible.Store(false)
 			}
 		})
 		return
@@ -335,8 +618,9 @@ func hideFsCover(fadeMs int) {
 			if elapsed >= duration {
 				break
 			}
-			alpha := uintptr(math.Round(255 * (1 - float64(elapsed)/float64(duration))))
-			procSetLayeredAttrs.Call(hwnd, 0, alpha, lwaAlpha)
+			alpha := int32(math.Round(255 * (1 - float64(elapsed)/float64(duration))))
+			coverAlpha.Store(alpha)
+			application.InvokeSync(paintCover)
 			time.Sleep(16 * time.Millisecond)
 		}
 		if coverFade.Load() != gen {
@@ -347,7 +631,8 @@ func hideFsCover(fadeMs int) {
 				return
 			}
 			procShowWindow.Call(hwnd, swHide)
-			procSetLayeredAttrs.Call(hwnd, 0, 255, lwaAlpha)
+			coverAlpha.Store(255)
+			coverVisible.Store(false)
 		})
 	}()
 }

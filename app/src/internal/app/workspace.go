@@ -231,6 +231,9 @@ func (a *App) loadSettings() error {
 	if s.ViewerBackdrop != "ambient" && s.ViewerBackdrop != "frosted" && s.ViewerBackdrop != "solid" {
 		s.ViewerBackdrop = d.ViewerBackdrop
 	}
+	if s.ToastSeconds < 1 || s.ToastSeconds > 10 {
+		s.ToastSeconds = d.ToastSeconds
+	}
 	if s.SchemaVersion == 0 {
 		s.SchemaVersion = d.SchemaVersion
 	}

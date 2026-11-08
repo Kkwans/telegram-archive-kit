@@ -231,6 +231,11 @@ type apiParams struct {
 	Height              int                 `json:"height"`
 	Fullscreen          bool                `json:"fullscreen"`
 	Cover               string              `json:"cover"`
+	Sharp               string              `json:"sharp"`
+	From                []int               `json:"from"`
+	To                  []int               `json:"to"`
+	Radius              int                 `json:"radius"`
+	Duration            int                 `json:"duration"`
 	Fade                int                 `json:"fade"`
 	Concurrent          int                 `json:"concurrent"`
 	Threads             int                 `json:"threads"`
@@ -448,7 +453,12 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 		hideFsCover(p.Fade)
 		return nil, nil
 	case "showFullscreenCover":
+		if p.Sharp != "" && len(p.From) >= 4 {
+			return map[string]bool{"shown": showFsCoverAnimated(p.Cover, p.Sharp, p.From, p.To, p.Radius, p.Duration)}, nil
+		}
 		return map[string]bool{"shown": showFsCover(p.Cover)}, nil
+	case "animateFullscreenCover":
+		return map[string]bool{"animated": animateFsCover(p.From, p.To, p.Radius, p.Duration)}, nil
 	case "windowFullscreenState":
 		return map[string]bool{"fullscreen": b.fsWindow.Active}, nil
 	case "onlineChats":
@@ -678,6 +688,7 @@ func (b *Bridge) setScreenFullscreen(on bool, cover string) bool {
 			log.Printf("dark window frame failed: hr20=%#x hr19=%#x", r1, r2)
 		}
 		b.window.SetAlwaysOnTop(true)
+		raiseFsCover()
 		// The cover must be above the (now topmost) main window, and it must be
 		// visible before SetWindowPos grows the window: WebView2 presents the old
 		// surface for a few frames and the exposed strip would otherwise show the

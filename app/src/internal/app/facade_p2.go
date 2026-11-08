@@ -73,6 +73,7 @@ type SettingsDTO struct {
 	VideoFrameAspect      string  `json:"videoFrameAspect"`
 	SpeedWindowSeconds    int     `json:"speedWindowSeconds"`
 	ViewerBackdrop        string  `json:"viewerBackdrop"`
+	ToastSeconds          int     `json:"toastSeconds"`
 	Version               string  `json:"version"`
 }
 
@@ -432,8 +433,16 @@ func (f *Facade) GetSettings() SettingsDTO {
 		VideoSeekSeconds: s.VideoSeekSeconds, VideoLongPressRate: s.VideoLongPressRate, VideoLongPressDelayMS: s.VideoLongPressDelayMS,
 		VideoMaxVolume: s.VideoMaxVolume, VideoVolumeStep: s.VideoVolumeStep, VideoFrameAspect: s.VideoFrameAspect, SpeedWindowSeconds: s.SpeedWindowSeconds,
 		ViewerBackdrop: s.ViewerBackdrop,
+		ToastSeconds:   toastSecondsOrDefault(s.ToastSeconds),
 		Version:        version,
 	}
+}
+
+func toastSecondsOrDefault(v int) int {
+	if v < 1 || v > 10 {
+		return 3
+	}
+	return v
 }
 
 func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
@@ -488,6 +497,9 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 	default:
 		return f.GetSettings(), errors.New("未知的查看器背景模式")
 	}
+	if dto.ToastSeconds < 1 || dto.ToastSeconds > 10 {
+		return f.GetSettings(), errors.New("通知停留时间需在 1–10 秒之间")
+	}
 	s := f.a.Settings
 	s.Concurrent = dto.Concurrent
 	s.Threads = dto.Threads
@@ -513,6 +525,7 @@ func (f *Facade) SetSettings(dto SettingsDTO) (SettingsDTO, error) {
 	s.VideoFrameAspect = dto.VideoFrameAspect
 	s.SpeedWindowSeconds = dto.SpeedWindowSeconds
 	s.ViewerBackdrop = dto.ViewerBackdrop
+	s.ToastSeconds = dto.ToastSeconds
 	if strings.TrimSpace(dto.TdlNamespace) != "" {
 		s.TdlNamespace = strings.TrimSpace(dto.TdlNamespace)
 	}
