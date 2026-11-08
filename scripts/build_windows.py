@@ -96,22 +96,17 @@ def package_zip(outputs: list[pathlib.Path]) -> pathlib.Path:
     zpath = dist / f"TelegramArchiveKit_v{version}_windows-x64.zip"
     docs = [
         root / "README.md",
+        root / "README_EN.md",
         root / "CHANGELOG.md",
         root / "LICENSE",
-        root / "docs" / "USAGE.md",
-        root / "docs" / "TROUBLESHOOTING.md",
-        root / "docs" / "DATA_FORMAT.md",
-        root / "docs" / "THIRD_PARTY.md",
-        root / "docs" / "ONLINE_TDL_3.0.md",
-        root / "docs" / "STORAGE_SQLITE.md",
-        root / "docs" / "REMOTE_LIBRARY_3.0.md",
+        *sorted((root / "docs").glob("*.md")),
     ]
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         for out in outputs:
             z.write(out, out.name)
         for doc in docs:
             if doc.exists():
-                z.write(doc, doc.name)
+                z.write(doc, doc.relative_to(root).as_posix())
     digest = hashlib.sha256(zpath.read_bytes()).hexdigest()
     print(f"ZIP: {zpath}")
     print(f"SHA-256: {digest}")
