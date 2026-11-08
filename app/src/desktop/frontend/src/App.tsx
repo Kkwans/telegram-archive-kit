@@ -31,6 +31,7 @@ import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx 
 import { TasksPage } from "./TaskCenter";
 import { OnlineChatsPage } from "./OnlineChats";
 import { Select } from "./Select";
+import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 
 type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
@@ -126,6 +127,7 @@ export default function App() {
   const [history, setHistory] = useState<{ now: number; avg: number }[]>([]);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [toasts, setToasts] = useState<Array<{ id: number; text: string; kind: ToastKind; action?: ToastAction }>>([]);
+  const [downloadTarget, setDownloadTarget] = useState<OnlineUpdateTarget | null>(null);
   const [pending, setPending] = useState<PendingInput | null>(null);
   const [dropMode, setDropMode] = useState("copy");
   const [dropBusy, setDropBusy] = useState(false);
@@ -498,12 +500,16 @@ export default function App() {
       actions.push({
         id: "act-sync",
         label: "一键同步当前聊天",
-        hint: "下载缺失媒体并重建网页",
+        hint: "先统计缺失媒体与磁盘空间",
         section: "操作",
         run: () => {
-          call<string>("startOneClick", { slug: selected })
-            .then((taskID) => openTask(taskID))
-            .catch((e: Error) => toast(e.message, true));
+          const chat = chats.find((c) => c.slug === selected);
+          setDownloadTarget({
+            peer: "local:" + selected,
+            name: chat?.name ?? "聊天",
+            slug: selected,
+            mode: "sync",
+          });
         },
       });
       actions.push({
@@ -968,6 +974,15 @@ export default function App() {
             );
           })}
         </div>
+      )}
+
+      {downloadTarget && (
+        <OnlineUpdateDialog
+          target={downloadTarget}
+          onClose={() => setDownloadTarget(null)}
+          onStarted={(taskId) => { setDownloadTarget(null); if (taskId) openTask(taskId); }}
+          toast={toast}
+        />
       )}
     </div>
   );
