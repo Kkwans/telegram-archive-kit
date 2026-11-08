@@ -15,7 +15,7 @@ import {
 import { call } from "./rpc";
 import { bytes } from "./format";
 import { ConfirmDialog } from "./ConfirmDialog";
-import type { OnlineExportPreview, OnlineExportProgress, OnlineExportResult } from "./types";
+import type { BackfillPreview, BulkPreview, OnlineExportPreview, OnlineExportProgress, OnlineExportResult } from "./types";
 
 export interface OnlineUpdateTarget {
   peer: string;
@@ -25,6 +25,8 @@ export interface OnlineUpdateTarget {
   avatar?: string;
   /** Existing local workspace to merge into (official ChatExport imports). */
   slug?: string;
+  /** online pulls history; backfill/sync only complete missing files; bulk covers every chat. */
+  mode?: "online" | "backfill" | "sync" | "bulk";
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -144,6 +146,63 @@ export function OnlineUpdateDialog({
     setPreviewLoading(true);
     loadingRef.current = true;
     try {
+      if (target.mode === "bulk") {
+        const res = await call<BulkPreview>("previewSyncAll", {});
+        if (id !== seq.current) return;
+        const base: OnlineExportPreview = {
+          peer: target.peer,
+          chat: "全部缺失媒体",
+          existed: false,
+          backfillOnly: true,
+          chats: res.chats,
+          messages: 0,
+          service: 0,
+          images: res.images,
+          videos: res.videos,
+          audio: res.audio,
+          files: res.files,
+          other: res.other,
+          media: res.missing,
+          bytes: res.knownBytes,
+          localMissing: res.missing,
+          missingBytes: res.knownBytes,
+          freeBytes: res.freeBytes,
+          spaceNeedBytes: res.knownBytes,
+          spaceShort: res.spaceShort,
+        };
+        setPreview(base);
+        if (res.missing === 0) setUpToDate(true);
+        return;
+      }
+      if (target.mode === "backfill" || target.mode === "sync") {
+        const res = await call<BackfillPreview>("previewBackfill", { slug: target.slug || "" });
+        if (id !== seq.current) return;
+        const base: OnlineExportPreview = {
+          peer: target.peer,
+          chat: res.chat,
+          existed: true,
+          backfillOnly: true,
+          messages: 0,
+          service: 0,
+          images: res.images,
+          videos: res.videos,
+          audio: res.audio,
+          files: res.files,
+          other: res.other,
+          media: res.missing,
+          bytes: res.knownBytes,
+          localMessages: res.messages,
+          localMedia: res.media,
+          localMissing: res.missing,
+          missingBytes: res.knownBytes,
+          freeBytes: res.freeBytes,
+          spaceNeedBytes: res.knownBytes,
+          spaceShort: res.spaceShort,
+        };
+        setPreview(base);
+        if (res.missing === 0) setUpToDate(true);
+        return;
+      }
       const res = await call<OnlineExportPreview>("onlineExportPreview", { peer: target.peer, timeout: 300, slug: target.slug || "" });
       if (id !== seq.current) {
         if (res.token) void call("onlineExportDiscard", { token: res.token }).catch(() => undefined);
@@ -177,7 +236,7 @@ export function OnlineUpdateDialog({
     };
     // Start exactly once for the selected target.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.peer]);
+  }, [target.peer, target.mode, target.slug]);
 
   useEffect(() => {
     if (!previewLoading) {
@@ -200,9 +259,26 @@ export function OnlineUpdateDialog({
 
   const runExport = async () => {
     if (!preview || exporting) return;
+    if (preview.spaceShort) {
+      setPreviewError(`磁盘空间不足：本次需要约 ${bytes(preview.spaceNeedBytes || preview.bytes)}，当前可用 ${bytes(preview.freeBytes || 0)}。请清理空间或更换档案库位置后再试。`);
+      return;
+    }
     setExporting(true);
     setPreviewError("");
     try {
+      if (target.mode === "bulk") {
+        await call("startSyncAllMissing");
+        onClose();
+        toast("批量同步任务已加入任务中心");
+        return;
+      }
+      if (target.mode === "backfill" || target.mode === "sync" || preview.backfillOnly) {
+        const taskId = await call<string>("startOneClick", { slug: target.slug || "" });
+        onClose();
+        toast("已开始补全缺失媒体");
+        if (taskId) onStarted(taskId);
+        return;
+      }
       const res = await call<OnlineExportResult>("onlineExport", { peer: preview.peer, timeout: 300, token: preview.token || "", slug: target.slug || "" });
       if (res.upToDate) {
         setUpToDate(true);
@@ -226,6 +302,9 @@ export function OnlineUpdateDialog({
     { key: "audio", label: "音频", value: preview.audio, icon: <Music2 size={14} /> },
     { key: "files", label: "文件", value: preview.files, icon: <FileText size={14} /> },
   ] : [];
+  const isBackfill = target.mode === "backfill" || target.mode === "sync" || target.mode === "bulk" || Boolean(preview?.backfillOnly);
+  const isBulk = target.mode === "bulk";
+  const primaryLabel = isBulk || target.mode === "sync" ? "开始同步" : isBackfill ? "开始补全" : "开始归档";
 
   return (
     <>
@@ -233,13 +312,15 @@ export function OnlineUpdateDialog({
         <div className="modal-backdrop" role="presentation">
           <div className="modal export-preview-modal" role="dialog" aria-modal="true" aria-labelledby="online-update-title">
             <div className="export-preview-head">
-              {target.avatar ? (
+              {target.mode !== "online" ? (
+                <span className="online-avatar" style={avatarStyle(target.peer)}><HardDrive size={18} /></span>
+              ) : target.avatar ? (
                 <img className="online-avatar" src={target.avatar} alt="" />
               ) : (
                 <span className="online-avatar" style={avatarStyle(target.peer)}>{initials(target.name)}</span>
               )}
               <div className="export-preview-head-text">
-                <span className="export-preview-kicker">在线更新预览</span>
+                <span className="export-preview-kicker">{isBulk ? "批量下载预览" : target.mode === "sync" ? "下载前统计" : isBackfill ? "本地补全预览" : "在线更新预览"}</span>
                 <h2 id="online-update-title">{target.name}</h2>
                 <p className="modal-sub">
                   {TYPE_LABEL[target.type || ""] || target.type || "会话"}
@@ -270,19 +351,28 @@ export function OnlineUpdateDialog({
               <div className="online-banner ok" role="status">
                 <div className="online-banner-title">
                   <CheckCircle2 size={15} />
-                  <b>已是最新</b>
+                  <b>{isBackfill ? "媒体已完整" : "已是最新"}</b>
                 </div>
                 <span>
-                  没有需要归档的新消息。本地已有 {(preview?.localMessages ?? 0).toLocaleString()} 条消息、
-                  {(preview?.localMedia ?? 0).toLocaleString()} 个媒体。
+                  {isBulk
+                    ? "所选聊天没有需要下载的媒体。"
+                    : isBackfill
+                      ? `没有需要补全的媒体。本地已有 ${(preview?.localMessages ?? 0).toLocaleString()} 条消息、${(preview?.localMedia ?? 0).toLocaleString()} 个媒体。`
+                      : `没有需要归档的新消息。本地已有 ${(preview?.localMessages ?? 0).toLocaleString()} 条消息、${(preview?.localMedia ?? 0).toLocaleString()} 个媒体。`}
                 </span>
               </div>
             ) : preview ? (
               <>
-                <div className="export-preview-lead">
+                <div className={`export-preview-lead ${isBulk ? "three" : ""}`}>
+                  {isBulk && (
+                    <div>
+                      <span>待同步聊天</span>
+                      <b>{(preview.chats ?? 0).toLocaleString()} <em>个</em></b>
+                    </div>
+                  )}
                   <div>
-                    <span>本次新增</span>
-                    <b>{preview.messages.toLocaleString()} <em>条消息</em></b>
+                    <span>{isBackfill ? "待补全媒体" : "本次新增"}</span>
+                    <b>{isBackfill ? preview.media.toLocaleString() : preview.messages.toLocaleString()} <em>{isBackfill ? "个媒体" : "条消息"}</em></b>
                   </div>
                   <div>
                     <span>预计大小</span>
@@ -300,11 +390,13 @@ export function OnlineUpdateDialog({
                   ))}
                 </div>
 
-                {preview.existed && (
+                {preview.existed && !isBulk && (
                   <div className="export-preview-existing">
                     <RefreshCw size={13} />
                     <span>
-                      本地已有 {(preview.localMessages ?? 0).toLocaleString()} 条消息 · {(preview.localMedia ?? 0).toLocaleString()} 个媒体，本次只合并新消息。
+                      {isBackfill
+                        ? `本地已有 ${(preview.localMessages ?? 0).toLocaleString()} 条消息 · ${(preview.localMedia ?? 0).toLocaleString()} 个媒体；本次只补下缺失文件，不重新读取 Telegram 历史。`
+                        : `本地已有 ${(preview.localMessages ?? 0).toLocaleString()} 条消息 · ${(preview.localMedia ?? 0).toLocaleString()} 个媒体，本次只合并新消息。${preview.localMissing ? ` 另有 ${preview.localMissing.toLocaleString()} 个缺失媒体会一并补全。` : ""}`}
                     </span>
                   </div>
                 )}
@@ -313,7 +405,9 @@ export function OnlineUpdateDialog({
                   <p className="export-preview-note">另有 {preview.other.toLocaleString()} 个其他媒体（位置、投票、联系人等）。</p>
                 )}
                 <p className="export-preview-note">
-                  <HardDrive size={12} /> 大小按 Telegram 返回的文件尺寸估算，仅统计本次新增消息；实际下载可能因缩略图与格式略有差异。
+                  <HardDrive size={12} /> {isBackfill
+                    ? "大小按 result.json 返回的文件尺寸估算，仅统计实际缺失的媒体；实际下载可能略有差异。"
+                    : "大小按 Telegram 返回的文件尺寸估算，仅统计本次新增消息；实际下载可能因缩略图与格式略有差异。"}
                   {preview.service > 0 ? ` 包含 ${preview.service.toLocaleString()} 条服务消息。` : ""}
                 </p>
               </>
@@ -326,19 +420,33 @@ export function OnlineUpdateDialog({
               </div>
             )}
 
+            {preview && !upToDate && preview.spaceShort && (
+              <div className="online-banner export-preview-error" role="status">
+                <AlertCircle size={15} />
+                <span>
+                  磁盘空间不足：本次需要约 {bytes(preview.spaceNeedBytes || preview.bytes)}，当前可用 {bytes(preview.freeBytes || 0)}。
+                  请清理空间或更换档案库位置后再试。
+                </span>
+              </div>
+            )}
+
             <div className="modal-actions">
               <button className="btn ghost" disabled={exporting} onClick={requestClose}>
                 {preview && !upToDate ? "取消" : "关闭"}
               </button>
               {preview && !upToDate ? (
-                <button className="btn primary" disabled={exporting || floodLeft > 0} onClick={() => void runExport()}>
+                <button className="btn primary" disabled={exporting || floodLeft > 0 || Boolean(preview.spaceShort)} onClick={() => void runExport()}>
                   {exporting ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />}
-                  {exporting ? "正在归档…" : floodLeft > 0 ? `等待 ${floodLeft} 秒` : "开始归档"}
+                  {exporting
+                    ? (isBackfill ? "正在创建任务…" : "正在归档…")
+                    : floodLeft > 0
+                      ? `等待 ${floodLeft} 秒`
+                      : primaryLabel}
                 </button>
               ) : !previewLoading ? (
                 <button className="btn primary" disabled={floodLeft > 0} onClick={() => void beginPreview()}>
                   {floodLeft > 0 ? <Loader2 size={13} /> : <RefreshCw size={13} />}
-                  {floodLeft > 0 ? `等待 ${floodLeft} 秒` : "重新统计"}
+                  {floodLeft > 0 ? `等待 ${floodLeft} 秒` : isBackfill ? "重新检查" : "重新统计"}
                 </button>
               ) : null}
             </div>

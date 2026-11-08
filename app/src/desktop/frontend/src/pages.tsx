@@ -146,7 +146,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   const [stats, setStats] = useState<HomeStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncSlug, setSyncSlug] = useState(selected);
-  const [missingConfirm, setMissingConfirm] = useState(false);
+  const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
   useEffect(() => {
     if (!syncSlug && selected) setSyncSlug(selected);
   }, [selected]);
@@ -168,20 +168,19 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   );
   const recentTasks = tasks.slice(0, 5);
 
-  const startSync = async () => {
+  const startSync = () => {
     const slug = syncSlug || selected;
     if (!slug) {
       go("chats");
       return;
     }
     setSelected(slug);
-    try {
-      const taskID = await call<string>("startOneClick", { slug });
-      toast("已开始同步：" + (chats.find((c) => c.slug === slug)?.name ?? "聊天"), "success");
-      openTask(taskID);
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
+    setUpdateTarget({
+      peer: "local:" + slug,
+      name: chats.find((c) => c.slug === slug)?.name ?? "聊天",
+      slug,
+      mode: "sync",
+    });
   };
   const syncAllMissing = () => {
     const missing = chats.filter((c) => c.missing > 0);
@@ -189,17 +188,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
       toast("所有聊天都没有缺失媒体");
       return;
     }
-    setMissingConfirm(true);
-  };
-  const runSyncAllMissing = async () => {
-    setMissingConfirm(false);
-    try {
-      await call("startSyncAllMissing");
-      toast("批量同步任务已加入任务中心");
-      go("tasks");
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
+    setUpdateTarget({ peer: "bulk:all", name: "全部缺失媒体", mode: "bulk" });
   };
   const importJSON = async () => {
     try {
@@ -391,14 +380,14 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         </section>
       </div>
 
-      <ConfirmDialog
-        open={missingConfirm}
-        title="同步全部缺失媒体？"
-        message={`将依次同步 ${chats.filter((c) => c.missing > 0).length} 个存在缺失媒体的聊天，期间会下载并重建网页。`}
-        confirmLabel="开始同步"
-        onConfirm={() => void runSyncAllMissing()}
-        onCancel={() => setMissingConfirm(false)}
-      />
+      {updateTarget && (
+        <OnlineUpdateDialog
+          target={updateTarget}
+          onClose={() => setUpdateTarget(null)}
+          onStarted={(taskId) => { setUpdateTarget(null); if (taskId) openTask(taskId); }}
+          toast={toast}
+        />
+      )}
     </>
   );
 }
@@ -485,7 +474,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     setOnlineLoading(true);
     try {
       const chat = await call<{ peer: string; name: string; type?: string; id?: number; avatar?: string }>("onlineChatForSlug", { slug: current.slug });
-      setOnlineTarget({ ...onlineTargetFromChat(chat), slug: current.slug });
+      setOnlineTarget({ ...onlineTargetFromChat(chat), slug: current.slug, mode: "online" });
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
@@ -503,15 +492,14 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     }
   };
 
-  const backfillJSON = async () => {
+  const backfillJSON = () => {
     if (!current) return;
-    try {
-      const taskID = await call<string>("startOneClick", { slug: current.slug });
-      toast("已按 result.json 开始补全：只处理本地 JSON 中的缺失媒体", "success");
-      openTask(taskID);
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
+    setOnlineTarget({
+      peer: "local:" + current.slug,
+      name: current.name,
+      slug: current.slug,
+      mode: "backfill",
+    });
   };
 
   const copyPath = () => {
@@ -620,7 +608,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
             <button className="btn sm ghost" onClick={rebuild} title="重新生成离线网页，并补齐缺失的图片与视频封面缩略图">
               <RefreshCw size={12} /> 补齐封面与网页
             </button>
-            <button className="btn sm ghost" onClick={() => void backfillJSON()} disabled={!current.hasSource} title="只按本地 result.json 补齐缺失媒体并重建，不访问 Telegram 在线消息">
+            <button className="btn sm ghost" onClick={() => void backfillJSON()} disabled={!current.hasSource} title="先统计 result.json 中缺失的媒体、数量与占用，确认后再补全；不访问 Telegram 在线消息">
               <FileText size={12} /> 按 result.json 补全
             </button>
           </div>
@@ -644,7 +632,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         <OnlineUpdateDialog
           target={onlineTarget}
           onClose={() => setOnlineTarget(null)}
-          onStarted={(taskId) => openTask(taskId)}
+          onStarted={(taskId) => { setOnlineTarget(null); openTask(taskId); }}
           toast={toast}
         />
       )}

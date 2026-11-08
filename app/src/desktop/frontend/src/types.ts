@@ -369,6 +369,7 @@ export interface OnlineExportPreview {
   token?: string;
   existed: boolean;
   upToDate?: boolean;
+  backfillOnly?: boolean;
   messages: number;
   service: number;
   images: number;
@@ -381,6 +382,42 @@ export interface OnlineExportPreview {
   localMessages?: number;
   localMedia?: number;
   localUpdatedAt?: string;
+  localMissing?: number;
+  missingBytes?: number;
+  freeBytes?: number;
+  spaceNeedBytes?: number;
+  spaceShort?: boolean;
+  chats?: number;
+}
+
+export interface BackfillPreview {
+  slug: string;
+  chat: string;
+  messages: number;
+  media: number;
+  missing: number;
+  knownCount: number;
+  knownBytes: number;
+  images: number;
+  videos: number;
+  audio: number;
+  files: number;
+  other: number;
+  freeBytes: number;
+  spaceShort: boolean;
+}
+
+export interface BulkPreview {
+  chats: number;
+  missing: number;
+  knownBytes: number;
+  images: number;
+  videos: number;
+  audio: number;
+  files: number;
+  other: number;
+  freeBytes: number;
+  spaceShort: boolean;
 }
 
 export interface OnlineExportResult {

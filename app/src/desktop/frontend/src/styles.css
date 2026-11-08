@@ -2395,6 +2395,7 @@ img.online-avatar { object-fit: cover; display: block; }
 .export-preview-loading b { color: var(--text); font-size: 12.5px; }
 .export-preview-loading span { max-width: 390px; color: var(--faint); font-size: 10.5px; line-height: 1.6; }
 .export-preview-lead { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.export-preview-lead.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .export-preview-lead > div {
   display: flex; flex-direction: column; gap: 5px; padding: 12px 14px;
   border: 1px solid var(--line); border-radius: 11px; background: rgba(255, 255, 255, .26);

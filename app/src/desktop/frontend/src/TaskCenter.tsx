@@ -33,6 +33,7 @@ import {
 import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type { TaskDetail, TaskInfo } from "./types";
 import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
 
@@ -296,6 +297,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
+  const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
   const [pauseRequested, setPauseRequested] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
@@ -433,18 +435,14 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
     }
   };
 
-  const resume = async () => {
+  const resume = () => {
     if (!task.slug || busyAction) return;
-    setBusyAction("resume");
-    toast("正在继续下载：只补齐缺失媒体，已完成文件会保留");
-    try {
-      const nextTask = await call<string>("startOneClick", { slug: task.slug });
-      onOpenTask(nextTask);
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setBusyAction("");
-    }
+    setUpdateTarget({
+      peer: "local:" + task.slug,
+      name: task.chat || task.title,
+      slug: task.slug,
+      mode: "sync",
+    });
   };
 
   const rebuild = async () => {
@@ -885,6 +883,14 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           </div>
         </div>,
         document.body
+      )}
+      {updateTarget && (
+        <OnlineUpdateDialog
+          target={updateTarget}
+          onClose={() => setUpdateTarget(null)}
+          onStarted={(taskId) => { setUpdateTarget(null); if (taskId) onOpenTask(taskId); }}
+          toast={toast}
+        />
       )}
     </>
   );
