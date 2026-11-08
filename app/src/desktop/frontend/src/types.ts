@@ -401,3 +401,10 @@ export interface RemoteTools {
   powerShell: boolean;
   rcloneRemotes?: string[];
 }
+
+export type ToastKind = "success" | "error" | "warning" | "info";
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}

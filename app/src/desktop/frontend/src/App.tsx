@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
   Database,
   FileJson,
   FolderInput,
   FolderOpen,
   House,
+  Info,
   Settings2,
   ListTodo,
   MessagesSquare,
@@ -19,9 +23,10 @@ import {
   Sun,
   UserRound,
   X,
+  XCircle,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo, ViewerPrefs } from "./types";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
 import { OnlineChatsPage } from "./OnlineChats";
@@ -120,7 +125,7 @@ export default function App() {
   const [login, setLogin] = useState<LoginState | null>(null);
   const [history, setHistory] = useState<{ now: number; avg: number }[]>([]);
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [toastMsg, setToastMsg] = useState<{ text: string; err: boolean } | null>(null);
+  const [toasts, setToasts] = useState<Array<{ id: number; text: string; kind: ToastKind; action?: ToastAction }>>([]);
   const [pending, setPending] = useState<PendingInput | null>(null);
   const [dropMode, setDropMode] = useState("copy");
   const [dropBusy, setDropBusy] = useState(false);
@@ -134,7 +139,9 @@ export default function App() {
   const [sideTip, setSideTip] = useState<SideTip | null>(null);
   const [appTip, setAppTip] = useState<AppTip | null>(null);
   const lastSample = useRef(0);
-  const toastTimer = useRef(0);
+  const toastSeq = useRef(0);
+  const toastSeconds = useRef(3);
+  const toastTimers = useRef(new Map<number, number>());
   const lastNotice = useRef(0);
   const lastPending = useRef(0);
   const lastDialog = useRef(0);
@@ -142,11 +149,32 @@ export default function App() {
   const tasksReady = useRef(false);
   const pickerWaiters = useRef(new Map<string, { resolve: (paths: string[]) => void; reject: (e: Error) => void }>());
 
-  const toast = (text: string, err = false) => {
-    setToastMsg({ text, err });
-    window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToastMsg(null), 3000);
-  };
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimers.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      toastTimers.current.delete(id);
+    }
+    setToasts((list) => list.filter((item) => item.id !== id));
+  }, []);
+
+  const toast = useCallback((text: string, kind: boolean | ToastKind = false, action?: ToastAction) => {
+    const type: ToastKind = kind === true ? "error" : kind === false ? "info" : kind;
+    const id = ++toastSeq.current;
+    setToasts((list) => [...list.slice(-3), { id, text, kind: type, action }]);
+    const ms = Math.min(10, Math.max(1, toastSeconds.current)) * 1000;
+    toastTimers.current.set(id, window.setTimeout(() => dismissToast(id), ms));
+  }, [dismissToast]);
+
+  const setToastSeconds = useCallback((seconds: number) => {
+    toastSeconds.current = Math.min(10, Math.max(1, Math.round(seconds) || 3));
+  }, []);
+
+  useEffect(() => {
+    call<{ toastSeconds?: number }>("getSettings")
+      .then((settings) => setToastSeconds(Number(settings?.toastSeconds || 3)))
+      .catch(() => undefined);
+  }, [setToastSeconds]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -402,8 +430,9 @@ export default function App() {
       openTask,
       prefs,
       applyPrefs: setPrefs,
+      setToastSeconds,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, toast, setToastSeconds]
   );
 
   useEffect(() => {
@@ -915,9 +944,27 @@ export default function App() {
         </div>
       )}
 
-      {toastMsg && (
-        <div className={`toast ${toastMsg.err ? "err" : ""}`} role="alert" onClick={() => setToastMsg(null)} title="点击关闭">
-          {toastMsg.text}
+      {toasts.length > 0 && (
+        <div className="toast-stack" aria-live="polite">
+          {toasts.map((item) => {
+            const Icon = item.kind === "success" ? CheckCircle2 : item.kind === "error" ? XCircle : item.kind === "warning" ? AlertTriangle : Info;
+            return (
+              <div key={item.id} className={`toast-item ${item.kind}`} role={item.kind === "error" ? "alert" : "status"}>
+                <span className="toast-icon"><Icon size={16} /></span>
+                <div className="toast-body">
+                  <span className="toast-text">{item.text}</span>
+                  {item.action && (
+                    <button className="toast-action" onClick={() => { item.action?.run(); dismissToast(item.id); }}>
+                      {item.action.label} <ArrowRight size={11} />
+                    </button>
+                  )}
+                </div>
+                <button className="toast-close" aria-label="关闭通知" onClick={() => dismissToast(item.id)}>
+                  <X size={12} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

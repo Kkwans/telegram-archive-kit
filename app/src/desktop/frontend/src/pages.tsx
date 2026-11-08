@@ -79,6 +79,8 @@ import type {
   SessionCheck,
   TdlInfo,
   TaskInfo,
+  ToastAction,
+  ToastKind,
   ViewerPrefs,
 } from "./types";
 import { bytes, dateTime, duration, rate, rateParts } from "./format";
@@ -95,7 +97,7 @@ export interface PageCtx {
   running: boolean;
   history: { now: number; avg: number }[];
   refresh: () => void;
-  toast: (msg: string, err?: boolean) => void;
+  toast: (msg: string, kind?: boolean | ToastKind, action?: ToastAction) => void;
   go: (page: string) => void;
   openOnline: (filter?: string) => void;
   onlineRequest: { filter: string; seq: number } | null;
@@ -107,6 +109,7 @@ export interface PageCtx {
   openTask: (taskId: string) => void;
   prefs: ViewerPrefs;
   applyPrefs: (p: ViewerPrefs) => void;
+  setToastSeconds: (seconds: number) => void;
 }
 
 const kindLabel = (kind: string): string =>
@@ -174,7 +177,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
     setSelected(slug);
     try {
       const taskID = await call<string>("startOneClick", { slug });
-      toast("已开始同步：" + (chats.find((c) => c.slug === slug)?.name ?? "聊天"));
+      toast("已开始同步：" + (chats.find((c) => c.slug === slug)?.name ?? "聊天"), "success");
       openTask(taskID);
     } catch (e) {
       toast((e as Error).message, true);
@@ -202,8 +205,8 @@ export function Home({ ctx }: { ctx: PageCtx }) {
     try {
       const paths = await pickFiles("import-json");
       if (!paths.length) return;
-      await call("startImportJSON", { paths });
-      toast("导入任务已加入任务中心");
+      const { taskId } = await call<{ taskId: string }>("startImportJSON", { paths });
+      toast("导入任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
       go("tasks");
     } catch (e) {
       toast((e as Error).message, true);
@@ -452,7 +455,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     setBusy("delete");
     try {
       await call("deleteChat", { slug: current.slug });
-      toast("已删除本地归档");
+      toast("已删除本地归档", "success");
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
@@ -466,8 +469,8 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     try {
       const dst = await pickFolder("export-target", "选择目标档案库目录（可新建空目录）");
       if (!dst) return;
-      await call("startExportChat", { slug: current.slug, dst });
-      toast("导出任务已加入任务中心");
+      const { taskId } = await call<{ taskId: string }>("startExportChat", { slug: current.slug, dst });
+      toast("导出任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
     } catch (e) {
       toast((e as Error).message, true);
     }
@@ -493,8 +496,8 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
   const rebuild = async () => {
     if (!current) return;
     try {
-      await call("startRefreshWeb", { slug: current.slug });
-      toast("已加入任务中心：正在补齐视频封面并重建离线网页");
+      const { taskId } = await call<{ taskId: string }>("startRefreshWeb", { slug: current.slug });
+      toast("已加入任务中心：正在补齐视频封面并重建离线网页", "success", { label: "查看任务", run: () => openTask(taskId) });
     } catch (e) {
       toast((e as Error).message, true);
     }
@@ -504,7 +507,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     if (!current) return;
     try {
       const taskID = await call<string>("startOneClick", { slug: current.slug });
-      toast("已按 result.json 开始补全：只处理本地 JSON 中的缺失媒体");
+      toast("已按 result.json 开始补全：只处理本地 JSON 中的缺失媒体", "success");
       openTask(taskID);
     } catch (e) {
       toast((e as Error).message, true);
@@ -513,12 +516,12 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
   const copyPath = () => {
     if (!current) return;
-    navigator.clipboard?.writeText(current.dir).then(() => toast("目录已复制")).catch(() => toast("复制失败", true));
+    navigator.clipboard?.writeText(current.dir).then(() => toast("目录已复制", "success")).catch(() => toast("复制失败", true));
   };
   const jsonPath = current ? `${current.dir.replace(/[\\/]+$/, "")}\\source\\result.json` : "";
   const copyJSONPath = () => {
     if (!jsonPath) return;
-    navigator.clipboard?.writeText(jsonPath).then(() => toast("result.json 路径已复制")).catch(() => toast("复制失败", true));
+    navigator.clipboard?.writeText(jsonPath).then(() => toast("result.json 路径已复制", "success")).catch(() => toast("复制失败", true));
   };
 
   if (!current) {
@@ -993,6 +996,7 @@ interface VideoApi {
   setVolume(percent: number): void;
   adjustVolume(delta: number): void;
   toggleMute(): void;
+  setZoom(zoom: number, offset: { x: number; y: number }, smooth?: boolean): void;
 }
 
 const PLAY_RATES = [0.5, 1, 1.25, 1.5, 2];
@@ -1170,6 +1174,12 @@ const ArtVideo = forwardRef<VideoApi, {
       if (!p) return;
       p.video.muted = !p.video.muted;
       showNotice(p.video.muted ? "静音" : `音量 ${volumeRef.current}%`);
+    },
+    setZoom(zoom, offset, smooth = true) {
+      const el = wrap.current;
+      if (!el) return;
+      el.style.transition = smooth ? "transform .08s linear" : "none";
+      el.style.transform = zoom > 1 ? `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` : "";
     },
   }), [maxVolume]);
 
@@ -1627,10 +1637,10 @@ function buildFullscreenCover(snapshot: string, inset?: { rect: ViewerRect; radi
         const dh = img.naturalHeight * scale;
         ctx.save();
         ctx.globalAlpha = 0.82;
-        ctx.filter = "blur(22px) saturate(1.12) brightness(.72)";
+        ctx.filter = "blur(22px) saturate(1.12) brightness(.82)";
         ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
         ctx.restore();
-        ctx.fillStyle = "rgba(5, 8, 14, 0.42)";
+        ctx.fillStyle = "rgba(5, 8, 14, 0.3)";
         ctx.fillRect(0, 0, w, h);
         const glow = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.48);
         glow.addColorStop(0, "rgba(47, 107, 255, 0.08)");
@@ -1710,6 +1720,8 @@ function MediaViewer({
   const api = useRef<VideoApi | null>(null);
   const hold = useRef<{ key: string; timer: number; long: boolean; direction: number } | null>(null);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const dragMoved = useRef(false);
+  const suppressVideoClick = useRef(false);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -1826,20 +1838,17 @@ function MediaViewer({
     fsBusy.current = true;
     setZoom(1);
     setOffset({ x: 0, y: 0 });
+    api.current?.setZoom(1, { x: 0, y: 0 }, false);
+    const imageEl = modal.current?.querySelector<HTMLImageElement>(".image-stage img");
+    if (imageEl) imageEl.style.transform = "";
     const modalEl = modal.current;
     const measured = modalEl ? mediaBox(modalEl, isVideo) : null;
     const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, poster) : "";
     const ratio = measured ? measured.width / measured.height : 16 / 9;
     const radius = isVideo ? 10 : 12;
     const full = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-    // A blurred copy of the current frame acts as the cover. It is the only
-    // thing visible while the native window grows; the sharp media appears
-    // afterwards, already centered, and scales up from there.
-    setFsGhost({ src: snapshot, from: measured || full, to: measured || full, radius });
-    setFsShowGhost(false);
-    setFsGhostLive(false);
-    setFsFade(false);
-    await nextPaint();
+    const screenRect = (rect: ViewerRect | null | undefined): number[] | null =>
+      rect ? [Math.round(window.screenX + rect.left), Math.round(window.screenY + rect.top), Math.round(rect.width), Math.round(rect.height)] : null;
 
     if (enter) {
       fsReturn.current = {
@@ -1850,7 +1859,54 @@ function MediaViewer({
         rect: measured,
       };
       windowFsRef.current = true;
-      const nativeCover = measured && snapshot ? await buildFullscreenCover(snapshot) : "";
+      const backdrop = measured && snapshot ? await buildFullscreenCover(snapshot) : "";
+      const startScreen = screenRect(measured);
+      let native = false;
+      if (backdrop && snapshot && startScreen) {
+        try {
+          const res = await call<{ shown: boolean }>("showFullscreenCover", {
+            cover: backdrop, sharp: snapshot, from: startScreen, to: startScreen, radius, duration: 0,
+          });
+          native = Boolean(res?.shown);
+        } catch {
+          native = false;
+        }
+      }
+      if (native && startScreen) {
+        await applyWindowFullscreen(true, "");
+        await nextPaint();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
+        if (fsReturn.current) {
+          fsReturn.current.screenX = window.screenX;
+          fsReturn.current.screenY = window.screenY;
+        }
+        setWindowFs(true);
+        if (hideChrome) setImmersive(true);
+        await nextPaint();
+        const target = mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
+        const endScreen = screenRect(target) || startScreen;
+        try {
+          await call("animateFullscreenCover", { from: startScreen, to: endScreen, radius, duration: 230 });
+        } catch {
+          /* the static frame still covers the resize */
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+        await hideFullscreenCover(140);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 140));
+        setFsGhost(null);
+        setFsShowGhost(false);
+        setFsGhostLive(false);
+        setFsFade(false);
+        fsBusy.current = false;
+        return;
+      }
+      // Fallback: the page-owned blurred cover + ghost scale.
+      setFsGhost({ src: snapshot, from: measured || full, to: measured || full, radius });
+      setFsShowGhost(false);
+      setFsGhostLive(false);
+      setFsFade(false);
+      await nextPaint();
+      const nativeCover = backdrop;
       const resizeAt = performance.now();
       await applyWindowFullscreen(true, nativeCover);
       await nextPaint();
@@ -1859,10 +1915,6 @@ function MediaViewer({
         fsReturn.current.screenX = window.screenX;
         fsReturn.current.screenY = window.screenY;
       }
-      // Switch the viewer to its fullscreen layout only after the native window
-      // and the cover-owned frame have settled: doing React layout work in the
-      // resize turn makes WebView2 present the old surface for longer, which is
-      // the top-left flash this transition exists to hide.
       setWindowFs(true);
       if (hideChrome) setImmersive(true);
       await nextPaint();
@@ -1875,9 +1927,6 @@ function MediaViewer({
           height: measured.height,
         };
         setFsGhost({ src: snapshot, from: start, to: start, radius });
-        // WebView2 presents the old-size surface for ~200ms after the native
-        // resize. The native cover owns the screen during that window; hiding it
-        // before the first resized frame would bring the top-left strip back.
         const hold = 230 - (performance.now() - resizeAt);
         if (nativeCover && hold > 0) {
           await new Promise<void>((resolve) => window.setTimeout(resolve, hold));
@@ -1896,33 +1945,61 @@ function MediaViewer({
       if (nativeCover) await hideFullscreenCover();
     } else {
       const ret = fsReturn.current;
+      const backdrop = snapshot ? await buildFullscreenCover(snapshot) : "";
+      const currentScreen = screenRect(measured);
+      const targetScreen = ret?.rect ? [
+        Math.round(ret.windowX + ret.rect.left),
+        Math.round(ret.windowY + ret.rect.top),
+        Math.round(ret.rect.width),
+        Math.round(ret.rect.height),
+      ] : null;
+      let native = false;
+      if (backdrop && snapshot && currentScreen && targetScreen) {
+        try {
+          const res = await call<{ shown: boolean }>("showFullscreenCover", {
+            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: 230,
+          });
+          native = Boolean(res?.shown);
+        } catch {
+          native = false;
+        }
+      }
+      if (native) {
+        windowFsRef.current = false;
+        await applyWindowFullscreen(false);
+        await nextPaint();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 60));
+        setWindowFs(false);
+        if (hideChrome) setImmersive(false);
+        await nextPaint();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 170));
+        await hideFullscreenCover(140);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 140));
+        setFsGhost(null);
+        setFsShowGhost(false);
+        setFsGhostLive(false);
+        setFsFade(false);
+        fsBusy.current = false;
+        return;
+      }
+      // Fallback: animate the page ghost, then restore the window underneath.
+      setFsGhost({ src: snapshot, from: measured || full, to: measured || full, radius });
       setFsShowGhost(Boolean(measured && snapshot));
+      setFsGhostLive(false);
+      setFsFade(false);
       await nextPaint();
-      let targetScreen: ViewerRect | null = null;
-      let exitCoverPromise: Promise<string> = Promise.resolve("");
       if (measured && snapshot && ret?.rect) {
-        targetScreen = {
+        const target = {
           left: ret.windowX - ret.screenX + ret.rect.left,
           top: ret.windowY - ret.screenY + ret.rect.top,
           width: ret.rect.width,
           height: ret.rect.height,
         };
-        // Build the native composite while the ghost shrinks, so the hand-off
-        // does not add another visible pause.
-        exitCoverPromise = buildFullscreenCover(snapshot, { rect: targetScreen, radius });
-        setFsGhost({ src: snapshot, from: measured, to: targetScreen, radius });
+        setFsGhost({ src: snapshot, from: measured, to: target, radius });
         setFsGhostLive(true);
         await new Promise<void>((resolve) => window.setTimeout(resolve, 220));
       } else {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
-      }
-      const exitCover = targetScreen ? await exitCoverPromise : "";
-      if (exitCover) {
-        try {
-          await call("showFullscreenCover", { cover: exitCover });
-        } catch {
-          /* the dark frame still hides the resize */
-        }
       }
       setFsShowGhost(false);
       windowFsRef.current = false;
@@ -1933,21 +2010,7 @@ function MediaViewer({
       if (hideChrome) setImmersive(false);
       await nextPaint();
       const settled = mediaBox(modal.current, isVideo) || ret?.rect || null;
-      const coverMatches = Boolean(exitCover && settled && ret?.rect &&
-        Math.abs(settled.left - ret.rect.left) < 2 && Math.abs(settled.top - ret.rect.top) < 2 &&
-        Math.abs(settled.width - ret.rect.width) < 2 && Math.abs(settled.height - ret.rect.height) < 2);
-      if (exitCover && coverMatches) {
-        // The native cover already shows the final frame at the restored
-        // position. Drop the page layer underneath it and fade straight to the
-        // live viewer: one layer transition instead of two, no double image.
-        setFsGhost(null);
-        setFsShowGhost(false);
-        setFsFade(false);
-        await nextPaint();
-        await hideFullscreenCover(120);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
-        await hideFullscreenCover(0);
-      } else if (snapshot && settled) {
+      if (snapshot && settled) {
         const settle = {
           left: settled.left,
           top: settled.top,
@@ -1957,20 +2020,9 @@ function MediaViewer({
         setFsGhost({ src: snapshot, from: settle, to: settle, radius });
         setFsShowGhost(true);
         await nextPaint();
-        if (exitCover) {
-          await hideFullscreenCover(80);
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
-        }
-        setFsFade(true);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 160));
-      } else {
-        if (exitCover) {
-          await hideFullscreenCover(80);
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
-        }
-        setFsFade(true);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 160));
       }
+      setFsFade(true);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 160));
     }
     setFsGhost(null);
     setFsShowGhost(false);
@@ -2148,9 +2200,9 @@ function MediaViewer({
   }, []);
 
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (isVideo) return;
     e.preventDefault();
-    const rect = stage.current?.getBoundingClientRect();
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
     if (!rect) return;
     const cx = e.clientX - rect.left - rect.width / 2;
     const cy = e.clientY - rect.top - rect.height / 2;
@@ -2180,6 +2232,54 @@ function MediaViewer({
     drag.current = null;
     setDragging(false);
   };
+
+  const onBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (immersiveRef.current) {
+      setImmersive(false);
+      return;
+    }
+    closeViewer();
+  };
+
+  const onVideoPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isVideo || zoom <= 1) return;
+    const target = e.target as HTMLElement;
+    if (target.closest(".art-bottom, .art-controls, .art-settings, .art-contextmenus, .art-notice, .vp-keys, .viewer-immersive-exit")) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
+    dragMoved.current = false;
+    setDragging(true);
+  };
+  const onVideoPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    const dx = e.clientX - drag.current.x;
+    const dy = e.clientY - drag.current.y;
+    if (!dragMoved.current) {
+      if (Math.hypot(dx, dy) < 4) return;
+      dragMoved.current = true;
+    }
+    setOffset({ x: drag.current.ox + dx, y: drag.current.oy + dy });
+  };
+  const onVideoPointerUp = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    setDragging(false);
+    if (dragMoved.current) {
+      suppressVideoClick.current = true;
+      window.setTimeout(() => { suppressVideoClick.current = false; }, 0);
+    }
+  };
+  const onVideoClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!suppressVideoClick.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressVideoClick.current = false;
+  };
+
+  useEffect(() => {
+    if (isVideo) api.current?.setZoom(zoom, offset, !dragging);
+  }, [isVideo, zoom, offset, dragging]);
 
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
@@ -2240,7 +2340,16 @@ function MediaViewer({
         </button>
       </header>
 
-      <div className={`media-modal-main viewer-stage ${isVideo ? "video" : "image"}`}>
+      <div
+        className={`media-modal-main viewer-stage ${isVideo ? "video" : "image"} ${zoom > 1 ? "zoomed" : ""} ${dragging ? "dragging" : ""}`}
+        onWheel={isVideo ? onWheel : undefined}
+        onClick={onBackdropClick}
+        onPointerDown={isVideo ? onVideoPointerDown : undefined}
+        onPointerMove={isVideo ? onVideoPointerMove : undefined}
+        onPointerUp={isVideo ? onVideoPointerUp : undefined}
+        onPointerCancel={isVideo ? onVideoPointerUp : undefined}
+        onClickCapture={isVideo ? onVideoClickCapture : undefined}
+      >
         {isVideo ? (
           <ArtVideo
             ref={api}
@@ -2258,6 +2367,7 @@ function MediaViewer({
             ref={stage}
             className={`image-stage ${zoom > 1 ? "zoomed" : ""} ${dragging ? "dragging" : ""}`}
             onWheel={onWheel}
+            onClick={onBackdropClick}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -2396,7 +2506,7 @@ interface OfficialPreview {
 }
 
 export function Library({ ctx }: { ctx: PageCtx }) {
-  const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go } = ctx;
+  const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
   const history = boot?.history ?? [];
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
   const [target, setTarget] = useState("");
@@ -2618,8 +2728,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     try {
       const root = await pickFolder("merge-library", "选择要合并进来的档案库");
       if (!root) return;
-      await call("startMergeLibrary", { root });
-      toast("合并任务已加入任务中心");
+      const { taskId } = await call<{ taskId: string }>("startMergeLibrary", { root });
+      toast("合并任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
       refresh();
     } catch (e) {
       toast((e as Error).message, true);
@@ -2658,8 +2768,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     if (!official || busy === "official") return;
     setBusy("official");
     try {
-      await call("startImportOfficial", { folder: official.meta.root, slug: target, mode });
-      toast("官方导出任务已加入任务中心");
+      const { taskId } = await call<{ taskId: string }>("startImportOfficial", { folder: official.meta.root, slug: target, mode });
+      toast("官方导出任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
       setOfficial(null);
       refresh();
     } catch (e) {
@@ -3313,6 +3423,7 @@ interface SettingsForm {
   videoFrameAspect: string;
   speedWindowSeconds: number;
   viewerBackdrop: string;
+  toastSeconds: number;
   version: string;
 }
 
@@ -3342,7 +3453,7 @@ function SettingsToggle({ checked, onChange, title, desc }: { checked: boolean; 
 }
 
 export function SettingsPage({ ctx }: { ctx: PageCtx }) {
-  const { toast, applyPrefs } = ctx;
+  const { toast, applyPrefs, setToastSeconds } = ctx;
   const [form, setForm] = useState<SettingsForm | null>(null);
   const [original, setOriginal] = useState<SettingsForm | null>(null);
   const [saving, setSaving] = useState(false);
@@ -3388,7 +3499,8 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
         speedWindowSeconds: next.speedWindowSeconds,
         backdrop: next.viewerBackdrop || "ambient",
       });
-      toast("设置已保存");
+      setToastSeconds(next.toastSeconds);
+      toast("设置已保存", "success");
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
@@ -3529,6 +3641,9 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
         <div className="settings-grid">
           <SettingsField label="tdl Namespace" hint="不同 namespace 的登录会话互相隔离">
             <input type="text" value={form.tdlNamespace} onChange={(e) => set("tdlNamespace", e.target.value)} />
+          </SettingsField>
+          <SettingsField label="通知停留时间（秒）" hint="成功、失败、警告与普通通知自动消失的时间（1–10 秒，默认 3 秒）">
+            <input type="number" min={1} max={10} step={1} value={form.toastSeconds} onChange={(e) => set("toastSeconds", Number(e.target.value))} />
           </SettingsField>
           <SettingsField label="查看器背景" hint="动态取色（半透明）保留当前画面的色彩与玻璃感；动态取色（不透明）使用封面主色；磨砂模糊直接虚化打开查看器前的页面">
             <Select

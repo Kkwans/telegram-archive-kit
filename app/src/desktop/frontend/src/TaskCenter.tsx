@@ -1171,17 +1171,17 @@ export function TasksPage({
               <div className="task-info-heading">
                 <div className="task-info-title-row">
                   <h2 id="task-modal-title">{modalHeading}</h2>
-                  <span className={`task-state ${modalTask.state}`}>
-                    {modalTask.state === "running" ? <Loader2 size={12} className="spin" /> : modalTask.state === "done" ? <CheckCircle2 size={12} /> : modalTask.state === "partial" ? <AlertTriangle size={12} /> : modalTask.state === "paused" ? <Pause size={12} /> : modalTask.state === "stopped" ? <Square size={12} /> : <XCircle size={12} />}
-                    {statusLabel(modalTask.state)}
-                  </span>
-                </div>
-                <div className="task-info-sub">
                   {modalMeta && (
                     <span className={`kind-chip group-${modalMeta.group}`}>
                       {ModalIcon && <ModalIcon size={11} />} {modalMeta.label}
                     </span>
                   )}
+                </div>
+                <div className="task-info-sub">
+                  <span className={`task-state ${modalTask.state}`}>
+                    {modalTask.state === "running" ? <Loader2 size={12} className="spin" /> : modalTask.state === "done" ? <CheckCircle2 size={12} /> : modalTask.state === "partial" ? <AlertTriangle size={12} /> : modalTask.state === "paused" ? <Pause size={12} /> : modalTask.state === "stopped" ? <Square size={12} /> : <XCircle size={12} />}
+                    {statusLabel(modalTask.state)}
+                  </span>
                   {modalChatLabel && <span className="mono">{modalChatLabel}</span>}
                   {modalTask.mode && <span className="task-info-mode">{modeLabel(modalTask.mode)}</span>}
                   {modalChat && modalChat !== modalHeading && <b>{modalChat}</b>}
