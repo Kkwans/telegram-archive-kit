@@ -268,13 +268,21 @@ func (f *Facade) ListChats() []ChatDTO {
 	out := make([]ChatDTO, 0, len(list))
 	for _, m := range list {
 		messages := m.MessageCount
-		mediaCount := f.workspaceMediaSummary(m.Slug).Total
+		summary := f.workspaceMediaSummary(m.Slug)
+		mediaCount := summary.Total
 		firstTS, lastTS := m.FirstTS, m.LastTS
 		if len(m.OfficialExports) > 0 && (messages == 0 || mediaCount == 0) {
 			officialMessages, officialMedia := 0, 0
+			var officialTypes [4]int
+			var officialBytes int64
 			for _, ex := range m.OfficialExports {
 				officialMessages += ex.MessageCount
 				officialMedia += ex.MediaFiles
+				officialTypes[0] += ex.Images
+				officialTypes[1] += ex.Videos
+				officialTypes[2] += ex.Audio
+				officialTypes[3] += ex.Files
+				officialBytes += ex.TotalBytes
 				if firstTS == 0 || (ex.FirstTS > 0 && ex.FirstTS < firstTS) {
 					firstTS = ex.FirstTS
 				}
@@ -287,11 +295,17 @@ func (f *Facade) ListChats() []ChatDTO {
 			}
 			if mediaCount == 0 {
 				mediaCount = officialMedia
+				summary.Images, summary.Videos, summary.Audio, summary.Files = officialTypes[0], officialTypes[1], officialTypes[2], officialTypes[3]
+				summary.Bytes = officialBytes
 			}
 		}
 		dto := ChatDTO{
 			Slug: m.Slug, Name: m.Chat.Name, Type: m.Chat.Type, ID: m.Chat.ID,
 			Messages: messages, Media: mediaCount, Missing: m.MissingCount,
+			Images: summary.Images, Videos: summary.Videos, Audio: summary.Audio, Files: summary.Files,
+			TotalBytes: summary.Bytes,
+			ImageBytes: summary.ImageBytes, VideoBytes: summary.VideoBytes,
+			AudioBytes: summary.AudioBytes, FileBytes: summary.FileBytes,
 			FirstTS: firstTS, LastTS: lastTS, UpdatedAt: formatMetaTime(m.UpdatedAt),
 			HasSource: fileExists(f.a.sourcePath(m.Slug)),
 			Official:  len(m.OfficialExports),

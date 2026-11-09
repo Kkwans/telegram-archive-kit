@@ -335,3 +335,18 @@ func TestAllocateCompositionSumsToTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskPercentUsesDownloadedBytes(t *testing.T) {
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	task := f.createTask("sync", "同步聊天：测试", "测试")
+	task.setSlug("chat-test")
+	task.setDownloadPlan(10, 1000, 10, 0, 0, 0)
+	task.updateDownload(DownloadSnapshot{
+		State: "正在下载", Done: 9, Total: 10,
+		Bytes: 250, TotalBytes: 1000,
+	})
+	got := f.Tasks()[0]
+	if got.Percent != 25 {
+		t.Fatalf("percent must follow bytes (250/1000 = 25%%), got %d", got.Percent)
+	}
+}

@@ -33,7 +33,16 @@ export interface ChatRow {
   id?: string;
   messages: number;
   media: number;
+  images?: number;
+  videos?: number;
+  audio?: number;
+  files?: number;
   missing: number;
+  totalBytes?: number;
+  imageBytes?: number;
+  videoBytes?: number;
+  audioBytes?: number;
+  fileBytes?: number;
   firstTs?: number;
   lastTs?: number;
   updatedAt?: string;

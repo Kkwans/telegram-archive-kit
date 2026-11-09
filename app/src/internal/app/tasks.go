@@ -671,12 +671,16 @@ func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
 	if planBytes > 0 {
 		d.TotalBytes = planBytes
 	}
+	// Progress follows downloaded bytes whenever the plan size is known; the
+	// media count is not a proxy for progress (a few large videos dominate).
 	d.Percent = 0
-	if planTotal > 0 {
+	if planBytes > 0 {
+		d.Percent = int(float64(bytes)*100/float64(planBytes) + 0.5)
+	} else if planTotal > 0 {
 		d.Percent = int(float64(done)*100/float64(planTotal) + 0.5)
-		if d.Percent > 100 {
-			d.Percent = 100
-		}
+	}
+	if d.Percent > 100 {
+		d.Percent = 100
 	}
 	d.Images, d.Videos, d.Audio, d.Files = planCounts[0], planCounts[1], planCounts[2], planCounts[3]
 	doneCounts := allocateComposition(planCounts, done)

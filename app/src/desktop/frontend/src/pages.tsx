@@ -405,6 +405,40 @@ interface Stats {
   missingVideos: number;
 }
 
+const CHAT_MEDIA_TYPES = [
+  { key: "image", label: "图片", icon: Images },
+  { key: "video", label: "视频", icon: Video },
+  { key: "audio", label: "音频", icon: Music },
+  { key: "file", label: "文件", icon: FileText },
+];
+
+function MediaTypeGrid({ row }: { row: ChatRow }) {
+  const values = [
+    { count: row.images ?? 0, size: row.imageBytes ?? 0 },
+    { count: row.videos ?? 0, size: row.videoBytes ?? 0 },
+    { count: row.audio ?? 0, size: row.audioBytes ?? 0 },
+    { count: row.files ?? 0, size: row.fileBytes ?? 0 },
+  ];
+  return (
+    <div className="media-type-grid">
+      {CHAT_MEDIA_TYPES.map((type, index) => {
+        const Icon = type.icon;
+        const value = values[index];
+        return (
+          <div className={`media-type-card ${type.key}`} key={type.key}>
+            <span className="media-type-icon"><Icon size={16} /></span>
+            <div className="media-type-main">
+              <span>{type.label}</span>
+              <b>{value.count.toLocaleString()} <em>个</em></b>
+              <small>{value.size > 0 ? bytes(value.size) : "—"}</small>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Chats({ ctx }: { ctx: PageCtx }) {
   const { chats, selected, refresh, toast, go, pickFolder, openTask } = ctx;
   const [stats, setStats] = useState<Stats | null>(null);
@@ -544,7 +578,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         </div>
       </div>
 
-      <section className="stat-grid">
+      <section className="stat-grid chat-overview-stats">
         <div className="stat">
           <span>消息</span>
           <div><b>{current.messages.toLocaleString()}</b><em>条</em></div>
@@ -554,6 +588,10 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <div><b>{current.media.toLocaleString()}</b><em>个</em></div>
         </div>
         <div className="stat">
+          <span>占用空间</span>
+          <div><b>{(current.totalBytes ?? 0) > 0 ? bytes(current.totalBytes ?? 0) : "—"}</b></div>
+        </div>
+        <div className="stat">
           <span>缺失</span>
           <div><b className={current.missing > 0 ? "warn" : ""}>{current.missing.toLocaleString()}</b><em>个</em></div>
         </div>
@@ -561,6 +599,14 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <span>网页</span>
           <div><b>{current.pages}</b><em>页</em></div>
         </div>
+      </section>
+
+      <section className="panel chat-media-panel">
+        <div className="panel-head">
+          <h3><HardDrive size={14} /> 媒体构成</h3>
+          <span className="meta">共 {current.media.toLocaleString()} 个 · {(current.totalBytes ?? 0) > 0 ? bytes(current.totalBytes ?? 0) : "—"}</span>
+        </div>
+        <MediaTypeGrid row={current} />
       </section>
 
       <section className="panel">
@@ -2596,7 +2642,6 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
-  const [detailStats, setDetailStats] = useState<Stats | null>(null);
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [remotePath, setRemotePath] = useState("");
@@ -2618,18 +2663,6 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     const timer = window.setInterval(probe, 30000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [boot?.libraryRoot]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setDetailStats(null);
-    if (detailChat) {
-      call<Stats>("verifyChat", { slug: detailChat.slug })
-        .then((st) => { if (!cancelled) setDetailStats(st); })
-        .catch(() => undefined);
-    }
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailChat?.slug]);
 
   const openRemote = () => {
     setRemoteOpen(true);
@@ -3346,20 +3379,21 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                 <span>媒体文件</span>
                 <b>{detailChat.media.toLocaleString()}{detailChat.missing > 0 && <em> · 缺 {detailChat.missing}</em>}</b>
               </div>
-              <div className="chat-detail-tile">
-                <span>图片 / 视频</span>
-                <b>{detailStats ? `${detailStats.images} / ${detailStats.videos}` : "—"}</b>
-              </div>
-              <div className="chat-detail-tile">
-                <span>音频 / 文件</span>
-                <b>{detailStats ? `${detailStats.audio} / ${detailStats.files}` : "—"}</b>
-              </div>
               <div className="chat-detail-tile"><span>最早消息</span><b>{dateTime(detailChat.firstTs)}</b></div>
               <div className="chat-detail-tile"><span>最新消息</span><b>{dateTime(detailChat.lastTs)}</b></div>
               <div className="chat-detail-tile"><span>最近更新</span><b>{dateTime(detailChat.updatedAt)}</b></div>
               <div className="chat-detail-tile"><span>网页</span><b>{detailChat.pages} 页</b></div>
               <div className="chat-detail-tile"><span>官方 ChatExport</span><b>{detailChat.official} 份</b></div>
               <div className="chat-detail-tile"><span>生成器</span><b>TelegramArchiveKit {ctx.boot?.version || "3.0"}</b></div>
+            </div>
+
+            <div className="chat-detail-media">
+              <div className="chat-detail-media-head">
+                <span><HardDrive size={13} /> 媒体占用</span>
+                <b>{(detailChat.totalBytes ?? 0) > 0 ? bytes(detailChat.totalBytes ?? 0) : "—"}</b>
+                <em>共 {detailChat.media.toLocaleString()} 个</em>
+              </div>
+              <MediaTypeGrid row={detailChat} />
             </div>
 
             <div className="chat-detail-actions">

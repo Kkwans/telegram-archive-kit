@@ -74,12 +74,16 @@ type archiveDataFile struct {
 // from older builds still counts *_thumb.jpg previews, so the chat list cannot
 // trust meta.MediaCount alone.
 type mediaSummary struct {
-	Total  int
-	Images int
-	Videos int
-	Audio  int
-	Files  int
-	Bytes  int64
+	Total      int
+	Images     int
+	Videos     int
+	Audio      int
+	Files      int
+	Bytes      int64
+	ImageBytes int64
+	VideoBytes int64
+	AudioBytes int64
+	FileBytes  int64
 }
 
 type mediaCacheEntry struct {
@@ -131,12 +135,16 @@ func (f *Facade) scanWorkspaceMediaSummary(slug string) mediaSummary {
 		switch kind {
 		case "image":
 			out.Images++
+			out.ImageBytes += size
 		case "video":
 			out.Videos++
+			out.VideoBytes += size
 		case "audio":
 			out.Audio++
+			out.AudioBytes += size
 		default:
 			out.Files++
+			out.FileBytes += size
 		}
 	}
 	if data, err := os.ReadFile(filepath.Join(root, "data", "archive-data.js")); err == nil {

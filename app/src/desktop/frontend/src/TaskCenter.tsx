@@ -587,7 +587,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
           <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
         </div>
-        <div className="stat"><span>完成媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
+        <div className="stat"><span>已下载 / 总媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
         <div className="stat">
           <span>{running ? "预计还需" : "任务耗时"}</span>
           <div><b>{running ? ((task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--") : fmtDuration(elapsed)}</b></div>
@@ -735,7 +735,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           <div><span>开始时间</span><b>{dateTimePrecise(task.startedAt)}</b></div>
           <div><span>结束时间</span><b>{task.finishedAt ? dateTimePrecise(task.finishedAt) : "进行中"}</b></div>
           <div><span>耗时</span><b>{fmtDuration(elapsed)}</b></div>
-          <div><span>完成媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>
+          <div><span>已下载 / 总媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>
           <div><span>任务 ID</span><b className="mono">{task.id}</b></div>
           <div><span>峰值速度</span><b>{rate(task.peakSpeed ?? 0)}</b></div>
           <div className="wide"><span>结果</span><b className={failed ? "danger-text" : ""}>{result}</b></div>

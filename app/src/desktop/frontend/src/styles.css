@@ -2142,6 +2142,17 @@ html[data-theme="dark"] .chat-detail-tile { background: rgba(255, 255, 255, .05)
 .chat-detail-rows > div > span { width: 100px; }
 .chat-detail-rows > div.wide { align-items: flex-start; }
 .chat-detail-rows > div.wide > b { word-break: break-all; }
+.chat-detail-media {
+  display: flex; flex-direction: column; gap: 9px; padding: 11px 12px 12px;
+  border: 1px solid rgba(255, 255, 255, .52); border-radius: 12px;
+  background: rgba(255, 255, 255, .42);
+}
+html[data-theme="dark"] .chat-detail-media { background: rgba(255, 255, 255, .05); border-color: rgba(255, 255, 255, .12); }
+.chat-detail-media-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px; }
+.chat-detail-media-head > span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.chat-detail-media-head > b { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }
+.chat-detail-media-head > em { font-style: normal; color: var(--faint); font-size: 10.5px; }
+.chat-detail-media .media-type-grid { padding: 0; }
 .chat-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; padding-top: 4px; border-top: 1px solid var(--line); }
 .chat-detail-actions .spacer { flex: 1; min-width: 8px; }
 .chat-detail-actions .btn { align-self: center; }
@@ -2617,6 +2628,46 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 
 /* Overview download-center speed meter */
 .hero .download-hero-meter { width: 210px; align-self: stretch; min-width: 180px; }
+.stat-grid.chat-overview-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .stat-grid.chat-overview-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .stat-grid.chat-overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* chat media breakdown */
+.chat-media-panel .panel-head { border-bottom: 0; }
+.media-type-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 0 14px 14px; }
+.media-type-card {
+  position: relative; min-width: 0; display: flex; align-items: center; gap: 11px;
+  padding: 12px 13px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-2); overflow: hidden;
+}
+.media-type-card::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 100% at 0% 0%, rgba(47, 107, 255, .11), transparent 58%);
+}
+.media-type-card.video::before { background: radial-gradient(120% 100% at 0% 0%, rgba(124, 92, 255, .13), transparent 58%); }
+.media-type-card.audio::before { background: radial-gradient(120% 100% at 0% 0%, rgba(18, 162, 106, .13), transparent 58%); }
+.media-type-card.file::before { background: radial-gradient(120% 100% at 0% 0%, rgba(201, 138, 0, .14), transparent 58%); }
+.media-type-icon {
+  position: relative; flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center;
+  border-radius: 10px; background: rgba(47, 107, 255, .12); color: var(--accent);
+}
+.media-type-card.video .media-type-icon { background: rgba(124, 92, 255, .14); color: #6a4fd8; }
+.media-type-card.audio .media-type-icon { background: rgba(18, 162, 106, .14); color: #0f8a5b; }
+.media-type-card.file .media-type-icon { background: rgba(201, 138, 0, .15); color: #9a6a00; }
+.media-type-main { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.media-type-main > span { color: var(--faint); font-size: 10px; }
+.media-type-main b { color: var(--text); font-size: 16px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.media-type-main b em { font-style: normal; color: var(--faint); font-size: 9.5px; font-weight: 500; }
+.media-type-main small { color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-theme="dark"] .media-type-card { background: rgba(255, 255, 255, .05); }
+@media (max-width: 900px) {
+  .media-type-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .stat-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 1000px) {
   .hero .download-hero-meter { grid-column: 1 / -1; width: auto; min-height: 92px; }
