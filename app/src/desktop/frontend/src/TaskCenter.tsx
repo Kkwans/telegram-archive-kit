@@ -624,7 +624,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
       {running && (
         <section className="panel download-active-panel">
           <div className="panel-head">
-            <h3>正在下载</h3>
+            <h3><Download size={14} /> 正在下载</h3>
             <span className="meta">{active.length} 个进行中 · {concurrent} 个并发位</span>
           </div>
           <table className="table task-files-table download-table download-slot-table">
@@ -680,7 +680,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
 
       <section className="panel">
         <div className="panel-head">
-          <h3>最近完成</h3>
+          <h3><CheckCircle2 size={14} /> 最近完成</h3>
           {completed.length > 0 && (
             <button className="task-more-link" onClick={() => { setRecordPage(1); setShowAll(true); }}>
               全部记录 <span>{completed.length}</span> <ChevronRight size={12} />
@@ -715,7 +715,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
 
       <section className="panel">
         <div className="panel-head">
-          <h3>任务信息</h3>
+          <h3><ListTodo size={14} /> 任务信息</h3>
           <span className="meta">任务 {task.id}</span>
         </div>
         <div className="download-info-grid">

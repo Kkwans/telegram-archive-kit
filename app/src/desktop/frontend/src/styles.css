@@ -2710,7 +2710,8 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 }
 .tag.warn { border-color: rgba(201, 138, 29, .32); background: rgba(201, 138, 29, .1); color: var(--warn); }
 .download-hero-desc.warn { color: var(--warn); white-space: normal; overflow: visible; text-overflow: clip; line-height: 23px; }
-.task-state.partial, .task-state.paused { color: var(--warn); }
+.task-state.partial { color: var(--warn); }
+.task-state.paused { color: var(--muted); }
 .task-state.stopped { color: var(--muted); }
 @media (max-width: 900px) {
   .download-hero-topline { flex-wrap: wrap; }
