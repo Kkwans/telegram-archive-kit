@@ -132,9 +132,45 @@ func readTdlSession(ns string) (blob []byte, app string, err error) {
 	if _, statErr := os.Stat(path); statErr != nil {
 		return nil, "", errProfileNone
 	}
-	db, openErr := bbolt.Open(path, 0444, &bbolt.Options{ReadOnly: true, Timeout: 1500 * time.Millisecond})
+	// tdl keeps the bbolt file exclusively locked while a download is running;
+	// opening the live file read-only waits for the lock and then fails. Read a
+	// snapshot instead: bbolt is copy-on-write, so a plain file copy usually
+	// holds a committed state, and opening the copy never touches tdl's lock.
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				return nil, "", errProfileNone
+			}
+			return nil, "", fmt.Errorf("读取 tdl 会话失败: %w", readErr)
+		}
+		blob, app, lastErr = readTdlSessionBytes(data, ns)
+		if lastErr == nil {
+			return blob, app, nil
+		}
+		time.Sleep(time.Duration(60+attempt*40) * time.Millisecond)
+	}
+	return nil, "", fmt.Errorf("%w：tdl 正在写入会话文件，请稍后重试", errProfileBusy)
+}
+
+func readTdlSessionBytes(data []byte, ns string) (blob []byte, app string, err error) {
+	tmp, err := os.CreateTemp("", "tak-session-*.db")
+	if err != nil {
+		return nil, "", err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return nil, "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, "", err
+	}
+	db, openErr := bbolt.Open(name, 0444, &bbolt.Options{ReadOnly: true, Timeout: 200 * time.Millisecond})
 	if openErr != nil {
-		return nil, "", fmt.Errorf("%w: %v", errProfileBusy, openErr)
+		return nil, "", openErr
 	}
 	defer db.Close()
 	viewErr := db.View(func(tx *bbolt.Tx) error {
