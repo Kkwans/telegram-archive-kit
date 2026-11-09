@@ -19,6 +19,7 @@ import (
 type downloadPlan struct {
 	IDs        map[string]int64  // message id -> expected size when known
 	Names      map[string]string // message id -> human-friendly source filename
+	Kinds      map[string]string // message id -> image|video|audio|file
 	Total      int
 	KnownBytes int64
 	KnownCount int
@@ -44,7 +45,7 @@ func parseDownloadPlan(b []byte) (downloadPlan, error) {
 	if err := dec.Decode(&root); err != nil {
 		return downloadPlan{}, err
 	}
-	p := downloadPlan{IDs: map[string]int64{}, Names: map[string]string{}}
+	p := downloadPlan{IDs: map[string]int64{}, Names: map[string]string{}, Kinds: map[string]string{}}
 	arr, _ := root["messages"].([]any)
 	for _, x := range arr {
 		m, ok := x.(map[string]any)
@@ -61,14 +62,19 @@ func parseDownloadPlan(b []byte) (downloadPlan, error) {
 			switch archive.AnyString(m["media_type"]) {
 			case "photo":
 				p.Images++
+				p.Kinds[id] = "image"
 			case "video_file", "video_message", "animation":
 				p.Videos++
+				p.Kinds[id] = "video"
 			case "voice_message", "audio_file":
 				p.Audio++
+				p.Kinds[id] = "audio"
 			case "file", "sticker":
 				p.Files++
+				p.Kinds[id] = "file"
 			default:
 				p.Other++
+				p.Kinds[id] = "file"
 			}
 		}
 		p.IDs[id] = sz

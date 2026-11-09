@@ -532,9 +532,26 @@ func (f *Facade) Tasks() []TaskDTO {
 	defer f.taskMu.Unlock()
 	out := make([]TaskDTO, 0, len(f.tasks))
 	for _, t := range f.tasks {
-		out = append(out, t.snapshot())
+		d := t.snapshot()
+		applyBaselineToTask(&d)
+		out = append(out, d)
 	}
 	return out
+}
+
+// applyBaselineToTask turns engine progress (which includes media that existed
+// before the task) into this task's increment.
+func applyBaselineToTask(d *TaskDTO) {
+	if d == nil || d.BaselineTotal <= 0 || d.Total <= d.BaselineTotal {
+		return
+	}
+	d.Done = max(0, d.Done-d.BaselineTotal)
+	d.Total -= d.BaselineTotal
+	d.Bytes = max(0, d.Bytes-d.BaselineBytes)
+	d.TotalBytes = max(0, d.TotalBytes-d.BaselineBytes)
+	if d.Total > 0 {
+		d.Percent = int(float64(d.Done)*100/float64(d.Total) + 0.5)
+	}
 }
 
 func (f *Facade) taskDetails() []TaskDetailDTO {
