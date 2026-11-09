@@ -80,6 +80,19 @@ type backgroundTask struct {
 	lastSampleAt time.Time
 	activeBaseMs int64
 	activeSince  time.Time
+	ctx          context.Context
+	cancel       context.CancelFunc
+}
+
+// context returns the cancellation context owned by this task. Persisted tasks
+// loaded from disk are not running, so they fall back to a background context.
+func (t *backgroundTask) context() context.Context {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.ctx == nil {
+		return context.Background()
+	}
+	return t.ctx
 }
 
 func (t *backgroundTask) setChat(chat string) {
@@ -286,41 +299,56 @@ func (t *backgroundTask) detail() TaskDetailDTO {
 
 func (t *backgroundTask) finish(err error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.dto.State != "running" {
+		t.mu.Unlock()
 		return
 	}
 	t.closeRunning()
 	if err != nil {
 		t.dto.State = "failed"
 		t.dto.Error = err.Error()
-		return
+	} else {
+		t.dto.State = "done"
+		t.dto.Percent = 100
 	}
-	t.dto.State = "done"
-	t.dto.Percent = 100
+	cancel := t.cancel
+	t.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (t *backgroundTask) pause() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.dto.State != "running" {
+		t.mu.Unlock()
 		return
 	}
 	t.closeRunning()
 	t.dto.State = "paused"
 	t.dto.Detail = "任务已暂停，可继续下载"
 	t.dto.Error = "任务已暂停，可继续下载"
+	cancel := t.cancel
+	t.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (t *backgroundTask) stop() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.dto.State != "running" && t.dto.State != "paused" && t.dto.State != "partial" {
+		t.mu.Unlock()
 		return
 	}
 	t.closeRunning()
 	t.dto.State = "stopped"
 	t.dto.Error = "任务已终止，进度已保留"
+	cancel := t.cancel
+	t.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (t *backgroundTask) partial(err error) {
@@ -407,12 +435,15 @@ func (f *Facade) createTask(kind, title, chat string) *backgroundTask {
 	f.taskMu.Lock()
 	f.taskSeq++
 	id := fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), f.taskSeq)
+	ctx, cancel := context.WithCancel(context.Background())
 	task := &backgroundTask{
 		dto: TaskDTO{
 			ID: id, Kind: kind, Title: title, Chat: chat, State: "running",
 			StartedAt: time.Now().UnixMilli(),
 		},
 		activeSince: time.Now(),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	f.tasks = append([]*backgroundTask{task}, f.tasks...)
 	if len(f.tasks) > 50 {
@@ -986,22 +1017,35 @@ func (f *Facade) StartSyncAllMissing() (string, error) {
 	return f.startTask("sync-all", fmt.Sprintf("批量下载缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
 		t.fileProgress(0, len(targets))
 		failures := 0
+		ctx := t.context()
 		for i, m := range targets {
+			if ctx.Err() != nil {
+				return errUserAbort
+			}
 			t.setChat(m.Chat.Name)
 			t.update(i*100/len(targets), m.Chat.Name)
 			t.fileProgress(i, len(targets))
 			rep := &eventReporter{opID: "sync-all", emit: f.send}
-			rep.Phase(context.Background(), "sync", "同步缺失媒体", m.Chat.Name)
-			if err := f.a.smartSyncCtx(context.Background(), m.Slug, rep); err != nil {
+			rep.Phase(ctx, "sync", "同步缺失媒体", m.Chat.Name)
+			if err := f.a.smartSyncCtx(ctx, m.Slug, rep); err != nil {
+				if errors.Is(err, errUserAbort) || errors.Is(err, context.Canceled) {
+					return errUserAbort
+				}
 				failures++
 				t.fileProgress(i+1, len(targets))
 				continue
 			}
-			if _, err := f.a.buildWorkspaceModeWithProgressCtx(context.Background(), m.Slug, true, nil); err != nil {
+			if _, err := f.a.buildWorkspaceModeWithProgressCtx(ctx, m.Slug, true, nil); err != nil {
+				if ctx.Err() != nil {
+					return errUserAbort
+				}
 				failures++
 			}
 			t.update((i+1)*100/len(targets), m.Chat.Name)
 			t.fileProgress(i+1, len(targets))
+		}
+		if ctx.Err() != nil {
+			return errUserAbort
 		}
 		if err := f.a.buildLibrary(); err != nil {
 			return err

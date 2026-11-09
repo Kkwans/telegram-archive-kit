@@ -118,6 +118,9 @@ func (f *Facade) Shutdown() {
 		s.cancel()
 		_ = killAllTdl()
 	}
+	// Downloads also own a tdl child; without this a quit leaves it running,
+	// holding the session file and continuing to write into the library.
+	killTrackedTdl()
 	f.ReleaseLibraryLock()
 }
 

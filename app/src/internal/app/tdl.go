@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"telegramarchivekit/internal/archive"
@@ -48,6 +49,41 @@ const (
 )
 
 var errUserAbort = errors.New("用户已中止下载；已完成文件已保留")
+
+var (
+	tdlPidMu sync.Mutex
+	tdlPids  = map[int]struct{}{}
+)
+
+// trackTdlPid remembers child processes launched by TAK so shutdown can remove
+// them without touching a tdl the user started elsewhere.
+func trackTdlPid(pid int) func() {
+	if pid <= 0 {
+		return func() {}
+	}
+	tdlPidMu.Lock()
+	tdlPids[pid] = struct{}{}
+	tdlPidMu.Unlock()
+	return func() {
+		tdlPidMu.Lock()
+		delete(tdlPids, pid)
+		tdlPidMu.Unlock()
+	}
+}
+
+func killTrackedTdl() {
+	tdlPidMu.Lock()
+	pids := make([]int, 0, len(tdlPids))
+	for pid := range tdlPids {
+		pids = append(pids, pid)
+	}
+	tdlPids = map[int]struct{}{}
+	tdlPidMu.Unlock()
+	for _, pid := range pids {
+		_ = killProcessTree(pid)
+	}
+}
+
 var errDeferredExhausted = errors.New("疑难文件重试次数已耗尽")
 
 type TdlFailure struct {
@@ -638,6 +674,9 @@ func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass i
 	}
 
 	for {
+		if ctx.Err() != nil {
+			return errUserAbort
+		}
 		effectiveConcurrent, effectiveThreads := a.Settings.Concurrent, a.Settings.Threads
 		if a.Settings.TransferAdjustment == "increase-both" && *globalEngineRestarts > 0 {
 			effectiveConcurrent = min(8, effectiveConcurrent+2)
@@ -828,6 +867,9 @@ func priorUnknownCompleted(basePlan, pendingPlan downloadPlan) int {
 }
 
 func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, chatName string, pass int, basePlan downloadPlan, startedAll time.Time, effectiveConcurrent, effectiveThreads int, ui downloadUI) (*TdlFailure, error) {
+	if ctx.Err() != nil {
+		return nil, errUserAbort
+	}
 	args := append(a.tdlBaseArgs(), "-l", fmt.Sprint(effectiveConcurrent), "-t", fmt.Sprint(effectiveThreads), "download", "--restart", "-f", jsonPath, "-d", a.mediaDir(slug))
 	_ = os.MkdirAll(a.logsDir(), 0755)
 	logPath := filepath.Join(a.logsDir(), "tdl-"+slug+"-"+time.Now().Format("20060102-150405.000")+".log")
@@ -846,6 +888,25 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	}
 	result := make(chan error, 1)
 	go func() { result <- cmd.Wait() }()
+	untrack := trackTdlPid(cmd.Process.Pid)
+	defer untrack()
+
+	// tdl must die together with the task. Otherwise a paused/stopped download
+	// keeps running, holds the session file lock and can start another pass.
+	killChild := func() {
+		if cmd.Process != nil {
+			_ = killProcessTree(cmd.Process.Pid)
+		}
+	}
+	watchStop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			killChild()
+		case <-watchStop:
+		}
+	}()
+	defer close(watchStop)
 
 	lastTick := time.Now()
 	lastBytes := int64(0)
@@ -864,7 +925,16 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 
 	for {
 		select {
+		case <-ctx.Done():
+			killChild()
+			<-result
+			a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
+			return nil, errUserAbort
 		case runErr := <-result:
+			if ctx.Err() != nil {
+				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
+				return nil, errUserAbort
+			}
 			pd, speeds, recent := capture.snapshot()
 			done, bytesNow = progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
 			activeSpeed = sumRates(speeds)

@@ -223,3 +223,17 @@ func TestPauseCancelsAndUpdatesDetailImmediately(t *testing.T) {
 		t.Fatalf("detail = %q", detail)
 	}
 }
+
+func TestStopCancelsTaskContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	task := &backgroundTask{ctx: ctx, cancel: cancel, dto: TaskDTO{State: "running"}}
+	task.stop()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stopping a task must cancel its context")
+	}
+	if task.snapshot().State != "stopped" {
+		t.Fatalf("expected stopped state, got %s", task.snapshot().State)
+	}
+}
