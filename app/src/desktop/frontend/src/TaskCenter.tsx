@@ -588,7 +588,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
       <section className="panel download-media-panel">
         <div className="panel-head">
           <h3><ChartPie size={14} /> 本次媒体构成</h3>
-          <span className="meta">已完成 {recordedCount.toLocaleString()} / {totalCount.toLocaleString()} 个</span>
+          <span className="meta">已下载 {recordedCount.toLocaleString()} / {totalCount.toLocaleString()} 个</span>
         </div>
         <div className="download-media-grid">
           {mediaTotals.map((item) => {
@@ -598,12 +598,8 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
                 <span className="download-media-icon"><Icon size={15} /></span>
                 <div>
                   <span>{item.label}</span>
-                  <b>{item.count.toLocaleString()} <em>个</em></b>
-                  <small>
-                    {item.done > 0
-                      ? `已完成 ${item.done.toLocaleString()} 个${item.size > 0 ? ` · ${bytes(item.size)}` : ""}`
-                      : item.count > 0 ? "尚未完成" : "无"}
-                  </small>
+                  <b>{item.done.toLocaleString()} <em>个</em></b>
+                  <small>共 {item.count.toLocaleString()} 个{item.size > 0 ? ` · ${bytes(item.size)}` : ""}</small>
                 </div>
               </div>
             );
