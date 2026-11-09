@@ -1014,7 +1014,20 @@ func (f *Facade) StartSyncAllMissing() (string, error) {
 	if len(targets) == 0 {
 		return "", fmt.Errorf("没有缺失媒体的聊天")
 	}
+	var planImages, planVideos, planAudio, planFiles int
+	var planBytes int64
+	for _, m := range targets {
+		if plan, _, err := f.a.estimateMissingPlan(m.Slug); err == nil {
+			planImages += plan.Images
+			planVideos += plan.Videos
+			planAudio += plan.Audio
+			planFiles += plan.Files
+			planBytes += plan.KnownBytes
+		}
+	}
 	return f.startTask("sync-all", fmt.Sprintf("批量下载缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
+		t.setMediaStats(planImages, planVideos, planAudio, planFiles)
+		t.setTotalBytes(planBytes)
 		t.fileProgress(0, len(targets))
 		failures := 0
 		ctx := t.context()

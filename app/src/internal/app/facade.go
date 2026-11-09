@@ -336,7 +336,8 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	if !fileExists(f.a.sourcePath(slug)) {
 		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
 	}
-	if plan, _, perr := f.a.estimateMissingPlan(slug); perr == nil && plan.Total > 0 && plan.KnownBytes > 0 {
+	plan, _, planErr := f.a.estimateMissingPlan(slug)
+	if planErr == nil && plan.Total > 0 && plan.KnownBytes > 0 {
 		if free := int64(platform.FreeSpaceBytes(f.a.workspaceDir(slug))); free > 0 && free < plan.KnownBytes+downloadSpaceReserve {
 			return "", fmt.Errorf("磁盘空间不足：仍需下载约 %s，当前可用 %s。请清理空间或更换档案库位置后再试", humanBytes(plan.KnownBytes), humanBytes(free))
 		}
@@ -357,6 +358,13 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 		task = f.createTask("sync", "下载聊天："+meta.Chat.Name, meta.Chat.Name)
 	}
 	task.setSlug(slug)
+	// Record the planned media composition once so every state (running,
+	// paused, stopped, failed, done) can render the same section. Download
+	// records only grow over time; this is the denominator.
+	if planErr == nil && plan.Total > 0 {
+		task.setMediaStats(plan.Images, plan.Videos, plan.Audio, plan.Files)
+		task.setTotalBytes(plan.KnownBytes)
+	}
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}
 	f.op = op
 	f.running = true

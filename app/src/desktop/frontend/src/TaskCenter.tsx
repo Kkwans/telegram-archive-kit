@@ -322,19 +322,20 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const completed = task.completed ?? [];
   const speedNow = series.length > 0 ? series[series.length - 1].now : 0;
   const speed = rateParts(speedNow);
-  const recorded = [...completed, ...active];
-  const mediaTotals = MEDIA_GROUPS.map((group) => {
-    let count = 0;
+  const plannedCounts = [task.images ?? 0, task.videos ?? 0, task.audio ?? 0, task.files ?? 0];
+  const hasPlan = plannedCounts.some((n) => n > 0);
+  const mediaTotals = MEDIA_GROUPS.map((group, index) => {
+    let done = 0;
     let size = 0;
-    for (const file of recorded) {
+    for (const file of completed) {
       if (mediaGroup(file.kind) !== group.key) continue;
-      count++;
+      done++;
       size += file.expected > 0 ? file.expected : file.transferred;
     }
-    return { ...group, count, size };
+    return { ...group, count: hasPlan ? plannedCounts[index] : done, done, size };
   });
-  const recordedCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
-  const showComposition = running || !!task.recordsComplete;
+  const recordedCount = mediaTotals.reduce((sum, item) => sum + item.done, 0);
+  const totalCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
   const recent = completed.slice(0, 5);
   const pageSize = 10;
   const recordPages = Math.max(1, Math.ceil(completed.length / pageSize));
@@ -499,7 +500,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
             </button>
           )}
           {(running || paused || partial) && (
-            <button className="btn ghost danger-text" disabled={!!busyAction} onClick={() => void stop()}>
+            <button className="btn stop-action" disabled={!!busyAction} onClick={() => void stop()}>
               {busyAction === "stop" ? <Loader2 size={13} className="spin" /> : <Square size={13} />}
               结束任务
             </button>
@@ -584,7 +585,33 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         </div>
       </section>
 
-      {running ? (
+      <section className="panel download-media-panel">
+        <div className="panel-head">
+          <h3><ChartPie size={14} /> 本次媒体构成</h3>
+          <span className="meta">已完成 {recordedCount.toLocaleString()} / {totalCount.toLocaleString()} 个</span>
+        </div>
+        <div className="download-media-grid">
+          {mediaTotals.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div className={`download-media-card ${item.key}`} key={item.key}>
+                <span className="download-media-icon"><Icon size={15} /></span>
+                <div>
+                  <span>{item.label}</span>
+                  <b>{item.count.toLocaleString()} <em>个</em></b>
+                  <small>
+                    {item.done > 0
+                      ? `已完成 ${item.done.toLocaleString()} 个${item.size > 0 ? ` · ${bytes(item.size)}` : ""}`
+                      : item.count > 0 ? "尚未完成" : "无"}
+                  </small>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {running && (
         <section className="panel download-config-panel">
           <div className="panel-head">
             <h3><SlidersHorizontal size={14} /> 下载配置</h3>
@@ -594,28 +621,6 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
             <div><span>单文件线程</span><b>{transfer?.threads ?? threads}<em> 条</em></b></div>
             <div><span>卡住判定</span><b>{transfer?.stallTimeoutSeconds ?? 60}<em> 秒</em></b></div>
             <div><span>重试策略</span><b>{retryLabel[transfer?.transferAdjustment ?? "increase"] ?? "逐步增加线程"}</b></div>
-          </div>
-        </section>
-      ) : showComposition && (
-        <section className="panel download-media-panel">
-          <div className="panel-head">
-            <h3><ChartPie size={14} /> 本次媒体构成</h3>
-            <span className="meta">{recordedCount} 个已记录</span>
-          </div>
-          <div className="download-media-grid">
-            {mediaTotals.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div className={`download-media-card ${item.key}`} key={item.key}>
-                  <span className="download-media-icon"><Icon size={15} /></span>
-                  <div>
-                    <span>{item.label}</span>
-                    <b>{item.count.toLocaleString()} <em>个</em></b>
-                    <small>{item.size > 0 ? bytes(item.size) : "—"}</small>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </section>
       )}
@@ -671,7 +676,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
 
       <section className="panel">
         <div className="panel-head">
-          <h3><ChartPie size={14} /> 速度曲线</h3>
+          <h3><Activity size={14} /> 速度曲线</h3>
           <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
         </div>
         <TaskSpeedChart task={task} />
