@@ -32,6 +32,11 @@ type TaskDTO struct {
 	Videos              int     `json:"videos,omitempty"`
 	Audio               int     `json:"audio,omitempty"`
 	Files               int     `json:"files,omitempty"`
+	DoneImages          int     `json:"doneImages,omitempty"`
+	DoneVideos          int     `json:"doneVideos,omitempty"`
+	DoneAudio           int     `json:"doneAudio,omitempty"`
+	DoneFiles           int     `json:"doneFiles,omitempty"`
+	DoneStats           bool    `json:"doneStats,omitempty"`
 	FilesDone           int     `json:"filesDone,omitempty"`
 	FilesTotal          int     `json:"filesTotal,omitempty"`
 	Detail              string  `json:"detail,omitempty"`
@@ -173,6 +178,16 @@ func (t *backgroundTask) setTotalBytes(total int64) {
 	if total > 0 {
 		t.dto.TotalBytes = total
 	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setDoneMediaStats(images, videos, audio, files int) {
+	t.mu.Lock()
+	t.dto.DoneImages = images
+	t.dto.DoneVideos = videos
+	t.dto.DoneAudio = audio
+	t.dto.DoneFiles = files
+	t.dto.DoneStats = true
 	t.mu.Unlock()
 }
 
@@ -504,6 +519,37 @@ func (f *Facade) taskDetails() []TaskDetailDTO {
 	return out
 }
 
+// workspaceFileComposition counts media that actually exists on disk. Unlike
+// archive-data.js it never counts a file that was deleted or never downloaded.
+func (f *Facade) workspaceFileComposition(slug string) (images, videos, audio, files int) {
+	for _, dir := range []string{f.a.mediaDir(slug), f.a.filesDir(slug)} {
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			name := d.Name()
+			if strings.HasSuffix(strings.ToLower(name), ".tak-part") || archive.IsThumbnailFile(path) || archive.IsThumbnailFile(name) {
+				return nil
+			}
+			if info, er := d.Info(); er != nil || info.Size() <= 0 {
+				return nil
+			}
+			switch archive.MediaKind(name) {
+			case "image":
+				images++
+			case "video":
+				videos++
+			case "audio":
+				audio++
+			default:
+				files++
+			}
+			return nil
+		})
+	}
+	return
+}
+
 func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 	f.taskMu.Lock()
 	for _, t := range f.tasks {
@@ -513,6 +559,36 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 		}
 		f.taskMu.Unlock()
 		if d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
+			composed := d.Images + d.Videos + d.Audio + d.Files
+			needComposition := composed == 0 || (d.Total > 0 && composed*2 < d.Total)
+			// Running tasks poll this endpoint every second; only touch the large
+			// media directory when a non-running detail needs real file counts.
+			if d.State != "running" || needComposition {
+				fileImages, fileVideos, fileAudio, fileFiles := f.workspaceFileComposition(d.Slug)
+				if needComposition {
+					var planImages, planVideos, planAudio, planFiles int
+					if plan, _, err := f.a.estimateMissingPlan(d.Slug); err == nil {
+						planImages, planVideos, planAudio, planFiles = plan.Images, plan.Videos, plan.Audio, plan.Files
+					}
+					d.Images = fileImages + planImages
+					d.Videos = fileVideos + planVideos
+					d.Audio = fileAudio + planAudio
+					d.Files = fileFiles + planFiles
+					if d.Images+d.Videos+d.Audio+d.Files > 0 {
+						t.setMediaStats(d.Images, d.Videos, d.Audio, d.Files)
+					}
+				}
+				if d.State != "running" {
+					// Persisted tasks keep only a small recent-record list, so derive
+					// the per-type downloaded counts from the real workspace files.
+					d.DoneImages = min(fileImages, d.Images)
+					d.DoneVideos = min(fileVideos, d.Videos)
+					d.DoneAudio = min(fileAudio, d.Audio)
+					d.DoneFiles = min(fileFiles, d.Files)
+					d.DoneStats = true
+					t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
+				}
+			}
 			if len(d.Completed) == 0 && d.State != "running" {
 				d.Completed = f.recentWorkspaceMedia(d.Slug, 5)
 				d.RecordsComplete = false

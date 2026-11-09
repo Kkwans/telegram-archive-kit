@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-const Version = "3.0.4"
+const Version = "3.0.5"
 const SchemaVersion = 9
 const DefaultNamespace = "telegram-archive-kit"
 

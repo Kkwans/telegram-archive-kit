@@ -243,6 +243,11 @@ export interface TaskInfo {
   videos?: number;
   audio?: number;
   files?: number;
+  doneImages?: number;
+  doneVideos?: number;
+  doneAudio?: number;
+  doneFiles?: number;
+  doneStats?: boolean;
   filesDone?: number;
   filesTotal?: number;
   detail?: string;

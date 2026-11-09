@@ -323,16 +323,20 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const speedNow = series.length > 0 ? series[series.length - 1].now : 0;
   const speed = rateParts(speedNow);
   const plannedCounts = [task.images ?? 0, task.videos ?? 0, task.audio ?? 0, task.files ?? 0];
+  const doneCounts = [task.doneImages ?? 0, task.doneVideos ?? 0, task.doneAudio ?? 0, task.doneFiles ?? 0];
   const hasPlan = plannedCounts.some((n) => n > 0);
+  const useDoneStats = task.state !== "running" && Boolean(task.doneStats);
   const mediaTotals = MEDIA_GROUPS.map((group, index) => {
-    let done = 0;
+    let recordDone = 0;
     let size = 0;
     for (const file of completed) {
       if (mediaGroup(file.kind) !== group.key) continue;
-      done++;
+      recordDone++;
       size += file.expected > 0 ? file.expected : file.transferred;
     }
-    return { ...group, count: hasPlan ? plannedCounts[index] : done, done, size };
+    const count = hasPlan ? plannedCounts[index] : recordDone;
+    const done = useDoneStats ? Math.min(doneCounts[index], count) : recordDone;
+    return { ...group, count, done, size };
   });
   const recordedCount = mediaTotals.reduce((sum, item) => sum + item.done, 0);
   const totalCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
