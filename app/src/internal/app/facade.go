@@ -362,7 +362,8 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	// paused, stopped, failed, done) can render the same section. Download
 	// records only grow over time; this is the denominator.
 	if planErr == nil && plan.Total > 0 {
-		task.setDownloadComposition(plan.Images, plan.Videos, plan.Audio, plan.Files)
+		composition := f.effectivePlanComposition(slug, plan.Total, plan.Images, plan.Videos, plan.Audio, plan.Files)
+		task.setDownloadComposition(composition[0], composition[1], composition[2], composition[3])
 		task.setTotalBytes(plan.KnownBytes)
 		src := f.sourceMediaComposition(slug)
 		srcTotal := src[0] + src[1] + src[2] + src[3]

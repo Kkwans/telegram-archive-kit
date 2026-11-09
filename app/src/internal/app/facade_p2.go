@@ -93,6 +93,8 @@ func (f *Facade) PreviewBackfill(slug string) (BackfillPreviewDTO, error) {
 		out.Messages = arc.Stats.Messages
 		out.Media = arc.Stats.MediaFiles
 	}
+	comp := f.effectivePlanComposition(slug, plan.Total, out.Images, out.Videos, out.Audio, out.Files)
+	out.Images, out.Videos, out.Audio, out.Files = comp[0], comp[1], comp[2], comp[3]
 	// A plan that covers the whole source includes media already present from
 	// an inherited official export. The preview and task detail show only the
 	// increment this run will actually add.

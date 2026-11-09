@@ -8,7 +8,7 @@ Windows 桌面客户端 + 终端版。以 [tdl](https://github.com/iyear/tdl) �
 把「媒体下载 → 增量归档 → 网页生成 → 日常浏览」串成一条完整的本地流水线，全程数据留在你自己的硬盘上。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.0.7-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.0.8-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-环境要求)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)

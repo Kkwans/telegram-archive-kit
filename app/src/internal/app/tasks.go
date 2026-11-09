@@ -646,6 +646,21 @@ func scaleComposition(values [4]int, target int) [4]int {
 	return out
 }
 
+// effectivePlanComposition repairs legacy/malformed plans that classified all
+// media as files. The source message types are the authoritative type split.
+func (f *Facade) effectivePlanComposition(slug string, total, images, videos, audio, files int) [4]int {
+	if images+videos == 0 {
+		src := f.sourceMediaComposition(slug)
+		if src[0]+src[1] > 0 {
+			if total <= 0 {
+				total = src[0] + src[1] + src[2] + src[3]
+			}
+			return scaleComposition(src, total)
+		}
+	}
+	return [4]int{images, videos, audio, files}
+}
+
 func (f *Facade) officialExportBaseline(slug string) (counts [4]int, total int, bytes int64) {
 	meta, err := f.a.readWorkspaceMeta(slug)
 	if err != nil {
@@ -685,6 +700,13 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 			}
 			planCounts := [4]int{d.Images, d.Videos, d.Audio, d.Files}
 			planTotal := planCounts[0] + planCounts[1] + planCounts[2] + planCounts[3]
+			// A plan saved with every item classified as "file" is unusable;
+			// rebuild the type split from the source messages.
+			brokenPlan := d.PlanKnown && planCounts[0]+planCounts[1] == 0 && src[0]+src[1] > 0
+			if brokenPlan {
+				planCounts = src
+				planTotal = srcTotal
+			}
 			// A plan whose total equals the full source means the downloader
 			// included media that was already present. Subtract that baseline so
 			// the task detail only shows this task's increment.
@@ -731,6 +753,55 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 							d.DoneStats = true
 							t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
 						}
+					} else {
+						summary := f.workspaceMediaSummary(d.Slug)
+						done := [4]int{
+							max(0, summary.Images-baseCounts[0]),
+							max(0, summary.Videos-baseCounts[1]),
+							max(0, summary.Audio-baseCounts[2]),
+							max(0, summary.Files-baseCounts[3]),
+						}
+						if done[0]+done[1]+done[2]+done[3] > 0 {
+							done = scaleComposition(done, incDone)
+							d.DoneImages = min(done[0], d.Images)
+							d.DoneVideos = min(done[1], d.Videos)
+							d.DoneAudio = min(done[2], d.Audio)
+							d.DoneFiles = min(done[3], d.Files)
+							d.DoneStats = true
+							t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
+						}
+					}
+				}
+			} else if brokenPlan {
+				target := d.Total
+				if target <= 0 {
+					target = planTotal
+				}
+				scaled := scaleComposition(planCounts, target)
+				d.Images, d.Videos, d.Audio, d.Files = scaled[0], scaled[1], scaled[2], scaled[3]
+				t.setDownloadComposition(d.Images, d.Videos, d.Audio, d.Files)
+				if d.State != "running" {
+					present := f.workspacePresentComposition(d.Slug)
+					if d.Done > 0 && present[0]+present[1]+present[2]+present[3] > 0 {
+						done := scaleComposition(present, d.Done)
+						d.DoneImages = min(done[0], d.Images)
+						d.DoneVideos = min(done[1], d.Videos)
+						d.DoneAudio = min(done[2], d.Audio)
+						d.DoneFiles = min(done[3], d.Files)
+						d.DoneStats = true
+						t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
+					}
+				} else {
+					summary := f.workspaceMediaSummary(d.Slug)
+					done := [4]int{summary.Images, summary.Videos, summary.Audio, summary.Files}
+					if done[0]+done[1]+done[2]+done[3] > 0 {
+						done = scaleComposition(done, d.Done)
+						d.DoneImages = min(done[0], d.Images)
+						d.DoneVideos = min(done[1], d.Videos)
+						d.DoneAudio = min(done[2], d.Audio)
+						d.DoneFiles = min(done[3], d.Files)
+						d.DoneStats = true
+						t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
 					}
 				}
 			} else if d.State != "running" {

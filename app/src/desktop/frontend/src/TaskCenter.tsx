@@ -340,6 +340,11 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   });
   const recordedCount = mediaTotals.reduce((sum, item) => sum + item.done, 0);
   const totalCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
+  const sizedTotals = mediaTotals.map((item) => ({
+    ...item,
+    totalSize: totalCount > 0 ? Math.round((task.totalBytes ?? 0) * item.count / totalCount) : 0,
+    doneSize: recordedCount > 0 ? Math.round((task.bytes ?? 0) * item.done / recordedCount) : 0,
+  }));
   const recent = completed.slice(0, 5);
   const pageSize = 10;
   const recordPages = Math.max(1, Math.ceil(completed.length / pageSize));
@@ -595,7 +600,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           <span className="meta">已下载 {recordedCount.toLocaleString()} / {totalCount.toLocaleString()} 个</span>
         </div>
         <div className="download-media-grid">
-          {mediaTotals.map((item) => {
+          {sizedTotals.map((item) => {
             const Icon = item.icon;
             return (
               <div className={`download-media-card ${item.key}`} key={item.key}>
@@ -603,7 +608,8 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
                 <div>
                   <span>{item.label}</span>
                   <b>{item.done.toLocaleString()} <em>个</em></b>
-                  <small>共 {item.count.toLocaleString()} 个</small>
+                  <small>共 {item.count.toLocaleString()} 个 · {item.totalSize > 0 ? bytes(item.totalSize) : "—"}</small>
+                  <small className="done-size">已下载 {item.doneSize > 0 ? bytes(item.doneSize) : "—"}</small>
                 </div>
               </div>
             );
