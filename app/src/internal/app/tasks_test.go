@@ -237,3 +237,101 @@ func TestStopCancelsTaskContext(t *testing.T) {
 		t.Fatalf("expected stopped state, got %s", task.snapshot().State)
 	}
 }
+
+func TestSyncTaskDisplaysTaskIncrement(t *testing.T) {
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	task := f.createTask("sync", "同步聊天：测试", "测试")
+	task.setSlug("chat-test")
+	task.setDownloadPlan(364, 17608790184, 197, 167, 0, 0)
+	task.setDownloadBaseline(5986, 125025154363, 3866, 2110, 0, 10)
+	task.updateDownload(DownloadSnapshot{
+		State: "正在下载", Done: 5986, Total: 6350,
+		Bytes: 125025154363, TotalBytes: 142633944547,
+	})
+
+	got := f.Tasks()[0]
+	if got.Done != 0 || got.Total != 364 || got.Images != 197 || got.Videos != 167 || got.Files != 0 {
+		t.Fatalf("new task must start from zero: %#v", got)
+	}
+	if got.Bytes != 0 || got.TotalBytes != 17608790184 {
+		t.Fatalf("new task size must be the preview increment: %#v", got)
+	}
+	if got.DoneImages+got.DoneVideos+got.DoneAudio+got.DoneFiles != 0 {
+		t.Fatalf("done composition must be zero: %#v", got)
+	}
+	// Display must never touch the persisted engine counters.
+	if raw := task.snapshot(); raw.Done != 5986 || raw.Total != 6350 {
+		t.Fatalf("engine counters were mutated: %#v", raw)
+	}
+
+	task.updateDownload(DownloadSnapshot{
+		State: "正在下载", Done: 6000, Total: 6350,
+		Bytes: 125025154363 + 800*1024*1024, TotalBytes: 142633944547,
+	})
+	got = f.Tasks()[0]
+	if got.Done != 14 || got.Total != 364 {
+		t.Fatalf("progress must grow on the task plan: %#v", got)
+	}
+	if got.DoneImages+got.DoneVideos+got.DoneAudio+got.DoneFiles != got.Done {
+		t.Fatalf("composition header must match downloaded count: %#v", got)
+	}
+
+	task.updateDownload(DownloadSnapshot{
+		State: "正在下载", Done: 6350, Total: 6350,
+		Bytes: 142633944547, TotalBytes: 142633944547,
+	})
+	got = f.Tasks()[0]
+	if got.Done != 364 || got.Total != 364 || got.Percent != 100 {
+		t.Fatalf("completed task must reach its plan: %#v", got)
+	}
+	if got.DoneImages != 197 || got.DoneVideos != 167 || got.DoneFiles != 0 {
+		t.Fatalf("completed composition must equal the plan: %#v", got)
+	}
+}
+
+func TestLegacySyncTaskShowsRemainingIncrement(t *testing.T) {
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	task := f.createTask("sync", "同步聊天：旧任务", "旧任务")
+	task.setSlug("chat-missing")
+	task.mu.Lock()
+	task.dto.Images, task.dto.Videos, task.dto.Audio, task.dto.Files = 1661, 1123, 0, 4
+	task.dto.PlanKnown = true
+	task.mu.Unlock()
+	task.updateDownload(DownloadSnapshot{
+		State: "已暂停", Done: 5986, Total: 6350,
+		Bytes: 125025154363, TotalBytes: 142633944547,
+	})
+	task.pause()
+
+	got := f.Tasks()[0]
+	if got.Done != 0 || got.Total != 364 {
+		t.Fatalf("legacy paused task must show remaining work: %#v", got)
+	}
+	if got.TotalBytes != 17608641997 && got.TotalBytes != 17608790184 {
+		t.Fatalf("legacy paused task size must be the remainder: %#v", got)
+	}
+	sum := got.DoneImages + got.DoneVideos + got.DoneAudio + got.DoneFiles
+	if sum != 0 || got.Images+got.Videos+got.Audio+got.Files != 364 {
+		t.Fatalf("legacy composition must use the remaining total: %#v", got)
+	}
+}
+
+func TestAllocateCompositionSumsToTarget(t *testing.T) {
+	plan := [4]int{4025, 2318, 0, 7}
+	for _, target := range []int{0, 1, 364, 2788, 6350} {
+		got := allocateComposition(plan, target)
+		sum := got[0] + got[1] + got[2] + got[3]
+		want := target
+		if want > 6350 {
+			want = 6350
+		}
+		if sum != want {
+			t.Fatalf("target %d: sum=%d %v", target, sum, got)
+		}
+		for i := 0; i < 4; i++ {
+			if got[i] > plan[i] {
+				t.Fatalf("target %d: category %d overflow %v", target, i, got)
+			}
+		}
+	}
+}

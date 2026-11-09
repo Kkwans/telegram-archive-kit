@@ -358,50 +358,37 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 		task = f.createTask("sync", "下载聊天："+meta.Chat.Name, meta.Chat.Name)
 	}
 	task.setSlug(slug)
-	// Record the planned media composition once so every state (running,
-	// paused, stopped, failed, done) can render the same section. Download
-	// records only grow over time; this is the denominator.
-	if planErr == nil && plan.Total > 0 {
+	// A task's plan is exactly what its preview dialog showed: the media that
+	// are still missing. It is captured once when the task is created and kept
+	// across pause/resume, so the denominator never drifts while downloading.
+	if planErr == nil && plan.Total > 0 && task.snapshot().PlanTotal <= 0 {
 		composition := f.effectivePlanComposition(slug, plan.Total, plan.Images, plan.Videos, plan.Audio, plan.Files)
-		task.setDownloadComposition(composition[0], composition[1], composition[2], composition[3])
-		task.setTotalBytes(plan.KnownBytes)
-		// The preview dialog is the authoritative task plan. Capture the items
-		// already present at start as a baseline so the same numbers are shown
-		// in the task detail and it starts from zero.
-		baseSet := false
+		planTotal, planBytes := plan.Total, plan.KnownBytes
 		if preview, perr := f.PreviewBackfill(slug); perr == nil && preview.Missing > 0 {
-			prev := [4]int{preview.Images, preview.Videos, preview.Audio, preview.Files}
-			base := [4]int{
-				max(0, composition[0]-prev[0]),
-				max(0, composition[1]-prev[1]),
-				max(0, composition[2]-prev[2]),
-				max(0, composition[3]-prev[3]),
-			}
-			task.setDownloadBaseline(
-				max(0, plan.Total-preview.Missing),
-				max(0, plan.KnownBytes-preview.KnownBytes),
-				base[0], base[1], base[2], base[3],
-			)
-			baseSet = true
+			planTotal, planBytes = preview.Missing, preview.KnownBytes
+			composition = [4]int{preview.Images, preview.Videos, preview.Audio, preview.Files}
 		}
-		if !baseSet {
-			doneIDs, doneBytes := f.a.downloadExistingSnapshot(slug, plan)
-			if len(doneIDs) > 0 {
-				var base [4]int
-				for id := range doneIDs {
-					switch plan.Kinds[id] {
-					case "image":
-						base[0]++
-					case "video":
-						base[1]++
-					case "audio":
-						base[2]++
-					default:
-						base[3]++
-					}
+		composition = normalizePlanComposition(composition, planTotal)
+		task.setDownloadPlan(planTotal, planBytes, composition[0], composition[1], composition[2], composition[3])
+		// The engine reports progress against the complete chat plan, including
+		// files that existed before this run. Measure that baseline with the same
+		// ID/size matching and subtract it from every displayed value.
+		if basePlan, err := loadDownloadPlan(f.a.sourcePath(slug)); err == nil {
+			doneIDs, doneBytes := f.a.downloadExistingSnapshot(slug, basePlan)
+			var base [4]int
+			for id := range doneIDs {
+				switch basePlan.Kinds[id] {
+				case "image":
+					base[0]++
+				case "video":
+					base[1]++
+				case "audio":
+					base[2]++
+				default:
+					base[3]++
 				}
-				task.setDownloadBaseline(len(doneIDs), doneBytes, base[0], base[1], base[2], base[3])
 			}
+			task.setDownloadBaseline(len(doneIDs), doneBytes, base[0], base[1], base[2], base[3])
 		}
 	}
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}

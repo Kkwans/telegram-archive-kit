@@ -375,7 +375,7 @@ export function OnlineUpdateDialog({
                     <b>{isBackfill ? preview.media.toLocaleString() : preview.messages.toLocaleString()} <em>{isBackfill ? "个媒体" : "条消息"}</em></b>
                   </div>
                   <div>
-                    <span>预计大小</span>
+                    <span>预计下载</span>
                     <b>{preview.bytes > 0 ? bytes(preview.bytes) : "—"}</b>
                   </div>
                 </div>
@@ -402,12 +402,12 @@ export function OnlineUpdateDialog({
                 )}
 
                 {preview.other > 0 && (
-                  <p className="export-preview-note">另有 {preview.other.toLocaleString()} 个其他媒体（位置、投票、联系人等）。</p>
+                  <p className="export-preview-note">含 {preview.other.toLocaleString()} 个其他媒体（位置、投票、联系人等），已计入文件。</p>
                 )}
                 <p className="export-preview-note">
                   <HardDrive size={12} /> {isBackfill
-                    ? "大小按 result.json 返回的文件尺寸估算，仅统计实际缺失的媒体；实际下载可能略有差异。"
-                    : "大小按 Telegram 返回的文件尺寸估算，仅统计本次新增消息；实际下载可能因缩略图与格式略有差异。"}
+                    ? "大小按 result.json 返回的文件尺寸估算，仅统计实际缺失的媒体，与任务详情的总量一致；实际下载可能略有差异。"
+                    : "大小按 Telegram 返回的文件尺寸估算，包含本次新增消息与此前缺失的媒体，与任务详情的总量一致；实际下载可能略有差异。"}
                   {preview.service > 0 ? ` 包含 ${preview.service.toLocaleString()} 条服务消息。` : ""}
                 </p>
               </>

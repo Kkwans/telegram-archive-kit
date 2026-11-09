@@ -325,7 +325,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   const plannedCounts = [task.images ?? 0, task.videos ?? 0, task.audio ?? 0, task.files ?? 0];
   const doneCounts = [task.doneImages ?? 0, task.doneVideos ?? 0, task.doneAudio ?? 0, task.doneFiles ?? 0];
   const hasPlan = plannedCounts.some((n) => n > 0);
-  const useDoneStats = task.state !== "running" && Boolean(task.doneStats);
+  const useDoneStats = Boolean(task.doneStats);
   const mediaTotals = MEDIA_GROUPS.map((group, index) => {
     let recordDone = 0;
     let size = 0;

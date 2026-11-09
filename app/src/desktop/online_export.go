@@ -982,6 +982,38 @@ func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (Onlin
 	return OnlineChat{}, errors.New("该会话已不在当前账号的在线列表中，请刷新在线聊天页后重试")
 }
 
+// normalizeOnlineComposition folds media types outside image/video/audio into
+// the file count so the dialog's type cards always sum to its media total.
+func normalizeOnlineComposition(plan [4]int, total int) [4]int {
+	if total <= 0 {
+		return [4]int{}
+	}
+	sum := plan[0] + plan[1] + plan[2] + plan[3]
+	if sum == total {
+		return plan
+	}
+	delta := total - sum
+	if delta > 0 {
+		plan[3] += delta
+		return plan
+	}
+	deficit := -delta
+	plan[3] -= deficit
+	if plan[3] < 0 {
+		deficit = -plan[3]
+		plan[3] = 0
+		for i := 0; i < 3 && deficit > 0; i++ {
+			take := plan[i]
+			if take > deficit {
+				take = deficit
+			}
+			plan[i] -= take
+			deficit -= take
+		}
+	}
+	return plan
+}
+
 func onlineStats(messages []map[string]any) (service, images, videos, audio, files, other, media int, size int64) {
 	for _, raw := range messages {
 		if raw["type"] == "service" {
@@ -1100,13 +1132,19 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	service, images, videos, audio, files, other, _, size := onlineStats(messages)
 	out.Messages = len(messages)
 	out.Service = service
-	out.Images = images
-	out.Videos = videos
-	out.Audio = audio
-	out.Files = files
+	// The task that starts after this export downloads both the new messages
+	// and files that were already missing locally. Show that exact increment so
+	// the dialog and the task detail cannot disagree.
+	out.Images = images + backfill.Images
+	out.Videos = videos + backfill.Videos
+	out.Audio = audio + backfill.Audio
+	// backfill.Files already contains its "other" media types.
+	out.Files = files + backfill.Files
 	out.Other = other
-	out.Media = media
-	out.Bytes = size
+	out.Media = media + backfill.Missing
+	out.Bytes = size + backfill.KnownBytes
+	comp := normalizeOnlineComposition([4]int{out.Images, out.Videos, out.Audio, out.Files}, out.Media)
+	out.Images, out.Videos, out.Audio, out.Files = comp[0], comp[1], comp[2], comp[3]
 	out.SpaceNeedBytes = size + backfill.KnownBytes
 	out.SpaceShort = backfill.FreeBytes > 0 && out.SpaceNeedBytes > 0 && backfill.FreeBytes < out.SpaceNeedBytes+onlineSpaceReserve
 	out.Token = b.online.Prepare(info.Namespace, peerKey, chat, messages, media)
