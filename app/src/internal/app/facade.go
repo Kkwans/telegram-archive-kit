@@ -362,7 +362,7 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	// paused, stopped, failed, done) can render the same section. Download
 	// records only grow over time; this is the denominator.
 	if planErr == nil && plan.Total > 0 {
-		task.setMediaStats(plan.Images, plan.Videos, plan.Audio, plan.Files)
+		task.setDownloadComposition(plan.Images, plan.Videos, plan.Audio, plan.Files)
 		task.setTotalBytes(plan.KnownBytes)
 	}
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}

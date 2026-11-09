@@ -37,6 +37,7 @@ type TaskDTO struct {
 	DoneAudio           int     `json:"doneAudio,omitempty"`
 	DoneFiles           int     `json:"doneFiles,omitempty"`
 	DoneStats           bool    `json:"doneStats,omitempty"`
+	PlanKnown           bool    `json:"planKnown,omitempty"`
 	FilesDone           int     `json:"filesDone,omitempty"`
 	FilesTotal          int     `json:"filesTotal,omitempty"`
 	Detail              string  `json:"detail,omitempty"`
@@ -178,6 +179,16 @@ func (t *backgroundTask) setTotalBytes(total int64) {
 	if total > 0 {
 		t.dto.TotalBytes = total
 	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setDownloadComposition(images, videos, audio, files int) {
+	t.mu.Lock()
+	t.dto.Images = images
+	t.dto.Videos = videos
+	t.dto.Audio = audio
+	t.dto.Files = files
+	t.dto.PlanKnown = true
 	t.mu.Unlock()
 }
 
@@ -519,9 +530,54 @@ func (f *Facade) taskDetails() []TaskDetailDTO {
 	return out
 }
 
-// workspaceFileComposition counts media that actually exists on disk. Unlike
-// archive-data.js it never counts a file that was deleted or never downloaded.
-func (f *Facade) workspaceFileComposition(slug string) (images, videos, audio, files int) {
+// sourceMediaComposition counts every media message in result.json by type.
+// It is the task plan for a legacy download that started from an empty TAK
+// media directory, and is scaled down when the task plan was smaller.
+func (f *Facade) sourceMediaComposition(slug string) [4]int {
+	var out [4]int
+	b, err := os.ReadFile(f.a.sourcePath(slug))
+	if err != nil {
+		return out
+	}
+	var root struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.UseNumber()
+	if dec.Decode(&root) != nil {
+		return out
+	}
+	for _, m := range root.Messages {
+		mt := strings.ToLower(archive.AnyString(m["media_type"]))
+		if mt == "" {
+			continue
+		}
+		switch mt {
+		case "photo":
+			out[0]++
+		case "video_file", "video_message", "animation":
+			out[1]++
+		case "voice_message", "audio_file":
+			out[2]++
+		default:
+			out[3]++
+		}
+	}
+	return out
+}
+
+// workspacePresentComposition counts media the archive can currently serve:
+// inherited official exports plus files actually present in media/ and files/.
+func (f *Facade) workspacePresentComposition(slug string) [4]int {
+	var out [4]int
+	if meta, err := f.a.readWorkspaceMeta(slug); err == nil {
+		for _, ex := range meta.OfficialExports {
+			out[0] += ex.Images
+			out[1] += ex.Videos
+			out[2] += ex.Audio
+			out[3] += ex.Files
+		}
+	}
 	for _, dir := range []string{f.a.mediaDir(slug), f.a.filesDir(slug)} {
 		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
@@ -536,18 +592,41 @@ func (f *Facade) workspaceFileComposition(slug string) (images, videos, audio, f
 			}
 			switch archive.MediaKind(name) {
 			case "image":
-				images++
+				out[0]++
 			case "video":
-				videos++
+				out[1]++
 			case "audio":
-				audio++
+				out[2]++
 			default:
-				files++
+				out[3]++
 			}
 			return nil
 		})
 	}
-	return
+	return out
+}
+
+// scaleComposition distributes a known composition to an exact total. Used for
+// legacy tasks whose original preview plan was not persisted.
+func scaleComposition(values [4]int, target int) [4]int {
+	sum := values[0] + values[1] + values[2] + values[3]
+	if sum <= 0 || target <= 0 {
+		return [4]int{}
+	}
+	if sum == target {
+		return values
+	}
+	var out [4]int
+	used := 0
+	for i := 0; i < 3; i++ {
+		out[i] = (values[i]*target + sum/2) / sum
+		used += out[i]
+	}
+	out[3] = target - used
+	if out[3] < 0 {
+		out[3] = 0
+	}
+	return out
 }
 
 func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
@@ -559,32 +638,32 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 		}
 		f.taskMu.Unlock()
 		if d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
-			composed := d.Images + d.Videos + d.Audio + d.Files
-			needComposition := composed == 0 || (d.Total > 0 && composed*2 < d.Total)
-			// Running tasks poll this endpoint every second; only touch the large
-			// media directory when a non-running detail needs real file counts.
-			if d.State != "running" || needComposition {
-				fileImages, fileVideos, fileAudio, fileFiles := f.workspaceFileComposition(d.Slug)
-				if needComposition {
-					var planImages, planVideos, planAudio, planFiles int
-					if plan, _, err := f.a.estimateMissingPlan(d.Slug); err == nil {
-						planImages, planVideos, planAudio, planFiles = plan.Images, plan.Videos, plan.Audio, plan.Files
+			if !d.PlanKnown {
+				src := f.sourceMediaComposition(d.Slug)
+				srcTotal := src[0] + src[1] + src[2] + src[3]
+				if srcTotal > 0 {
+					target := d.Total
+					if target <= 0 {
+						target = srcTotal
 					}
-					d.Images = fileImages + planImages
-					d.Videos = fileVideos + planVideos
-					d.Audio = fileAudio + planAudio
-					d.Files = fileFiles + planFiles
-					if d.Images+d.Videos+d.Audio+d.Files > 0 {
-						t.setMediaStats(d.Images, d.Videos, d.Audio, d.Files)
-					}
+					scaled := scaleComposition(src, target)
+					d.Images, d.Videos, d.Audio, d.Files = scaled[0], scaled[1], scaled[2], scaled[3]
+					t.setDownloadComposition(d.Images, d.Videos, d.Audio, d.Files)
 				}
-				if d.State != "running" {
-					// Persisted tasks keep only a small recent-record list, so derive
-					// the per-type downloaded counts from the real workspace files.
-					d.DoneImages = min(fileImages, d.Images)
-					d.DoneVideos = min(fileVideos, d.Videos)
-					d.DoneAudio = min(fileAudio, d.Audio)
-					d.DoneFiles = min(fileFiles, d.Files)
+			}
+			if d.State != "running" {
+				present := f.workspacePresentComposition(d.Slug)
+				presentTotal := present[0] + present[1] + present[2] + present[3]
+				if d.Done == 0 {
+					d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles = 0, 0, 0, 0
+					d.DoneStats = true
+					t.setDoneMediaStats(0, 0, 0, 0)
+				} else if presentTotal > 0 {
+					done := scaleComposition(present, d.Done)
+					d.DoneImages = min(done[0], d.Images)
+					d.DoneVideos = min(done[1], d.Videos)
+					d.DoneAudio = min(done[2], d.Audio)
+					d.DoneFiles = min(done[3], d.Files)
 					d.DoneStats = true
 					t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
 				}
@@ -1102,7 +1181,7 @@ func (f *Facade) StartSyncAllMissing() (string, error) {
 		}
 	}
 	return f.startTask("sync-all", fmt.Sprintf("批量下载缺失（%d 个聊天）", len(targets)), func(t *backgroundTask) error {
-		t.setMediaStats(planImages, planVideos, planAudio, planFiles)
+		t.setDownloadComposition(planImages, planVideos, planAudio, planFiles)
 		t.setTotalBytes(planBytes)
 		t.fileProgress(0, len(targets))
 		failures := 0
