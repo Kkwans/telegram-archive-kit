@@ -93,6 +93,25 @@ func (f *Facade) PreviewBackfill(slug string) (BackfillPreviewDTO, error) {
 		out.Messages = arc.Stats.Messages
 		out.Media = arc.Stats.MediaFiles
 	}
+	// A plan that covers the whole source includes media already present from
+	// an inherited official export. The preview and task detail show only the
+	// increment this run will actually add.
+	src := f.sourceMediaComposition(slug)
+	srcTotal := src[0] + src[1] + src[2] + src[3]
+	if srcTotal > 0 && plan.Total*100 >= srcTotal*95 {
+		present := f.workspacePresentComposition(slug)
+		presentTotal := present[0] + present[1] + present[2] + present[3]
+		if presentTotal > 0 {
+			out.Images = max(0, plan.Images-present[0])
+			out.Videos = max(0, plan.Videos-present[1])
+			out.Audio = max(0, plan.Audio-present[2])
+			out.Files = max(0, plan.Files-present[3])
+			out.Missing = max(0, plan.Total-presentTotal)
+			if baseBytes := f.workspaceMediaSummary(slug).Bytes; out.KnownBytes > baseBytes {
+				out.KnownBytes -= baseBytes
+			}
+		}
+	}
 	out.FreeBytes = int64(platform.FreeSpaceBytes(f.a.workspaceDir(slug)))
 	out.SpaceShort = out.FreeBytes > 0 && out.KnownBytes > 0 && out.FreeBytes < out.KnownBytes+downloadSpaceReserve
 	return out, nil

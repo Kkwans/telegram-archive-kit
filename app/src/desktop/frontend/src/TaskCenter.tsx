@@ -603,7 +603,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
                 <div>
                   <span>{item.label}</span>
                   <b>{item.done.toLocaleString()} <em>个</em></b>
-                  <small>共 {item.count.toLocaleString()} 个{item.size > 0 ? ` · ${bytes(item.size)}` : ""}</small>
+                  <small>共 {item.count.toLocaleString()} 个</small>
                 </div>
               </div>
             );

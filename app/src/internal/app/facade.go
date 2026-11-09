@@ -364,6 +364,15 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	if planErr == nil && plan.Total > 0 {
 		task.setDownloadComposition(plan.Images, plan.Videos, plan.Audio, plan.Files)
 		task.setTotalBytes(plan.KnownBytes)
+		src := f.sourceMediaComposition(slug)
+		srcTotal := src[0] + src[1] + src[2] + src[3]
+		if srcTotal > 0 && plan.Total*100 >= srcTotal*95 {
+			present := f.workspacePresentComposition(slug)
+			presentTotal := present[0] + present[1] + present[2] + present[3]
+			if presentTotal > 0 {
+				task.setDownloadBaseline(presentTotal, f.workspaceMediaSummary(slug).Bytes, present[0], present[1], present[2], present[3])
+			}
+		}
 	}
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}
 	f.op = op

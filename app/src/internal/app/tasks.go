@@ -38,6 +38,12 @@ type TaskDTO struct {
 	DoneFiles           int     `json:"doneFiles,omitempty"`
 	DoneStats           bool    `json:"doneStats,omitempty"`
 	PlanKnown           bool    `json:"planKnown,omitempty"`
+	BaselineTotal       int     `json:"baselineTotal,omitempty"`
+	BaselineBytes       int64   `json:"baselineBytes,omitempty"`
+	BaselineImages      int     `json:"baselineImages,omitempty"`
+	BaselineVideos      int     `json:"baselineVideos,omitempty"`
+	BaselineAudio       int     `json:"baselineAudio,omitempty"`
+	BaselineFiles       int     `json:"baselineFiles,omitempty"`
 	FilesDone           int     `json:"filesDone,omitempty"`
 	FilesTotal          int     `json:"filesTotal,omitempty"`
 	Detail              string  `json:"detail,omitempty"`
@@ -189,6 +195,17 @@ func (t *backgroundTask) setDownloadComposition(images, videos, audio, files int
 	t.dto.Audio = audio
 	t.dto.Files = files
 	t.dto.PlanKnown = true
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setDownloadBaseline(total int, bytes int64, images, videos, audio, files int) {
+	t.mu.Lock()
+	t.dto.BaselineTotal = total
+	t.dto.BaselineBytes = bytes
+	t.dto.BaselineImages = images
+	t.dto.BaselineVideos = videos
+	t.dto.BaselineAudio = audio
+	t.dto.BaselineFiles = files
 	t.mu.Unlock()
 }
 
@@ -629,6 +646,22 @@ func scaleComposition(values [4]int, target int) [4]int {
 	return out
 }
 
+func (f *Facade) officialExportBaseline(slug string) (counts [4]int, total int, bytes int64) {
+	meta, err := f.a.readWorkspaceMeta(slug)
+	if err != nil {
+		return
+	}
+	for _, ex := range meta.OfficialExports {
+		counts[0] += ex.Images
+		counts[1] += ex.Videos
+		counts[2] += ex.Audio
+		counts[3] += ex.Files
+		total += ex.MediaFiles
+		bytes += ex.TotalBytes
+	}
+	return
+}
+
 func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 	f.taskMu.Lock()
 	for _, t := range f.tasks {
@@ -638,20 +671,69 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 		}
 		f.taskMu.Unlock()
 		if d.Slug != "" && (d.Kind == "sync" || d.Kind == "sync-all") {
-			if !d.PlanKnown {
-				src := f.sourceMediaComposition(d.Slug)
-				srcTotal := src[0] + src[1] + src[2] + src[3]
-				if srcTotal > 0 {
-					target := d.Total
-					if target <= 0 {
-						target = srcTotal
-					}
-					scaled := scaleComposition(src, target)
-					d.Images, d.Videos, d.Audio, d.Files = scaled[0], scaled[1], scaled[2], scaled[3]
-					t.setDownloadComposition(d.Images, d.Videos, d.Audio, d.Files)
+			src := f.sourceMediaComposition(d.Slug)
+			srcTotal := src[0] + src[1] + src[2] + src[3]
+			planKnown := d.PlanKnown
+			if !planKnown && srcTotal > 0 {
+				target := d.Total
+				if target <= 0 {
+					target = srcTotal
 				}
+				scaled := scaleComposition(src, target)
+				d.Images, d.Videos, d.Audio, d.Files = scaled[0], scaled[1], scaled[2], scaled[3]
+				t.setDownloadComposition(d.Images, d.Videos, d.Audio, d.Files)
 			}
-			if d.State != "running" {
+			planCounts := [4]int{d.Images, d.Videos, d.Audio, d.Files}
+			planTotal := planCounts[0] + planCounts[1] + planCounts[2] + planCounts[3]
+			// A plan whose total equals the full source means the downloader
+			// included media that was already present. Subtract that baseline so
+			// the task detail only shows this task's increment.
+			includesBaseline := srcTotal > 0 && d.Total > 0 && d.Total*100 >= srcTotal*95
+			baseCounts := [4]int{d.BaselineImages, d.BaselineVideos, d.BaselineAudio, d.BaselineFiles}
+			baseTotal := d.BaselineTotal
+			baseBytes := d.BaselineBytes
+			if baseTotal <= 0 && includesBaseline {
+				baseCounts, baseTotal, baseBytes = f.officialExportBaseline(d.Slug)
+			}
+			if baseTotal > 0 && d.Total > 0 {
+				incTotal := max(0, d.Total-baseTotal)
+				incDone := max(0, d.Done-baseTotal)
+				incBytes := max(0, d.Bytes-baseBytes)
+				incTotalBytes := max(0, d.TotalBytes-baseBytes)
+				if incTotal > 0 {
+					d.Total, d.Done, d.Bytes, d.TotalBytes = incTotal, incDone, incBytes, incTotalBytes
+					d.Percent = int(float64(incDone)*100/float64(incTotal) + 0.5)
+					incPlan := [4]int{
+						max(0, planCounts[0]-baseCounts[0]),
+						max(0, planCounts[1]-baseCounts[1]),
+						max(0, planCounts[2]-baseCounts[2]),
+						max(0, planCounts[3]-baseCounts[3]),
+					}
+					if incPlan[0]+incPlan[1]+incPlan[2]+incPlan[3] != incTotal {
+						incPlan = scaleComposition(incPlan, incTotal)
+					}
+					d.Images, d.Videos, d.Audio, d.Files = incPlan[0], incPlan[1], incPlan[2], incPlan[3]
+					t.setDownloadComposition(d.Images, d.Videos, d.Audio, d.Files)
+					if d.State != "running" {
+						present := f.workspacePresentComposition(d.Slug)
+						done := [4]int{
+							max(0, present[0]-baseCounts[0]),
+							max(0, present[1]-baseCounts[1]),
+							max(0, present[2]-baseCounts[2]),
+							max(0, present[3]-baseCounts[3]),
+						}
+						if done[0]+done[1]+done[2]+done[3] > 0 {
+							done = scaleComposition(done, incDone)
+							d.DoneImages = min(done[0], d.Images)
+							d.DoneVideos = min(done[1], d.Videos)
+							d.DoneAudio = min(done[2], d.Audio)
+							d.DoneFiles = min(done[3], d.Files)
+							d.DoneStats = true
+							t.setDoneMediaStats(d.DoneImages, d.DoneVideos, d.DoneAudio, d.DoneFiles)
+						}
+					}
+				}
+			} else if d.State != "running" {
 				present := f.workspacePresentComposition(d.Slug)
 				presentTotal := present[0] + present[1] + present[2] + present[3]
 				if d.Done == 0 {
@@ -680,13 +762,14 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 					}
 				}
 			}
-			if d.TotalBytes > 0 && d.Bytes > 0 && d.State != "done" {
+			if baseTotal <= 0 && d.TotalBytes > 0 && d.Bytes > 0 && d.State != "done" {
 				pct := float64(d.Bytes) * 100 / float64(d.TotalBytes)
 				if pct > 100 {
 					pct = 100
 				}
 				d.Percent = int(pct + 0.5)
 			}
+			_ = planTotal
 		}
 		// Task records written by older builds do not carry the type-specific
 		// metadata. Recover it from the workspace on demand so the detail view
