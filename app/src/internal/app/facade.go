@@ -365,24 +365,43 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 		composition := f.effectivePlanComposition(slug, plan.Total, plan.Images, plan.Videos, plan.Audio, plan.Files)
 		task.setDownloadComposition(composition[0], composition[1], composition[2], composition[3])
 		task.setTotalBytes(plan.KnownBytes)
-		// The download engine treats already-present media as completed. Capture
-		// those plan items once so this task's detail starts at zero.
-		doneIDs, doneBytes := f.a.downloadExistingSnapshot(slug, plan)
-		if len(doneIDs) > 0 {
-			var base [4]int
-			for id := range doneIDs {
-				switch plan.Kinds[id] {
-				case "image":
-					base[0]++
-				case "video":
-					base[1]++
-				case "audio":
-					base[2]++
-				default:
-					base[3]++
-				}
+		// The preview dialog is the authoritative task plan. Capture the items
+		// already present at start as a baseline so the same numbers are shown
+		// in the task detail and it starts from zero.
+		baseSet := false
+		if preview, perr := f.PreviewBackfill(slug); perr == nil && preview.Missing > 0 {
+			prev := [4]int{preview.Images, preview.Videos, preview.Audio, preview.Files}
+			base := [4]int{
+				max(0, composition[0]-prev[0]),
+				max(0, composition[1]-prev[1]),
+				max(0, composition[2]-prev[2]),
+				max(0, composition[3]-prev[3]),
 			}
-			task.setDownloadBaseline(len(doneIDs), doneBytes, base[0], base[1], base[2], base[3])
+			task.setDownloadBaseline(
+				max(0, plan.Total-preview.Missing),
+				max(0, plan.KnownBytes-preview.KnownBytes),
+				base[0], base[1], base[2], base[3],
+			)
+			baseSet = true
+		}
+		if !baseSet {
+			doneIDs, doneBytes := f.a.downloadExistingSnapshot(slug, plan)
+			if len(doneIDs) > 0 {
+				var base [4]int
+				for id := range doneIDs {
+					switch plan.Kinds[id] {
+					case "image":
+						base[0]++
+					case "video":
+						base[1]++
+					case "audio":
+						base[2]++
+					default:
+						base[3]++
+					}
+				}
+				task.setDownloadBaseline(len(doneIDs), doneBytes, base[0], base[1], base[2], base[3])
+			}
 		}
 	}
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}
