@@ -39,16 +39,29 @@ func BuildArchiveWithExtra(jsonPath, mediaDir string, extra map[string][]Media) 
 // videos and audio in media/ but relocates documents to files/, so a build has
 // to look in both without downloading anything twice.
 func BuildArchiveWithDirs(jsonPath string, mediaDirs []string, extra map[string][]Media) (*Archive, error) {
-	b, err := os.ReadFile(jsonPath)
+	raw, err := ReadRawExport(jsonPath)
 	if err != nil {
-		return nil, fmt.Errorf("读取 result.json 失败: %w", err)
+		return nil, err
 	}
+	return BuildArchiveFromExport(raw, mediaDirs, extra)
+}
+
+func ReadRawExport(jsonPath string) (RawExport, error) {
+	file, err := os.Open(jsonPath)
+	if err != nil {
+		return RawExport{}, fmt.Errorf("读取 result.json 失败: %w", err)
+	}
+	defer file.Close()
 	var raw RawExport
-	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec := json.NewDecoder(file)
 	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("解析 result.json 失败: %w", err)
+		return RawExport{}, fmt.Errorf("解析 result.json 失败: %w", err)
 	}
+	return raw, nil
+}
+
+func BuildArchiveFromExport(raw RawExport, mediaDirs []string, extra map[string][]Media) (*Archive, error) {
 	if len(raw.Messages) == 0 {
 		return nil, errors.New("result.json 中没有 messages；请导出单个聊天，而不是完整账号数据")
 	}

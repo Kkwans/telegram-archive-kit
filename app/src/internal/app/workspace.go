@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -723,13 +724,24 @@ func (a *App) listWorkspaces() []WorkspaceMeta {
 }
 
 func (a *App) buildArchiveForWorkspace(slug string) (*Archive, error) {
+	arc, _, err := a.readWorkspaceArchive(slug)
+	return arc, err
+}
+
+func (a *App) readWorkspaceArchive(slug string) (*Archive, RawExport, error) {
 	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
-		return nil, err
+		return nil, RawExport{}, err
 	}
-	if _, err := os.Stat(a.sourcePath(slug)); os.IsNotExist(err) && a.hasOfficialExport(slug) {
-		return a.buildOfficialArchive(slug, false)
+	raw, err := archive.ReadRawExport(a.sourcePath(slug))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && a.hasOfficialExport(slug) {
+			arc, err := a.buildOfficialArchive(slug, false)
+			return arc, RawExport{}, err
+		}
+		return nil, RawExport{}, err
 	}
-	return archive.BuildArchiveWithDirs(a.sourcePath(slug), a.storageDirs(slug), a.officialMediaByID(slug, false))
+	arc, err := archive.BuildArchiveFromExport(raw, a.storageDirs(slug), a.officialMediaByID(slug, false))
+	return arc, raw, err
 }
 
 func (a *App) buildWorkspace(slug string) (*Archive, error) {
@@ -1188,7 +1200,7 @@ func (a *App) estimateMissingMedia(slug string) (count int, knownCount int, know
 // with the expected sizes available in result.json. It is read-only: previews
 // use it before a download task exists, without touching the paused task plan.
 func (a *App) estimateMissingPlan(slug string) (downloadPlan, *Archive, error) {
-	arc, err := a.buildArchiveForWorkspace(slug)
+	arc, raw, err := a.readWorkspaceArchive(slug)
 	if err != nil {
 		return downloadPlan{}, nil, err
 	}
@@ -1199,34 +1211,7 @@ func (a *App) estimateMissingPlan(slug string) (downloadPlan, *Archive, error) {
 	for _, id := range arc.Missing {
 		missing[id] = true
 	}
-	b, err := os.ReadFile(a.sourcePath(slug))
-	if err != nil {
-		return downloadPlan{}, nil, err
-	}
-	var root map[string]any
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
-		return downloadPlan{}, nil, err
-	}
-	arr, _ := root["messages"].([]any)
-	filtered := make([]any, 0, len(missing))
-	for _, item := range arr {
-		m, ok := item.(map[string]any)
-		if ok && missing[archive.AnyString(m["id"])] {
-			filtered = append(filtered, item)
-		}
-	}
-	root["messages"] = filtered
-	out, err := json.Marshal(root)
-	if err != nil {
-		return downloadPlan{}, nil, err
-	}
-	plan, err := parseDownloadPlan(out)
-	if err != nil {
-		return downloadPlan{}, nil, err
-	}
-	return plan, arc, nil
+	return downloadPlanForMessages(raw.Messages, missing), arc, nil
 }
 
 func (a *App) normalizeWorkspaceSlugs() bool {

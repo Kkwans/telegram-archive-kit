@@ -345,19 +345,48 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 		return "", errors.New("缺少聊天标识")
 	}
 	f.mu.Lock()
-	library := f.libLock
+	if f.op != nil {
+		f.mu.Unlock()
+		return "", ErrOperationRunning
+	}
+	library, root := f.libLock, f.a.Settings.LibraryRoot
 	f.mu.Unlock()
-	meta, err := f.a.readWorkspaceMeta(slug)
+	a := &App{Settings: Settings{LibraryRoot: root}}
+	if _, err := checkedWorkspaceDir(root, slug); err != nil {
+		return "", err
+	}
+	meta, err := a.readWorkspaceMeta(slug)
 	if err != nil {
 		return "", fmt.Errorf("读取聊天失败: %w", err)
 	}
-	if !fileExists(f.a.sourcePath(slug)) {
+	if !fileExists(a.sourcePath(slug)) {
 		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
 	}
-	plan, _, planErr := f.a.estimateMissingPlan(slug)
+	plan, _, planErr := a.estimateMissingPlan(slug)
 	if planErr == nil && plan.Total > 0 && plan.KnownBytes > 0 {
-		if free := int64(platform.FreeSpaceBytes(f.a.workspaceDir(slug))); free > 0 && free < plan.KnownBytes+downloadSpaceReserve {
+		if free := int64(platform.FreeSpaceBytes(a.workspaceDir(slug))); free > 0 && free < plan.KnownBytes+downloadSpaceReserve {
 			return "", fmt.Errorf("磁盘空间不足：仍需下载约 %s，当前可用 %s。请清理空间或更换档案库位置后再试", humanBytes(plan.KnownBytes), humanBytes(free))
+		}
+	}
+	var baseline [4]int
+	var baselineTotal int
+	var baselineBytes int64
+	if planErr == nil && plan.Total > 0 {
+		if basePlan, err := loadDownloadPlan(a.sourcePath(slug)); err == nil {
+			doneIDs, doneBytes := a.downloadExistingSnapshot(slug, basePlan)
+			baselineTotal, baselineBytes = len(doneIDs), doneBytes
+			for id := range doneIDs {
+				switch basePlan.Kinds[id] {
+				case "image":
+					baseline[0]++
+				case "video":
+					baseline[1]++
+				case "audio":
+					baseline[2]++
+				default:
+					baseline[3]++
+				}
+			}
 		}
 	}
 
@@ -383,35 +412,15 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	// A task's plan is exactly what its preview dialog showed: the media that
 	// are still missing. It is captured once when the task is created and kept
 	// across pause/resume, so the denominator never drifts while downloading.
-	if planErr == nil && plan.Total > 0 && task.snapshot().PlanTotal <= 0 {
+	currentPlan := task.snapshot()
+	if planErr == nil && !currentPlan.PlanKnown && currentPlan.PlanTotal <= 0 {
 		composition := f.effectivePlanComposition(slug, plan.Total, plan.Images, plan.Videos, plan.Audio, plan.Files)
-		planTotal, planBytes := plan.Total, plan.KnownBytes
-		if preview, perr := f.PreviewBackfill(slug); perr == nil && preview.Missing > 0 {
-			planTotal, planBytes = preview.Missing, preview.KnownBytes
-			composition = [4]int{preview.Images, preview.Videos, preview.Audio, preview.Files}
-		}
-		composition = normalizePlanComposition(composition, planTotal)
-		task.setDownloadPlan(planTotal, planBytes, composition[0], composition[1], composition[2], composition[3])
+		composition = normalizePlanComposition(composition, plan.Total)
+		task.setDownloadPlan(plan.Total, plan.KnownBytes, composition[0], composition[1], composition[2], composition[3])
 		// The engine reports progress against the complete chat plan, including
 		// files that existed before this run. Measure that baseline with the same
 		// ID/size matching and subtract it from every displayed value.
-		if basePlan, err := loadDownloadPlan(f.a.sourcePath(slug)); err == nil {
-			doneIDs, doneBytes := f.a.downloadExistingSnapshot(slug, basePlan)
-			var base [4]int
-			for id := range doneIDs {
-				switch basePlan.Kinds[id] {
-				case "image":
-					base[0]++
-				case "video":
-					base[1]++
-				case "audio":
-					base[2]++
-				default:
-					base[3]++
-				}
-			}
-			task.setDownloadBaseline(len(doneIDs), doneBytes, base[0], base[1], base[2], base[3])
-		}
+		task.setDownloadBaseline(baselineTotal, baselineBytes, baseline[0], baseline[1], baseline[2], baseline[3])
 	}
 	op := &desktopOp{id: opID, slug: slug, chat: meta.Chat.Name, cancel: cancel, task: task}
 	f.op = op
