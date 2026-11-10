@@ -1274,66 +1274,37 @@ func (f *Facade) StartRefreshWeb(slug string) (string, error) {
 }
 
 func (f *Facade) StartRefreshAllWeb() (string, error) {
-	return f.startTask("refresh-all", "重建全部网页", func(t *backgroundTask) error {
-		f.rebuildMu.Lock()
-		defer f.rebuildMu.Unlock()
-		list := f.a.listWorkspaces()
-		t.setInfo("", "", "", f.a.Settings.LibraryRoot, 0, 0)
-		t.fileProgress(0, len(list))
-		failures := 0
-		ok := 0
-		for i, m := range list {
-			t.update(i*100/len(list), m.Chat.Name)
-			if _, err := os.Stat(filepath.Join(f.a.dataDir(m.Slug), "archive-data.js")); err != nil {
-				t.fileProgress(i+1, len(list))
-				continue
-			}
-			if err := f.a.refreshWorkspaceWeb(m.Slug); err != nil {
-				failures++
-				t.fileProgress(i+1, len(list))
-				continue
-			}
-			ok++
-			t.update((i+1)*100/len(list), m.Chat.Name)
-			t.fileProgress(i+1, len(list))
-		}
-		if err := f.a.buildLibrary(); err != nil {
-			return err
-		}
-		t.update(100, fmt.Sprintf("重建 %d 个聊天", ok))
-		if failures > 0 {
-			return fmt.Errorf("%d 个聊天重建失败", failures)
-		}
-		return nil
-	}), nil
-}
-
-func (f *Facade) StartCompleteAllWeb() (string, error) {
 	if err := f.a.guardWritable(); err != nil {
 		return "", err
 	}
-	return f.startTask("complete-all", "补齐全库封面与网页", func(t *backgroundTask) error {
+	return f.startTask("refresh-all", "重建全部网页", func(t *backgroundTask) error {
 		f.rebuildMu.Lock()
 		defer f.rebuildMu.Unlock()
 		ctx := t.context()
-		list := f.a.listWorkspaces()
+		list, err := f.a.readWorkspaces()
+		if err != nil {
+			return fmt.Errorf("读取档案库聊天列表：%w", err)
+		}
 		if len(list) == 0 {
-			return fmt.Errorf("没有可补齐的聊天")
+			return fmt.Errorf("没有可重建的聊天")
 		}
 		t.setInfo("", "", "", f.a.Settings.LibraryRoot, 0, 0)
 		t.fileProgress(0, len(list))
 		var failures []string
-		remainingCovers := 0
+		remainingCovers, webOnly := 0, 0
 		for i, m := range list {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			label := fmt.Sprintf("第 %d/%d 个聊天 · %s", i+1, len(list), m.Chat.Name)
-			arc, err := f.a.buildWorkspaceWithCovers(ctx, m.Slug, false, true, func(p OperationProgress) {
+			t.update(i*100/len(list), label)
+			arc, err := f.a.rebuildWorkspaceWebAndCovers(ctx, m.Slug, func(p OperationProgress) {
 				t.update(min(99, (i*100+p.Percent)/len(list)), label+" · "+p.Stage+" · "+p.Detail)
 			})
 			if err != nil {
 				failures = append(failures, m.Chat.Name+"："+err.Error())
+			} else if arc == nil {
+				webOnly++
 			} else {
 				remainingCovers += arc.Stats.MissingImagePreviews + arc.Stats.MissingVideoPreviews
 			}
@@ -1347,15 +1318,42 @@ func (f *Facade) StartCompleteAllWeb() (string, error) {
 			return err
 		}
 		detail := fmt.Sprintf("完成 %d 个聊天，失败 %d 个", len(list)-len(failures), len(failures))
+		if webOnly > 0 {
+			detail += fmt.Sprintf("，%d 个无可用源数据，仅刷新网页", webOnly)
+		}
 		if remainingCovers > 0 {
 			detail += fmt.Sprintf("，仍有 %d 张封面未生成", remainingCovers)
 		}
 		t.update(100, detail)
 		if len(failures) > 0 {
-			return fmt.Errorf("%d 个聊天补齐失败：%s", len(failures), strings.Join(failures, "；"))
+			return fmt.Errorf("%d 个聊天重建失败：%s", len(failures), strings.Join(failures, "；"))
 		}
 		return nil
 	}), nil
+}
+
+// A web-only archive still has enough data to rebuild its pages, but not to
+// reliably reconcile media against an export. Do not fall back on read errors
+// from an existing source, which would hide corruption or a NAS outage.
+func (a *App) rebuildWorkspaceWebAndCovers(ctx context.Context, slug string, progress func(OperationProgress)) (*Archive, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(a.sourcePath(slug)); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if !a.hasOfficialExport(slug) {
+			if progress != nil {
+				progress(OperationProgress{Stage: "仅刷新网页", Detail: "没有可用源数据，使用已有归档数据"})
+			}
+			return nil, a.refreshWorkspaceWeb(slug)
+		}
+	}
+	return a.buildWorkspaceWithCovers(ctx, slug, false, true, progress)
 }
 
 // StartSyncAllMissing runs the one-click sync for every chat that reports

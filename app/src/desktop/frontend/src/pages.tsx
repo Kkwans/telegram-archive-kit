@@ -3459,19 +3459,10 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   };
 
   const refreshAll = async () => {
+    setBusy("refresh-all");
     try {
-      await call("startRefreshAllWeb");
-      toast("重建任务已加入任务中心");
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-
-  const completeAll = async () => {
-    setBusy("complete-all");
-    try {
-      const { taskId } = await call<{ taskId: string }>("startCompleteAllWeb");
-      toast("全库补齐任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
+      const { taskId } = await call<{ taskId: string }>("startRefreshAllWeb");
+      toast("重建任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
@@ -3584,19 +3575,11 @@ export function Library({ ctx }: { ctx: PageCtx }) {
             </span>
             <ChevronRight size={16} />
           </button>
-          <button className="action-card" onClick={refreshAll}>
+          <button className="action-card" disabled={!chats.length || remoteOffline || busy === "refresh-all" || ctx.tasks.some((task) => (task.kind === "refresh-all" || task.kind === "complete-all") && task.state === "running")} onClick={refreshAll}>
             <span className="action-icon"><RefreshCw size={18} /></span>
             <span className="action-text">
               <b>重建全部网页</b>
-              <em>重新生成所有聊天的浏览页面与搜索索引</em>
-            </span>
-            <ChevronRight size={16} />
-          </button>
-          <button className="action-card" disabled={!chats.length || busy === "complete-all" || ctx.tasks.some((task) => task.kind === "complete-all" && task.state === "running")} onClick={completeAll}>
-            <span className="action-icon"><Images size={18} /></span>
-            <span className="action-text">
-              <b>补齐全库封面与网页</b>
-              <em>复用已有封面，补齐缺失预览并更新各聊天网页</em>
+              <em>补齐缺失封面，更新所有聊天的离线网页</em>
             </span>
             <ChevronRight size={16} />
           </button>
