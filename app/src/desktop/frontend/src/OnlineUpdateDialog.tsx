@@ -57,6 +57,11 @@ function avatarStyle(peer: string): CSSProperties {
   };
 }
 
+function samePreviewProgress(a: OnlineExportProgress | null, b: OnlineExportProgress): boolean {
+  return a !== null && a.active === b.active && a.stage === b.stage && a.detail === b.detail &&
+    a.percent === b.percent && a.messages === b.messages && a.media === b.media;
+}
+
 export function OnlineUpdateDialog({
   target,
   onClose,
@@ -80,6 +85,7 @@ export function OnlineUpdateDialog({
   const seq = useRef(0);
   const token = useRef("");
   const loadingRef = useRef(false);
+  const isOnlinePreview = target.mode !== "bulk" && target.mode !== "backfill" && target.mode !== "sync";
 
   useEffect(() => {
     loadingRef.current = previewLoading;
@@ -89,7 +95,11 @@ export function OnlineUpdateDialog({
     if (!floodUntil) return;
     const tick = () => {
       const now = Date.now();
-      setClock(now);
+      setClock((previous) => {
+        const currentSeconds = Math.max(0, Math.ceil((floodUntil - previous) / 1000));
+        const nextSeconds = Math.max(0, Math.ceil((floodUntil - now) / 1000));
+        return currentSeconds === nextSeconds ? previous : now;
+      });
       if (now >= floodUntil) setFloodUntil(0);
     };
     const timer = window.setInterval(tick, 500);
@@ -121,7 +131,7 @@ export function OnlineUpdateDialog({
   };
 
   const close = () => {
-    if (loadingRef.current) void call("onlineExportPreviewCancel").catch(() => undefined);
+    if (loadingRef.current && isOnlinePreview) void call("onlineExportPreviewCancel").catch(() => undefined);
     seq.current++;
     discardPrepared();
     onClose();
@@ -142,7 +152,7 @@ export function OnlineUpdateDialog({
     setPreview(null);
     setPreviewError("");
     setUpToDate(false);
-    setPreviewProgress({ active: true, stage: "准备统计", detail: "正在连接 Telegram", percent: 1, messages: 0, media: 0 });
+    setPreviewProgress({ active: true, stage: "准备统计", detail: isOnlinePreview ? "正在连接 Telegram" : "正在核对本地媒体", percent: 1, messages: 0, media: 0 });
     setPreviewLoading(true);
     loadingRef.current = true;
     try {
@@ -231,7 +241,7 @@ export function OnlineUpdateDialog({
     void beginPreview();
     return () => {
       seq.current++;
-      if (loadingRef.current) void call("onlineExportPreviewCancel").catch(() => undefined);
+      if (loadingRef.current && isOnlinePreview) void call("onlineExportPreviewCancel").catch(() => undefined);
       discardPrepared();
     };
     // Start exactly once for the selected target.
@@ -243,19 +253,25 @@ export function OnlineUpdateDialog({
       setPreviewProgress(null);
       return;
     }
+    // Local backfill and bulk previews do not publish online progress.
+    if (!isOnlinePreview) return;
     let alive = true;
-    const poll = () => {
-      call<OnlineExportProgress>("onlineExportPreviewProgress")
-        .then((progress) => { if (alive) setPreviewProgress(progress); })
-        .catch(() => undefined);
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const progress = await call<OnlineExportProgress>("onlineExportPreviewProgress");
+        if (alive && progress.active) {
+          setPreviewProgress((current) => samePreviewProgress(current, progress) ? current : progress);
+        }
+      } catch { /* Keep the last progress until the next poll. */ }
+      if (alive) timer = window.setTimeout(poll, 400);
     };
-    poll();
-    const timer = window.setInterval(poll, 400);
+    void poll();
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
-  }, [previewLoading]);
+  }, [previewLoading, isOnlinePreview, target.peer, target.slug]);
 
   const runExport = async () => {
     if (!preview || exporting) return;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Activity,
@@ -81,11 +81,27 @@ function fmtDuration(ms: number): string {
   return `${h} 小时 ${m % 60} 分`;
 }
 
-function taskElapsed(task: TaskInfo): number {
+function taskElapsed(task: Pick<TaskInfo, "elapsedMs" | "finishedAt" | "startedAt">, now?: number): number {
   const measured = Math.max(0, task.elapsedMs || 0);
   if (measured > 0) return measured;
-  return Math.max(0, (task.finishedAt || task.startedAt) - task.startedAt);
+  return Math.max(0, (now ?? (task.finishedAt || task.startedAt)) - task.startedAt);
 }
+
+// A fallback wall clock is needed only until a running task reports measured
+// elapsed time. Keep that timer in the cell, not in the whole task center.
+const TaskElapsed = memo(function TaskElapsed({
+  state, elapsedMs, startedAt, finishedAt,
+}: Pick<TaskInfo, "state" | "elapsedMs" | "startedAt" | "finishedAt">) {
+  const [now, setNow] = useState(Date.now);
+  const needsClock = state === "running" && !(elapsedMs && elapsedMs > 0);
+  useEffect(() => {
+    if (!needsClock) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [needsClock, startedAt]);
+  return <>{fmtDuration(taskElapsed({ elapsedMs, startedAt, finishedAt }, needsClock ? now : undefined))}</>;
+});
 
 function noNewMedia(task: TaskInfo | TaskDetail): boolean {
   return kindMeta(task.kind).group === "download" && task.state !== "failed" && task.state !== "stopped" && !task.total && !task.bytes;
@@ -956,7 +972,6 @@ export function TasksPage({
   const [filter, setFilter] = useState("all");
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
-  const [now, setNow] = useState(Date.now());
   const [active, setActive] = useState<TaskDetail | null>(null);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
   const [selectionVersion, setSelectionVersion] = useState(0);
@@ -964,11 +979,6 @@ export function TasksPage({
   const [clearConfirm, setClearConfirm] = useState(false);
 
   useEffect(() => () => { selection.current++; }, []);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
 
   const visible = useMemo(
     () =>
@@ -1201,7 +1211,7 @@ export function TasksPage({
                     </td>
                     <td className="task-chat">{t.chat || "—"}</td>
                     <td className="muted">{dateTime(t.startedAt)}</td>
-                    <td className="task-duration">{fmtDuration(taskElapsed(t.state === "running" ? { ...t, finishedAt: now } : t))}</td>
+                    <td className="task-duration"><TaskElapsed state={t.state} elapsedMs={t.elapsedMs} startedAt={t.startedAt} finishedAt={t.finishedAt} /></td>
                     <td>
                       <div className="task-progress">
                         <div className="mini"><i className={t.state} style={{ width: `${Math.max(t.state === "running" ? 1 : 0, Math.min(100, t.percent))}%` }} /></div>
@@ -1267,7 +1277,7 @@ export function TasksPage({
                 <div className="task-info-times">
                   <span>开始 <b>{dateTime(modalTask.startedAt)}</b></span>
                   <span>结束 <b>{modalTask.finishedAt ? dateTime(modalTask.finishedAt) : "进行中"}</b></span>
-                  <span>耗时 <b>{fmtDuration(taskElapsed(modalTask.state === "running" ? { ...modalTask, finishedAt: now } : modalTask))}</b></span>
+                  <span>耗时 <b><TaskElapsed state={modalTask.state} elapsedMs={modalTask.elapsedMs} startedAt={modalTask.startedAt} finishedAt={modalTask.finishedAt} /></b></span>
                 </div>
               </div>
             </div>
