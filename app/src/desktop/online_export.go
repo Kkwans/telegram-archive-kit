@@ -946,6 +946,10 @@ func (b *Bridge) OnlineChatForSlug(slug string) (OnlineChat, error) {
 // resolveOnlineChat accepts cached peers and fetches the live dialog list only
 // when the peer or its access hash is missing.
 func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (OnlineChat, error) {
+	return b.resolveOnlineChatContext(context.Background(), peerKey, timeout)
+}
+
+func (b *Bridge) resolveOnlineChatContext(ctx context.Context, peerKey string, timeout time.Duration) (OnlineChat, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
 	chat, ok := b.online.Chat(peerKey)
@@ -961,7 +965,7 @@ func (b *Bridge) resolveOnlineChat(peerKey string, timeout time.Duration) (Onlin
 	if ok && (!needsAccessHash || chat.AccessHash != 0) {
 		return chat, nil
 	}
-	if _, err := b.online.Fetch(context.Background(), info.Namespace, settings.Proxy, timeout); err != nil {
+	if _, err := b.online.Fetch(ctx, info.Namespace, settings.Proxy, timeout); err != nil {
 		if !ok {
 			return OnlineChat{}, friendlyOnlineError(fmt.Errorf("无法读取在线会话：%w", err))
 		}
@@ -1053,22 +1057,14 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	if exportTimeout <= 0 {
 		exportTimeout = 180 * time.Second
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	b.previewMu.Lock()
-	if b.previewCancel != nil {
-		b.previewCancel()
-	}
-	b.previewCancel = cancel
-	b.previewMu.Unlock()
-	defer func() {
-		cancel()
-		b.previewMu.Lock()
-		b.previewCancel = nil
-		b.previewMu.Unlock()
-	}()
-	b.setPreviewProgress(OnlineExportProgress{Active: true, Stage: "解析在线会话", Percent: 1})
-	chat, err := b.resolveOnlineChat(peerKey, exportTimeout)
+	ctx, cancel, generation := b.beginPreview()
+	defer b.finishPreview(generation, cancel)
+	b.setPreviewProgress(generation, OnlineExportProgress{Active: true, Stage: "解析在线会话", Percent: 1})
+	chat, err := b.resolveOnlineChatContext(ctx, peerKey, exportTimeout)
 	if err != nil {
+		return OnlineExportPreview{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return OnlineExportPreview{}, err
 	}
 	local := b.localOnlineArchive(chat)
@@ -1085,15 +1081,21 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	if minID == 0 && local.existed && local.dir != "" {
 		minID = localMaxMessageID(local.dir)
 	}
-	b.setPreviewProgress(OnlineExportProgress{Active: true, Stage: "读取历史消息", Percent: 3})
+	if err := ctx.Err(); err != nil {
+		return OnlineExportPreview{}, err
+	}
+	b.setPreviewProgress(generation, OnlineExportProgress{Active: true, Stage: "读取历史消息", Percent: 3})
 	_, messages, media, err := b.online.ExportMessagesProgress(ctx, info.Namespace, settings.Proxy, chat, exportTimeout, minID, limit, func(p ExportProgress) {
-		b.setPreviewProgress(OnlineExportProgress{
+		b.setPreviewProgress(generation, OnlineExportProgress{
 			Active: true, Stage: p.Stage, Detail: p.Detail,
 			Percent: p.Percent, Messages: p.Messages, Media: p.Media,
 		})
 	})
 	if err != nil {
 		return OnlineExportPreview{}, friendlyOnlineError(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return OnlineExportPreview{}, err
 	}
 	out := OnlineExportPreview{
 		Peer: peerKey, Chat: chat.Name, Existed: local.existed,
@@ -1146,9 +1148,37 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 
 const onlineSpaceReserve = int64(256 << 20)
 
-func (b *Bridge) setPreviewProgress(p OnlineExportProgress) {
+// Each preview owns its cancellation and progress until a newer one replaces
+// it. A late callback or defer from an older request cannot affect the new one.
+func (b *Bridge) beginPreview() (context.Context, context.CancelFunc, uint64) {
+	ctx, cancel := context.WithCancel(context.Background())
 	b.previewMu.Lock()
-	b.previewProgress = p
+	if b.previewCancel != nil {
+		b.previewCancel()
+	}
+	b.previewGeneration++
+	generation := b.previewGeneration
+	b.previewCancel = cancel
+	b.previewProgress = OnlineExportProgress{Active: true, Stage: "解析在线会话", Percent: 1}
+	b.previewMu.Unlock()
+	return ctx, cancel, generation
+}
+
+func (b *Bridge) finishPreview(generation uint64, cancel context.CancelFunc) {
+	cancel()
+	b.previewMu.Lock()
+	if b.previewGeneration == generation {
+		b.previewCancel = nil
+		b.previewProgress.Active = false
+	}
+	b.previewMu.Unlock()
+}
+
+func (b *Bridge) setPreviewProgress(generation uint64, p OnlineExportProgress) {
+	b.previewMu.Lock()
+	if b.previewGeneration == generation && b.previewCancel != nil {
+		b.previewProgress = p
+	}
 	b.previewMu.Unlock()
 }
 
@@ -1161,6 +1191,7 @@ func (b *Bridge) OnlineExportPreviewProgress() OnlineExportProgress {
 func (b *Bridge) OnlineExportPreviewCancel() {
 	b.previewMu.Lock()
 	cancel := b.previewCancel
+	b.previewCancel = nil // Ignore late progress from this cancelled generation.
 	if b.previewProgress.Active {
 		b.previewProgress.Stage = "正在取消统计"
 		b.previewProgress.Detail = "正在停止历史读取"

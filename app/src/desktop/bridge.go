@@ -36,9 +36,10 @@ type Bridge struct {
 	dialog  *PickedDialog
 	seq     int64
 
-	previewMu       sync.Mutex
-	previewProgress OnlineExportProgress
-	previewCancel   context.CancelFunc
+	previewMu         sync.Mutex
+	previewProgress   OnlineExportProgress
+	previewCancel     context.CancelFunc
+	previewGeneration uint64
 
 	fsWindow fsWindowState
 }

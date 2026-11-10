@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +11,34 @@ import (
 
 	"github.com/gotd/td/tg"
 )
+
+func TestPreviewGenerationsIsolateCancellationAndProgress(t *testing.T) {
+	b := &Bridge{}
+	first, cancelFirst, generationFirst := b.beginPreview()
+	b.setPreviewProgress(generationFirst, OnlineExportProgress{Active: true, Stage: "first"})
+	second, cancelSecond, generationSecond := b.beginPreview()
+	if first.Err() != context.Canceled {
+		t.Fatal("starting a new preview must cancel the previous preview")
+	}
+	b.setPreviewProgress(generationSecond, OnlineExportProgress{Active: true, Stage: "second"})
+	b.finishPreview(generationFirst, cancelFirst)
+	b.setPreviewProgress(generationFirst, OnlineExportProgress{Active: true, Stage: "stale"})
+	if got := b.OnlineExportPreviewProgress(); got.Stage != "second" || !got.Active {
+		t.Fatalf("old preview changed the new preview: %#v", got)
+	}
+	b.OnlineExportPreviewCancel()
+	if second.Err() != context.Canceled {
+		t.Fatal("cancel after an old defer must still reach the current preview")
+	}
+	b.setPreviewProgress(generationSecond, OnlineExportProgress{Active: true, Stage: "late"})
+	if got := b.OnlineExportPreviewProgress(); got.Stage != "正在取消统计" {
+		t.Fatalf("cancelled preview published late progress: %#v", got)
+	}
+	b.finishPreview(generationSecond, cancelSecond)
+	if got := b.OnlineExportPreviewProgress(); got.Active {
+		t.Fatalf("finished preview remains active: %#v", got)
+	}
+}
 
 func TestDesktopChatType(t *testing.T) {
 	cases := []struct {
