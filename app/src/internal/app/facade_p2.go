@@ -380,10 +380,7 @@ func (f *Facade) BindChatIdentity(slug, id, name, chatType string) error {
 }
 
 func (f *Facade) DeleteChat(slug string) error {
-	if err := f.a.deleteWorkspace(slug); err != nil {
-		return err
-	}
-	return f.a.buildLibrary()
+	return f.a.deleteWorkspace(slug)
 }
 
 func (f *Facade) VerifyChat(slug string) (StatsDTO, error) {

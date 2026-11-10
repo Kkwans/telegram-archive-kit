@@ -1036,13 +1036,14 @@ func (a *App) verifyWorkspace(slug string) (*Archive, error) {
 }
 
 func (a *App) deleteWorkspace(slug string) error {
-	if slug == "" {
-		return nil
-	}
 	if err := a.guardWritable(); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(a.workspaceDir(slug)); err != nil {
+	root, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(root); err != nil {
 		return err
 	}
 	if a.Settings.LastWorkspaceSlug == slug {

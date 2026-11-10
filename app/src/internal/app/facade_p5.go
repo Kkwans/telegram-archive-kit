@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -189,43 +188,46 @@ func hasParentSegment(rel string) bool {
 }
 
 func (f *Facade) mediaRelAbs(slug, rel string) (string, string, error) {
-	if slug == "" || slug != filepath.Base(slug) {
-		return "", "", errors.New("无效的聊天标识")
+	root, err := checkedWorkspaceDir(f.a.Settings.LibraryRoot, slug)
+	if err != nil {
+		return "", "", err
 	}
-	rel = strings.TrimSpace(strings.ReplaceAll(rel, "\\", "/"))
-	if rel == "" || strings.HasPrefix(rel, "/") || hasParentSegment(rel) || strings.ContainsRune(rel, ':') {
-		return "", "", errors.New("无效的媒体路径")
-	}
-	clean := filepath.Clean(filepath.FromSlash(rel))
-	root := f.a.workspaceDir(slug)
-	abs := filepath.Join(root, clean)
-	back, err := filepath.Rel(root, abs)
-	if err != nil || back == ".." || strings.HasPrefix(back, ".."+string(filepath.Separator)) {
-		return "", "", errors.New("无效的媒体路径")
-	}
-	st, err := os.Stat(abs)
-	if err != nil || st.IsDir() {
-		return "", "", os.ErrNotExist
-	}
-	return abs, filepath.ToSlash(clean), nil
+	return checkedWorkspaceFile(root, rel, nil)
 }
 
 // ChatMedia lists downloaded media and documents for one chat, newest first.
 // It prefers the built archive data because that carries message ids and
 // generated thumbnails (including videos); raw directory scans are a fallback.
 func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
-	if slug == "" || slug != filepath.Base(slug) {
-		return nil, errors.New("无效的聊天标识")
+	root, err := checkedWorkspaceDir(f.a.Settings.LibraryRoot, slug)
+	if err != nil {
+		return nil, err
+	}
+	checkedDirs := make(map[string]error)
+	if _, _, err := checkedWorkspaceFile(root, "workspace.json", checkedDirs); err != nil {
+		return nil, err
 	}
 	if _, err := f.a.readWorkspaceMeta(slug); err != nil {
 		return nil, err
 	}
-	root := f.a.workspaceDir(slug)
+	readFile := func(rel string) ([]byte, error) {
+		abs, _, err := checkedWorkspaceFile(root, rel, checkedDirs)
+		if err != nil {
+			return nil, err
+		}
+		return os.ReadFile(abs)
+	}
+	readDir := func(dir string) ([]os.DirEntry, error) {
+		if err := checkWorkspaceParents(root, dir, checkedDirs); err != nil {
+			return nil, err
+		}
+		return os.ReadDir(filepath.Join(root, dir))
+	}
 	items := make([]MediaItemDTO, 0, 256)
 	seen := make(map[string]bool)
 	dimensions := map[string][2]int{}
 	thumbsByID := map[string]string{}
-	if entries, err := os.ReadDir(filepath.Join(root, "thumbs")); err == nil {
+	if entries, err := readDir("thumbs"); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
@@ -236,7 +238,7 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 			}
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(root, "source", "result.json")); err == nil {
+	if data, err := readFile("source/result.json"); err == nil {
 		var source struct {
 			Messages []struct {
 				ID     json.RawMessage `json:"id"`
@@ -259,7 +261,7 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		if rel == "" || seen[rel] || archive.IsThumbnailFile(name) || archive.IsThumbnailFile(rel) {
 			return
 		}
-		abs, clean, err := f.mediaRelAbs(slug, rel)
+		abs, clean, err := checkedWorkspaceFile(root, rel, checkedDirs)
 		if err != nil {
 			return
 		}
@@ -279,7 +281,7 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 		thumbRel, thumbAbs := "", ""
 		if thumb != "" {
-			if tAbs, tClean, err := f.mediaRelAbs(slug, thumb); err == nil {
+			if tAbs, tClean, err := checkedWorkspaceFile(root, thumb, checkedDirs); err == nil {
 				thumbRel, thumbAbs = tClean, tAbs
 			}
 		}
@@ -288,8 +290,9 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 		if thumbRel == "" {
 			if thumbName, ok := thumbsByID[id]; ok {
-				thumbRel = "thumbs/" + thumbName
-				thumbAbs = filepath.Join(root, "thumbs", thumbName)
+				if tAbs, tClean, err := checkedWorkspaceFile(root, "thumbs/"+thumbName, checkedDirs); err == nil {
+					thumbRel, thumbAbs = tClean, tAbs
+				}
 			}
 		}
 		width, height := 0, 0
@@ -309,7 +312,7 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		})
 	}
 
-	if data, err := os.ReadFile(filepath.Join(root, "data", "archive-data.js")); err == nil {
+	if data, err := readFile("data/archive-data.js"); err == nil {
 		text := string(data)
 		if i := strings.IndexByte(text, '{'); i >= 0 {
 			var parsed archiveDataFile
@@ -324,7 +327,8 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 		}
 	}
 
-	if idx, err := f.a.loadOfficialIndex(slug); err == nil {
+	var idx officialIndexFile
+	if data, err := readFile("official-media-index.json"); err == nil && json.Unmarshal(data, &idx) == nil {
 		for _, ex := range idx.Exports {
 			for id, list := range ex.Media {
 				for _, x := range list {
@@ -338,7 +342,7 @@ func (f *Facade) ChatMedia(slug string) ([]MediaItemDTO, error) {
 	}
 
 	for _, dir := range []string{"media", "files"} {
-		entries, err := os.ReadDir(filepath.Join(root, dir))
+		entries, err := readDir(dir)
 		if err != nil {
 			continue
 		}
