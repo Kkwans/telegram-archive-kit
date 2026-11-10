@@ -460,6 +460,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.sessionCheck(p.Timeout), nil
 	case "captureWindow":
 		return b.CaptureWindow()
+	case "captureViewerBackdrop":
+		return b.captureWindow(640, 480, true)
 	case "setWindowFullscreen":
 		if b.window == nil {
 			return nil, errors.New("窗口尚未初始化")
