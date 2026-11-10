@@ -8,7 +8,7 @@ Windows desktop client + console edition. Powered by [tdl](https://github.com/iy
 it connects media download → incremental archiving → static web generation → everyday browsing. All chats and media stay on your own disk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.0.13-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.0.14-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-requirements)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
@@ -123,7 +123,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 
 ## ⬇️ Download & install
 
-1. Open [Releases](https://github.com/Kkwans/telegram-archive-kit/releases/latest) and download `TelegramArchiveKit_v3.0.13_windows-x64.zip`.
+1. Open [Releases](https://github.com/Kkwans/telegram-archive-kit/releases/latest) and download `TelegramArchiveKit_v3.0.14_windows-x64.zip`.
 2. Extract it to any folder (do not run it from inside the ZIP).
 3. Double-click `TelegramArchiveKit.exe` for the desktop client, or run `TelegramArchiveKit-Console.exe` for the console edition. Both share the same library.
 4. On first launch, choose the archive library location. **Never delete this directory when upgrading.**

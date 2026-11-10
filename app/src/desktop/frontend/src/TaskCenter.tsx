@@ -340,10 +340,24 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   });
   const recordedCount = mediaTotals.reduce((sum, item) => sum + item.done, 0);
   const totalCount = mediaTotals.reduce((sum, item) => sum + item.count, 0);
-  const sizedTotals = mediaTotals.map((item) => ({
+  // Per-type downloaded size follows the live transfer counters of active and
+  // completed files, then is scaled to the task total so the cards always sum
+  // to "已下载 / 总大小" while a large file is still in flight.
+  const liveSize = mediaTotals.map((item) => {
+    let size = 0;
+    for (const file of active) {
+      if (mediaGroup(file.kind) === item.key) size += Math.max(0, file.transferred ?? 0);
+    }
+    for (const file of completed) {
+      if (mediaGroup(file.kind) === item.key) size += Math.max(0, file.expected > 0 ? file.expected : file.transferred ?? 0);
+    }
+    return size;
+  });
+  const liveSizeTotal = liveSize.reduce((sum, size) => sum + size, 0);
+  const sizedTotals = mediaTotals.map((item, index) => ({
     ...item,
     totalSize: totalCount > 0 ? Math.round((task.totalBytes ?? 0) * item.count / totalCount) : 0,
-    doneSize: recordedCount > 0 ? Math.round((task.bytes ?? 0) * item.done / recordedCount) : 0,
+    doneSize: liveSizeTotal > 0 ? Math.round((task.bytes ?? 0) * liveSize[index] / liveSizeTotal) : 0,
   }));
   const recent = completed.slice(0, 5);
   const pageSize = 10;
