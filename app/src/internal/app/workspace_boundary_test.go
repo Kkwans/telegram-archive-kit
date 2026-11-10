@@ -88,3 +88,25 @@ func TestWorkspaceBoundaryAcceptsExistingWorkspace(t *testing.T) {
 		t.Fatalf("workspace still exists: %v", err)
 	}
 }
+
+func TestBackfillAndVerifyKeepDocumentsInPlace(t *testing.T) {
+	root := t.TempDir()
+	slug := "chat-documents"
+	f := &Facade{a: &App{Settings: Settings{LibraryRoot: root}}}
+	file := filepath.Join(f.a.mediaDir(slug), "9_4_bundle.zip")
+	writeBoundaryFixture(t, f.a.workspaceMetaPath(slug))
+	writeBoundaryFixture(t, file)
+	writeBoundaryFixture(t, f.a.sourcePath(slug))
+	if err := os.WriteFile(f.a.sourcePath(slug), []byte(`{"messages":[{"id":4,"type":"message","media_type":"document","file":"bundle.zip","file_size":2}]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if preview, err := f.PreviewBackfill(slug); err != nil || preview.Missing != 0 {
+		t.Fatalf("preview missing=%d, err=%v", preview.Missing, err)
+	}
+	if _, err := f.VerifyChat(slug); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatal("read-only operations moved a document")
+	}
+}

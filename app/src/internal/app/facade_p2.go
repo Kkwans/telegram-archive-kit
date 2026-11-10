@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,20 +54,21 @@ type StatsDTO struct {
 // BackfillPreviewDTO describes what "按 result.json 补全" would download. It is
 // computed read-only so the UI can warn about disk space before a task exists.
 type BackfillPreviewDTO struct {
-	Slug       string `json:"slug"`
-	Chat       string `json:"chat"`
-	Messages   int    `json:"messages"`
-	Media      int    `json:"media"`
-	Missing    int    `json:"missing"`
-	KnownCount int    `json:"knownCount"`
-	KnownBytes int64  `json:"knownBytes"`
-	Images     int    `json:"images"`
-	Videos     int    `json:"videos"`
-	Audio      int    `json:"audio"`
-	Files      int    `json:"files"`
-	Other      int    `json:"other"`
-	FreeBytes  int64  `json:"freeBytes"`
-	SpaceShort bool   `json:"spaceShort"`
+	MaxMessageID int    `json:"maxMessageId,omitempty"`
+	Slug         string `json:"slug"`
+	Chat         string `json:"chat"`
+	Messages     int    `json:"messages"`
+	Media        int    `json:"media"`
+	Missing      int    `json:"missing"`
+	KnownCount   int    `json:"knownCount"`
+	KnownBytes   int64  `json:"knownBytes"`
+	Images       int    `json:"images"`
+	Videos       int    `json:"videos"`
+	Audio        int    `json:"audio"`
+	Files        int    `json:"files"`
+	Other        int    `json:"other"`
+	FreeBytes    int64  `json:"freeBytes"`
+	SpaceShort   bool   `json:"spaceShort"`
 }
 
 const downloadSpaceReserve = int64(256 << 20)
@@ -92,6 +94,11 @@ func (f *Facade) PreviewBackfill(slug string) (BackfillPreviewDTO, error) {
 	if arc != nil {
 		out.Messages = arc.Stats.Messages
 		out.Media = arc.Stats.MediaFiles
+		for _, message := range arc.Messages {
+			if id, err := strconv.Atoi(message.ID); err == nil && id > out.MaxMessageID {
+				out.MaxMessageID = id
+			}
+		}
 	}
 	comp := f.effectivePlanComposition(slug, plan.Total, out.Images, out.Videos, out.Audio, out.Files)
 	comp = normalizePlanComposition(comp, plan.Total)

@@ -1049,13 +1049,6 @@ func onlineStats(messages []map[string]any) (service, images, videos, audio, fil
 func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetSlug string) (OnlineExportPreview, error) {
 	info := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
-	if targetSlug != "" {
-		// Official-only workspaces gain a normalized source on first preview so the
-		// local message ceiling is known before walking Telegram history.
-		if err := b.facade.EnsureOfficialSource(targetSlug); err != nil {
-			return OnlineExportPreview{}, err
-		}
-	}
 	exportTimeout := time.Duration(timeout) * time.Second
 	if exportTimeout <= 0 {
 		exportTimeout = 180 * time.Second
@@ -1088,8 +1081,8 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 			backfill = p
 		}
 	}
-	minID := 0
-	if local.existed && local.dir != "" {
+	minID := backfill.MaxMessageID
+	if minID == 0 && local.existed && local.dir != "" {
 		minID = localMaxMessageID(local.dir)
 	}
 	b.setPreviewProgress(OnlineExportProgress{Active: true, Stage: "读取历史消息", Percent: 3})

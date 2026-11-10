@@ -723,10 +723,13 @@ func (a *App) listWorkspaces() []WorkspaceMeta {
 }
 
 func (a *App) buildArchiveForWorkspace(slug string) (*Archive, error) {
-	if _, err := a.organizeDocumentFiles(slug); err != nil {
+	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
 		return nil, err
 	}
-	return archive.BuildArchiveWithDirs(a.sourcePath(slug), a.storageDirs(slug), a.officialMediaByID(slug))
+	if _, err := os.Stat(a.sourcePath(slug)); os.IsNotExist(err) && a.hasOfficialExport(slug) {
+		return a.buildOfficialArchive(slug, false)
+	}
+	return archive.BuildArchiveWithDirs(a.sourcePath(slug), a.storageDirs(slug), a.officialMediaByID(slug, false))
 }
 
 func (a *App) buildWorkspace(slug string) (*Archive, error) {
@@ -767,12 +770,12 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 	var arc *Archive
 	var err error
 	if fileExists(jsonPath) {
-		arc, err = archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug))
+		arc, err = archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug, true))
 	} else if a.hasOfficialExport(slug) {
 		// Official HTML exports have no result.json. Parse their pages directly so
 		// thumbnails, search, date navigation and offline pages still work, then
 		// keep a normalized source so later online updates are incremental.
-		arc, err = a.buildOfficialArchive(slug)
+		arc, err = a.buildOfficialArchive(slug, true)
 		if err == nil {
 			err = a.persistOfficialSource(slug, arc)
 		}
@@ -989,6 +992,15 @@ func (a *App) buildLibrary() error {
 }
 
 func (a *App) generateMissingJSON(slug string) (int, string, error) {
+	if err := a.guardWritable(); err != nil {
+		return 0, "", err
+	}
+	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
+		return 0, "", err
+	}
+	if _, err := a.organizeDocumentFiles(slug); err != nil {
+		return 0, "", err
+	}
 	arc, err := a.buildArchiveForWorkspace(slug)
 	if err != nil {
 		return 0, "", err

@@ -50,8 +50,7 @@ func (a *App) saveOfficialIndex(slug string, idx officialIndexFile) error {
 	return writeJSON(a.officialIndexPath(slug), idx)
 }
 
-// refreshOfficialIndex re-analyses every recorded export so a cache written by
-// an older scanner is repaired in place. Exports whose folder is gone are kept
+// refreshOfficialIndex re-analyses every recorded export in memory. Exports whose folder is gone are kept
 // untouched rather than dropped, because the archive still references them.
 func (a *App) refreshOfficialIndex(slug string, idx officialIndexFile) officialIndexFile {
 	ws := a.workspaceDir(slug)
@@ -77,17 +76,19 @@ func (a *App) refreshOfficialIndex(slug string, idx officialIndexFile) officialI
 		}
 		idx.Exports[i] = officialIndexedExport{Meta: meta, Media: media}
 	}
-	_ = a.saveOfficialIndex(slug, idx)
 	return idx
 }
 
-func (a *App) officialMediaByID(slug string) map[string][]Media {
+func (a *App) officialMediaByID(slug string, persistRefresh bool) map[string][]Media {
 	idx, err := a.loadOfficialIndex(slug)
 	if err != nil || len(idx.Exports) == 0 {
 		return nil
 	}
 	if idx.Version < officialIndexVersion {
 		idx = a.refreshOfficialIndex(slug, idx)
+		if persistRefresh {
+			_ = a.saveOfficialIndex(slug, idx)
+		}
 	}
 	out := map[string][]Media{}
 	for _, ex := range idx.Exports {
@@ -166,13 +167,13 @@ func (a *App) hasOfficialExport(slug string) bool {
 
 // buildOfficialArchive parses messages.html pages directly, so an official-only
 // workspace can produce thumbnails and archive pages without result.json.
-func (a *App) buildOfficialArchive(slug string) (*Archive, error) {
+func (a *App) buildOfficialArchive(slug string, persistRefresh bool) (*Archive, error) {
 	roots := a.officialRoots(slug)
 	if len(roots) == 0 {
 		return nil, errors.New("找不到官方 ChatExport 目录")
 	}
 	meta, _ := a.readWorkspaceMeta(slug)
-	arc, err := archive.BuildOfficialArchive(roots, a.officialMediaByID(slug), meta.Chat.Name)
+	arc, err := archive.BuildOfficialArchive(roots, a.officialMediaByID(slug, persistRefresh), meta.Chat.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -258,10 +259,16 @@ func officialResultRoot(arc *Archive) map[string]any {
 }
 
 func (a *App) ensureOfficialSource(slug string) (bool, error) {
+	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
+		return false, err
+	}
 	if fileExists(a.sourcePath(slug)) || !a.hasOfficialExport(slug) {
 		return false, nil
 	}
-	arc, err := a.buildOfficialArchive(slug)
+	if err := a.guardWritable(); err != nil {
+		return false, err
+	}
+	arc, err := a.buildOfficialArchive(slug, true)
 	if err != nil {
 		return false, err
 	}

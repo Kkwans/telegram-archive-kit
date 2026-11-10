@@ -447,7 +447,7 @@ func (a *App) downloadExistingSnapshot(slug string, plan downloadPlan) (complete
 			return nil
 		})
 	}
-	for id, files := range a.officialMediaByID(slug) {
+	for id, files := range a.officialMediaByID(slug, false) {
 		if _, wanted := plan.IDs[id]; !wanted {
 			continue
 		}
