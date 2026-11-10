@@ -473,10 +473,14 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		})
 		return nil, nil
 	case "showFullscreenCover":
-		if p.Sharp != "" && len(p.From) >= 4 {
-			return map[string]bool{"shown": showFsCoverAnimated(p.Cover, p.Sharp, p.From, p.To, p.Radius, p.Duration)}, nil
+		if b.window == nil || b.window.NativeWindow() == nil {
+			return map[string]bool{"shown": false}, nil
 		}
-		return map[string]bool{"shown": showFsCover(p.Cover)}, nil
+		hwnd := uintptr(b.window.NativeWindow())
+		if p.Sharp != "" && len(p.From) >= 4 {
+			return map[string]bool{"shown": showFsCoverAnimated(hwnd, p.Cover, p.Sharp, p.From, p.To, p.Radius, p.Duration)}, nil
+		}
+		return map[string]bool{"shown": showFsCover(hwnd, p.Cover)}, nil
 	case "animateFullscreenCover":
 		return map[string]bool{"animated": animateFsCover(p.From, p.To, p.Radius, p.Duration)}, nil
 	case "windowFullscreenState":
@@ -701,7 +705,7 @@ func (b *Bridge) applyScreenFullscreen(on bool, cover string) bool {
 			log.Printf("dark window frame failed: hr20=%#x hr19=%#x", r1, r2)
 		}
 		if cover != "" {
-			showFsCover(cover)
+			showFsCover(hwnd, cover)
 		}
 		b.window.Fullscreen()
 		if !b.window.IsFullscreen() {

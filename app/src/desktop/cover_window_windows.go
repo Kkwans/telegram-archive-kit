@@ -214,16 +214,20 @@ func ensureCoverCompose(w, h int) uintptr {
 // to the window could let DWM composite the background before the sharp frame,
 // which looked like the media disappeared for a frame.
 func paintCover() {
+	updateCoverSurface()
+}
+
+func updateCoverSurface() bool {
 	hwnd := coverHWND
 	if hwnd == 0 || !coverVisible.Load() {
-		return
+		return false
 	}
 	var rc winRect
 	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
 	cw, ch := rc.Right-rc.Left, rc.Bottom-rc.Top
 	compose := ensureCoverCompose(int(cw), int(ch))
 	if compose == 0 {
-		return
+		return false
 	}
 	coverMu.Lock()
 	mem, bw, bh := coverMemDC, coverBmpW, coverBmpH
@@ -232,10 +236,12 @@ func paintCover() {
 	animating, started, duration := coverAnimating, coverAnimStart, coverAnimDur
 	coverMu.Unlock()
 	if mem == 0 || bw <= 0 || bh <= 0 {
-		return
+		return false
 	}
 	procSetStretchBltMode.Call(compose, halftone)
-	procStretchBlt.Call(compose, 0, 0, uintptr(cw), uintptr(ch), mem, 0, 0, uintptr(bw), uintptr(bh), srcCopy)
+	if ok, _, _ := procStretchBlt.Call(compose, 0, 0, uintptr(cw), uintptr(ch), mem, 0, 0, uintptr(bw), uintptr(bh), srcCopy); ok == 0 {
+		return false
+	}
 	if sharp != 0 && sw > 0 && sh > 0 {
 		rect := from
 		if animating && duration > 0 {
@@ -265,7 +271,7 @@ func paintCover() {
 	}
 	screen, _, _ := procGetDC.Call(0)
 	if screen == 0 {
-		return
+		return false
 	}
 	sz := coverSize{CX: int32(cw), CY: int32(ch)}
 	src := coverPoint{0, 0}
@@ -273,8 +279,9 @@ func paintCover() {
 	// not preserve the alpha byte through StretchBlt, so AC_SRC_ALPHA would
 	// make most of the surface transparent and let the WebView show through.
 	blend := blendFunction{BlendOp: 0, BlendFlags: 0, SourceConstantAlpha: byte(coverAlpha.Load()), AlphaFormat: 0}
-	procUpdateLayered.Call(hwnd, screen, 0, uintptr(unsafe.Pointer(&sz)), compose, uintptr(unsafe.Pointer(&src)), 0, uintptr(unsafe.Pointer(&blend)), 2)
+	ok, _, _ := procUpdateLayered.Call(hwnd, screen, 0, uintptr(unsafe.Pointer(&sz)), compose, uintptr(unsafe.Pointer(&src)), 0, uintptr(unsafe.Pointer(&blend)), 2)
 	procReleaseDC.Call(0, screen)
+	return ok != 0
 }
 
 func coverWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
@@ -293,7 +300,7 @@ func coverWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	return r
 }
 
-func ensureCoverWindow() uintptr {
+func ensureCoverWindow(owner uintptr) uintptr {
 	if coverHWND != 0 {
 		return coverHWND
 	}
@@ -315,7 +322,7 @@ func ensureCoverWindow() uintptr {
 		uintptr(unsafe.Pointer(title)),
 		wsPopup,
 		0, 0, 0, 0,
-		0, 0, instance, 0,
+		owner, 0, instance, 0,
 	)
 	coverHWND = hwnd
 	return hwnd
@@ -383,10 +390,10 @@ func buildCoverDIB(w, h int, pix []byte) (uintptr, uintptr) {
 	return mem, dib
 }
 
-func setCoverBitmap(w, h int, pix []byte) {
+func setCoverBitmap(w, h int, pix []byte) bool {
 	mem, dib := buildCoverDIB(w, h, pix)
 	if mem == 0 {
-		return
+		return false
 	}
 	coverMu.Lock()
 	oldDC, oldDIB := coverMemDC, coverDIB
@@ -399,12 +406,16 @@ func setCoverBitmap(w, h int, pix []byte) {
 	if oldDIB != 0 {
 		procDeleteObject.Call(oldDIB)
 	}
+	return true
 }
 
-func setSharpBitmap(w, h int, pix []byte) {
-	mem, dib := buildCoverDIB(w, h, pix)
-	if mem == 0 {
-		return
+func setSharpBitmap(w, h int, pix []byte) bool {
+	var mem, dib uintptr
+	if len(pix) > 0 {
+		mem, dib = buildCoverDIB(w, h, pix)
+		if mem == 0 {
+			return false
+		}
 	}
 	coverMu.Lock()
 	oldDC, oldDIB := coverSharpDC, coverSharpDIB
@@ -417,6 +428,7 @@ func setSharpBitmap(w, h int, pix []byte) {
 	if oldDIB != 0 {
 		procDeleteObject.Call(oldDIB)
 	}
+	return true
 }
 
 func coverDPIScale(hwnd uintptr) float64 {
@@ -462,7 +474,7 @@ func startCoverTicker(hwnd uintptr, gen int64, duration time.Duration) {
 // media frame and optionally animates that frame from one screen rect to
 // another. Running the zoom in the native cover keeps the media visible while
 // the OS window and WebView2 surface are being resized.
-func showFsCoverAnimated(coverURL, sharpURL string, from, to []int, radius, durationMS int) bool {
+func showFsCoverAnimated(owner uintptr, coverURL, sharpURL string, from, to []int, radius, durationMS int) bool {
 	if coverURL == "" || sharpURL == "" {
 		return false
 	}
@@ -478,14 +490,15 @@ func showFsCoverAnimated(coverURL, sharpURL string, from, to []int, radius, dura
 	}
 	coverFade.Add(1)
 	coverAnimGen.Add(1)
-	application.InvokeSync(func() {
-		setCoverBitmap(bw, bh, bpix)
-		setSharpBitmap(sw, sh, spix)
-		hwnd := ensureCoverWindow()
+	return application.InvokeSyncWithResult(func() bool {
+		hwnd := ensureCoverWindow(owner)
 		if hwnd == 0 {
-			return
+			return false
 		}
 		hideCoverWindow(hwnd)
+		if !setCoverBitmap(bw, bh, bpix) || !setSharpBitmap(sw, sh, spix) {
+			return false
+		}
 		coverAlpha.Store(255)
 		coverVisible.Store(true)
 		placeCoverWindow(hwnd, false)
@@ -499,13 +512,16 @@ func showFsCoverAnimated(coverURL, sharpURL string, from, to []int, radius, dura
 		coverAnimDur = time.Duration(durationMS) * time.Millisecond
 		coverAnimating = durationMS > 0 && cto.valid()
 		coverMu.Unlock()
-		paintCover()
+		if !updateCoverSurface() {
+			hideCoverWindow(hwnd)
+			return false
+		}
 		procShowWindow.Call(hwnd, swShowNoActivate)
 		if durationMS > 0 {
 			startCoverTicker(hwnd, coverAnimGen.Load(), coverAnimDur)
 		}
+		return true
 	})
-	return true
 }
 
 // animateFsCover updates the native sharp frame animation without reloading
@@ -582,7 +598,7 @@ func hideCoverWindow(hwnd uintptr) {
 // showFsCover paints dataURL over the primary monitor before the window is
 // resized. It must run on the Wails main thread, which owns the message loop
 // that dispatches the cover window's paint messages.
-func showFsCover(dataURL string) bool {
+func showFsCover(owner uintptr, dataURL string) bool {
 	if dataURL == "" {
 		return false
 	}
@@ -591,20 +607,27 @@ func showFsCover(dataURL string) bool {
 		return false
 	}
 	coverFade.Add(1) // cancel a fade that may still be running
-	application.InvokeSync(func() {
-		setCoverBitmap(w, h, pix)
-		hwnd := ensureCoverWindow()
+	coverAnimGen.Add(1)
+	return application.InvokeSyncWithResult(func() bool {
+		hwnd := ensureCoverWindow(owner)
 		if hwnd == 0 {
-			return
+			return false
 		}
 		hideCoverWindow(hwnd)
+		setSharpBitmap(0, 0, nil)
+		if !setCoverBitmap(w, h, pix) {
+			return false
+		}
 		coverAlpha.Store(255)
 		coverVisible.Store(true)
 		placeCoverWindow(hwnd, false)
-		paintCover()
+		if !updateCoverSurface() {
+			hideCoverWindow(hwnd)
+			return false
+		}
 		procShowWindow.Call(hwnd, swShowNoActivate)
+		return true
 	})
-	return true
 }
 
 // hideFsCover removes the cover. A non-zero fadeMs cross-fades the native
@@ -643,8 +666,12 @@ func hideFsCover(fadeMs int, afterHide func()) {
 				break
 			}
 			alpha := int32(math.Round(255 * (1 - float64(elapsed)/float64(duration))))
-			coverAlpha.Store(alpha)
-			application.InvokeSync(paintCover)
+			application.InvokeSync(func() {
+				if coverFade.Load() == gen {
+					coverAlpha.Store(alpha)
+					paintCover()
+				}
+			})
 			time.Sleep(16 * time.Millisecond)
 		}
 		application.InvokeSync(finish)

@@ -2057,10 +2057,11 @@ function mediaBox(modal: HTMLElement | null, isVideo: boolean): ViewerRect | nul
   return { left: r.left, top: r.top, width: r.width, height: r.height };
 }
 
-function viewerFrameSource(modal: HTMLElement | null, isVideo: boolean, poster: string): string {
+function viewerFrameSource(modal: HTMLElement | null, isVideo: boolean, src: string, poster: string): string {
+  const expected = new URL(src, document.baseURI).href;
   if (isVideo) {
-    const video = modal?.querySelector<HTMLVideoElement>("video");
-    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+    const video = modal?.querySelector<HTMLVideoElement>(".art-video-wrap.is-ready video");
+    if (video && video.currentSrc === expected && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
       try {
         const scale = Math.min(1, 960 / video.videoWidth);
         const canvas = document.createElement("canvas");
@@ -2078,7 +2079,7 @@ function viewerFrameSource(modal: HTMLElement | null, isVideo: boolean, poster: 
     return poster;
   }
   const img = modal?.querySelector<HTMLImageElement>(".image-stage img");
-  if (!img) return "";
+  if (!img || img.currentSrc !== expected) return src;
   // Sending the original file as a data URL can mean tens of megabytes over
   // the RPC bridge; a 1920px JPEG is indistinguishable during the scale.
   const nw = img.naturalWidth || img.width;
@@ -2106,7 +2107,13 @@ function buildFullscreenCover(snapshot: string, inset?: { rect: ViewerRect; radi
   if (!snapshot) return Promise.resolve("");
   return new Promise((resolve) => {
     const img = new Image();
+    const timeout = window.setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      resolve("");
+    }, 750);
     img.onload = () => {
+      window.clearTimeout(timeout);
       try {
         const screenW = Math.max(1, window.screen.width);
         const screenH = Math.max(1, window.screen.height);
@@ -2161,7 +2168,10 @@ function buildFullscreenCover(snapshot: string, inset?: { rect: ViewerRect; radi
         resolve("");
       }
     };
-    img.onerror = () => resolve("");
+    img.onerror = () => {
+      window.clearTimeout(timeout);
+      resolve("");
+    };
     img.src = snapshot;
   });
 }
@@ -2257,6 +2267,7 @@ function MediaViewer({
   const [windowFs, setWindowFs] = useState(false);
   const windowFsRef = useRef(false);
   const fsBusy = useRef(false);
+  const pendingAutoNext = useRef(false);
   const [fsGhost, setFsGhost] = useState<FsGhost | null>(null);
   const [fsShowGhost, setFsShowGhost] = useState(false);
   const [fsGhostLive, setFsGhostLive] = useState(false);
@@ -2302,8 +2313,15 @@ function MediaViewer({
   useEffect(() => {
     if (imageReady) setImageBusy(false);
   }, [imageReady]);
-  const stateRef = useRef({ onStep, onClose, prefs, kind: item.kind });
-  stateRef.current = { onStep, onClose, prefs, kind: item.kind };
+  const step = (direction: -1 | 1, auto?: boolean) => {
+    if (fsBusy.current) {
+      if (auto && direction === 1) pendingAutoNext.current = true;
+      return;
+    }
+    onStep(direction, auto);
+  };
+  const stateRef = useRef({ onStep: step, onClose, prefs, kind: item.kind });
+  stateRef.current = { onStep: step, onClose, prefs, kind: item.kind };
 
   useEffect(() => {
     if (prefs.backdrop !== "solid") return;
@@ -2409,8 +2427,16 @@ function MediaViewer({
     }
   };
 
+  const finishFullscreenTransition = () => {
+    fsBusy.current = false;
+    if (pendingAutoNext.current) {
+      pendingAutoNext.current = false;
+      stateRef.current.onStep(1, true);
+    }
+  };
+
   const transitionFullscreen = async (enter: boolean, hideChrome = false) => {
-    if (fsBusy.current || enter === windowFsRef.current) return;
+    if (fsBusy.current || loading || enter === windowFsRef.current) return;
     fsBusy.current = true;
     setZoom(1);
     setOffset({ x: 0, y: 0 });
@@ -2419,7 +2445,7 @@ function MediaViewer({
     if (imageEl) imageEl.style.transform = "";
     const modalEl = modal.current;
     const measured = modalEl ? mediaBox(modalEl, isVideo) : null;
-    const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, poster) : "";
+    const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, src, poster) : "";
     const ratio = measured ? measured.width / measured.height : 16 / 9;
     const radius = isVideo ? 10 : 12;
     const full = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
@@ -2472,7 +2498,7 @@ function MediaViewer({
         setFsShowGhost(false);
         setFsGhostLive(false);
         setFsFade(false);
-        fsBusy.current = false;
+        finishFullscreenTransition();
         return;
       }
       // Fallback: the page-owned blurred cover + ghost scale.
@@ -2554,7 +2580,7 @@ function MediaViewer({
         setFsShowGhost(false);
         setFsGhostLive(false);
         setFsFade(false);
-        fsBusy.current = false;
+        finishFullscreenTransition();
         return;
       }
       // Fallback: animate the page ghost, then restore the window underneath.
@@ -2603,7 +2629,7 @@ function MediaViewer({
     setFsShowGhost(false);
     setFsGhostLive(false);
     setFsFade(false);
-    fsBusy.current = false;
+    finishFullscreenTransition();
   };
 
   const toggleFullscreen = () => {
@@ -2627,6 +2653,7 @@ function MediaViewer({
   };
 
   const closeViewer = () => {
+    if (fsBusy.current) return;
     if (windowFsRef.current) {
       windowFsRef.current = false;
       setWindowFs(false);
@@ -2951,8 +2978,8 @@ function MediaViewer({
             knownRatio={knownRatio}
             hasNext={hasNext}
             autoNext={hasNext && (!items[index + 1] || items[index + 1].kind === "video")}
-            onNext={() => onStep(1)}
-            onAutoNext={() => onStep(1, true)}
+            onNext={() => step(1)}
+            onAutoNext={() => step(1, true)}
             fullscreen={windowFs}
             onFullscreen={toggleFullscreen}
           />
@@ -3025,17 +3052,17 @@ function MediaViewer({
         {items.slice(Math.max(0, index - 5), index + 6).map((v, offset) => {
           const i = Math.max(0, index - 5) + offset;
           const src = previewURL(v, chat.slug, libraryKey, version);
-          return <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => onIndex(i)}>
+          return <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => { if (!fsBusy.current) onIndex(i); }}>
             <GalleryImage key={src} src={src} kind={v.kind} performanceMode={performanceMode} limiter={limiter} />
             <span className="strip-index">{positions[i]}</span>
             {v.kind === "video" && <span className="strip-kind"><Play size={9} fill="currentColor" /></span>}
           </button>;
         })}
       </div>
-      <button className="media-nav prev" disabled={!hasPrevious || loading} aria-label="上一个" onClick={() => onStep(-1)}>
+      <button className="media-nav prev" disabled={!hasPrevious || loading} aria-label="上一个" onClick={() => step(-1)}>
         <ChevronLeft size={26} />
       </button>
-      <button className="media-nav next" disabled={!hasNext || loading} aria-label="下一个" onClick={() => onStep(1)}>
+      <button className="media-nav next" disabled={!hasNext || loading} aria-label="下一个" onClick={() => step(1)}>
         <ChevronRight size={26} />
       </button>
       {immersive && (
