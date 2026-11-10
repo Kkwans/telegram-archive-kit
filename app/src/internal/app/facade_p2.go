@@ -451,38 +451,55 @@ func (f *Facade) ExportChat(slug, dstRoot string) error {
 }
 
 func (f *Facade) SwitchLibrary(root string) error {
-	if strings.TrimSpace(root) == "" {
+	root = strings.TrimSpace(root)
+	if root == "" {
 		return errors.New("缺少档案库目录")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.taskMu.Lock()
+	defer f.taskMu.Unlock()
+	old := f.a.Settings.LibraryRoot
+	if old != "" && strings.EqualFold(filepath.Clean(old), root) && f.libLock != nil {
+		return nil
+	}
+	if f.op != nil {
+		return ErrOperationRunning
+	}
+	for _, task := range f.tasks {
+		if task.snapshot().State == "running" {
+			return ErrOperationRunning
+		}
 	}
 	lock, err := acquireSessionLock(root)
 	if err != nil {
 		return err
 	}
-	old := f.a.Settings.LibraryRoot
-	f.a.rememberLibrary(old)
-	f.a.Settings.LibraryRoot = root
-	f.a.rememberLibrary(root)
-	if err := f.a.ensureLibraryDirs(); err != nil {
-		f.a.Settings.LibraryRoot = old
-		lock.release()
+	defer func() { lock.release() }()
+	candidate := appAtLibrary(f.a, root)
+	candidate.noteLibrary(old)
+	candidate.noteLibrary(root)
+	if err := candidate.ensureLibraryDirs(); err != nil {
 		return err
 	}
 	if remote, kind := platform.NetworkPathKind(root); remote {
-		f.a.Settings.LastRemoteRoot = root
-		f.a.Settings.LastRemoteKind = kind
+		candidate.Settings.LastRemoteRoot = root
+		candidate.Settings.LastRemoteKind = kind
 	}
-	if err := f.a.saveSettings(); err != nil {
-		lock.release()
+	if err := candidate.buildLibrary(); err != nil {
 		return err
 	}
-	if err := f.a.buildLibrary(); err != nil {
-		lock.release()
+	if err := candidate.saveSettings(); err != nil {
 		return err
 	}
-	f.mu.Lock()
 	oldLock := f.libLock
+	f.a.Settings = candidate.Settings
 	f.libLock = lock
-	f.mu.Unlock()
+	lock = nil
 	oldLock.release()
 	return nil
 }

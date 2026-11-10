@@ -343,6 +343,9 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	if strings.TrimSpace(slug) == "" {
 		return "", errors.New("缺少聊天标识")
 	}
+	f.mu.Lock()
+	library := f.libLock
+	f.mu.Unlock()
 	meta, err := f.a.readWorkspaceMeta(slug)
 	if err != nil {
 		return "", fmt.Errorf("读取聊天失败: %w", err)
@@ -358,6 +361,10 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	}
 
 	f.mu.Lock()
+	if f.libLock != library {
+		f.mu.Unlock()
+		return "", errors.New("档案库已切换，请重新选择聊天")
+	}
 	if f.op != nil {
 		f.mu.Unlock()
 		return "", ErrOperationRunning

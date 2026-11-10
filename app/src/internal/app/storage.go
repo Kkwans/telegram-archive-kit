@@ -13,9 +13,15 @@ import (
 )
 
 func (a *App) rememberLibrary(path string) {
+	if a.noteLibrary(path) {
+		_ = a.saveSettings()
+	}
+}
+
+func (a *App) noteLibrary(path string) bool {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || path == "" {
-		return
+		return false
 	}
 	var next []string
 	next = append(next, path)
@@ -28,7 +34,7 @@ func (a *App) rememberLibrary(path string) {
 		}
 	}
 	a.Settings.LibraryHistory = next
-	_ = a.saveSettings()
+	return true
 }
 
 func appAtLibrary(base *App, root string) *App {
