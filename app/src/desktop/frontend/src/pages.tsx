@@ -16,6 +16,7 @@ import {
   Download,
   FolderOpen,
   HardDrive,
+  Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -816,6 +817,7 @@ function coverTone(src: string): Promise<string> {
 const fileExt = (name: string) => (name.split(".").pop() ?? "").toLowerCase();
 
 function mediaIcon(kind: string) {
+  if (kind === "image") return <ImageIcon size={20} />;
   if (kind === "video") return <Film size={20} />;
   if (kind === "audio") return <Music size={20} />;
   return <FileText size={20} />;
@@ -867,8 +869,6 @@ function browsePerformanceMode(policy: BrowsePolicy, kind: Bootstrap["libraryKin
   return policy === "performance" || (policy === "auto" && kind !== "local");
 }
 
-interface ImageLimiter {
-  schedule: (start: (done: () => void) => void) => () => void;
 const defaultMediaPageSize = 50;
 const maxMediaPageSize = 200;
 const mediaPageSizeKey = "tak-media-page-size";
@@ -903,6 +903,8 @@ function mediaPageNumbers(page: number, total: number): number[] {
   return [1, -1, page - 1, page, page + 1, -2, total];
 }
 
+interface ImageLimiter {
+  schedule: (start: (done: () => void) => void) => () => void;
 }
 
 function createImageLimiter(limit: number): ImageLimiter {
@@ -938,34 +940,30 @@ function createImageLimiter(limit: number): ImageLimiter {
 
 // Performance mode starts only images which intersect the scroll viewport and
 // permits a small number of simultaneous image transfers.
-function GalleryImage({ src, alt, performanceMode, limiter, suspended = false }: {
-  src: string; alt: string; performanceMode: boolean; limiter: ImageLimiter; suspended?: boolean;
+function GalleryImage({ src, kind, performanceMode, limiter, suspended = false }: {
+  src: string; kind: MediaItem["kind"]; performanceMode: boolean; limiter: ImageLimiter; suspended?: boolean;
 }) {
-  const img = useRef<HTMLImageElement>(null);
+  const preview = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
   const [activeSrc, setActiveSrc] = useState<string>();
-  const loaded = useRef(false);
+  const [status, setStatus] = useState<"pending" | "ready" | "failed">("pending");
+  const settled = useRef(false);
   const finish = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    loaded.current = false;
-    setActiveSrc(undefined);
-  }, [src, performanceMode]);
-
-  useEffect(() => {
+    if (!src || !performanceMode || suspended || !preview.current || status !== "pending") return;
     setVisible(false);
-    if (!performanceMode || suspended || !img.current) return;
     if (typeof IntersectionObserver === "undefined") {
       setVisible(true);
       return;
     }
     const observer = new IntersectionObserver((entries) => setVisible(entries.some((entry) => entry.isIntersecting)));
-    observer.observe(img.current);
+    observer.observe(preview.current);
     return () => observer.disconnect();
-  }, [src, performanceMode, suspended]);
+  }, [src, performanceMode, suspended, status]);
 
   useEffect(() => {
-    if (!performanceMode || suspended || !visible || loaded.current) return;
+    if (!src || !performanceMode || suspended || !visible || settled.current) return;
     const cancel = limiter.schedule((done) => {
       finish.current = done;
       setActiveSrc(src);
@@ -973,16 +971,31 @@ function GalleryImage({ src, alt, performanceMode, limiter, suspended = false }:
     return () => {
       cancel();
       finish.current = null;
-      if (!loaded.current) setActiveSrc(undefined);
+      if (!settled.current) setActiveSrc(undefined);
     };
   }, [src, performanceMode, visible, limiter, suspended]);
 
-  const complete = () => {
-    loaded.current = true;
+  const complete = (ready: boolean) => {
+    settled.current = true;
     finish.current?.();
     finish.current = null;
+    setStatus(ready ? "ready" : "failed");
   };
-  return <img ref={img} src={performanceMode ? activeSrc : src} alt={alt} loading="lazy" decoding="async" onLoad={complete} onError={complete} />;
+  const requestSrc = performanceMode && status === "pending" ? activeSrc : src;
+  return (
+    <span ref={preview} className={`media-preview ${status}`} aria-hidden="true">
+      {status !== "ready" && <span className={`media-ph ${kind}`}>{mediaIcon(kind)}</span>}
+      {requestSrc && status !== "failed" && (
+        <img src={requestSrc} alt="" loading={performanceMode ? "eager" : "lazy"} decoding="async"
+          onLoad={() => complete(true)} onError={() => complete(false)} />
+      )}
+    </span>
+  );
+}
+
+function previewURL(item: MediaItem, slug: string, libraryKey: string, version: string) {
+  if (item.thumb) return thumbURL(slug, item.thumb, libraryKey, version);
+  return item.kind === "image" ? mediaURL(slug, item.rel, libraryKey, version, false, true) : "";
 }
 
 export function MediaGallery({ ctx, chat, onSummary }: {
@@ -993,6 +1006,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const libraryKind = ctx.boot?.libraryKind ?? "unknown";
   const [policy] = useBrowsePolicy(libraryKey);
   const performanceMode = browsePerformanceMode(policy, libraryKind);
+  const pageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
   const limiter = useMemo(() => createImageLimiter(4), []);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolsPosition, setToolsPosition] = useState({ left: 0, top: 0, width: 290 });
@@ -1003,10 +1017,10 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const [searchText, setSearchText] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [previousPageSize, setPreviousPageSize] = useState(pageSize);
   const [reload, setReload] = useState(0);
   const [result, setResult] = useState<{ key: string; data: MediaPage } | null>(null);
   const [loading, setLoading] = useState(false);
-  const pageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
   const [error, setError] = useState("");
   const [cancelledPage, setCancelledPage] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
@@ -1017,11 +1031,17 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerError, setViewerError] = useState("");
   const [audioItem, setAudioItem] = useState<{ item: MediaItem; version: string } | null>(null);
-  const [previousPageSize, setPreviousPageSize] = useState(pageSize);
   const refreshNext = useRef(false);
   const requestWasRefresh = useRef(false);
   const retryRefresh = useRef(false);
   const pageRequest = useRef<AbortController | null>(null);
+  if (pageSize !== previousPageSize) {
+    setPreviousPageSize(pageSize);
+    setPage(1);
+    setViewer(null);
+    setViewerBusy(false);
+    setAudioItem(null);
+  }
   const [size, setSize] = useState<"sm" | "md" | "lg" | "xl">(() => {
     const saved = localStorage.getItem("tak-media-size");
     return saved === "sm" || saved === "lg" || saved === "xl" ? saved : "md";
@@ -1035,13 +1055,6 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   useLayoutEffect(() => {
     if (!toolsOpen) return;
     const place = () => {
-  if (pageSize !== previousPageSize) {
-    setPreviousPageSize(pageSize);
-    setPage(1);
-    setViewer(null);
-    setViewerBusy(false);
-    setAudioItem(null);
-  }
       const rect = toolsButton.current?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.min(290, window.innerWidth - 16);
@@ -1363,17 +1376,17 @@ export function MediaGallery({ ctx, chat, onSummary }: {
           ) : (
             <>
               {media.length > 0 && <div className={"media-grid size-" + size}>
-                {media.map((item) => (
+                {media.map((item) => {
+                  const src = previewURL(item, chat.slug, libraryKey, displayed.version);
+                  return (
                   <button key={displayed.version + ":" + item.rel} className={"media-tile " + item.kind} title={item.name + (item.id ? " · 消息 #" + item.id : "")}
                     onClick={() => openItem(item)} disabled={loading || searchPending}>
-                    {item.thumb || item.kind === "image" ? (
-                      <GalleryImage src={item.thumb ? thumbURL(chat.slug, item.thumb, libraryKey, displayed.version) : mediaURL(chat.slug, item.rel, libraryKey, displayed.version, false, true)}
-                        alt={item.name} performanceMode={performanceMode} limiter={limiter} suspended={Boolean(viewer || audioItem)} />
-                    ) : <span className={"media-ph " + item.kind}>{mediaIcon(item.kind)}</span>}
+                    <GalleryImage key={src} src={src} kind={item.kind} performanceMode={performanceMode} limiter={limiter} suspended={Boolean(viewer || audioItem)} />
                     {item.kind === "video" && <span className="media-play"><Play size={14} fill="currentColor" /></span>}
                     <span className="media-cap"><b>{item.name}</b><i>{bytes(item.size)}</i></span>
                   </button>
-                ))}
+                  );
+                })}
               </div>}
               {files.length > 0 && <div className="file-block">
                 <div className="file-block-head"><h4>文档与其它文件</h4><span>本页 {files.length} 个</span></div>
@@ -3011,8 +3024,9 @@ function MediaViewer({
       <div className="media-strip viewer-strip" ref={strip}>
         {items.slice(Math.max(0, index - 5), index + 6).map((v, offset) => {
           const i = Math.max(0, index - 5) + offset;
+          const src = previewURL(v, chat.slug, libraryKey, version);
           return <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => onIndex(i)}>
-            {v.thumb || v.kind === "image" ? <GalleryImage src={v.thumb ? thumbURL(chat.slug, v.thumb, libraryKey, version) : mediaURL(chat.slug, v.rel, libraryKey, version, false, true)} alt="" performanceMode={performanceMode} limiter={limiter} /> : <Film size={18} />}
+            <GalleryImage key={src} src={src} kind={v.kind} performanceMode={performanceMode} limiter={limiter} />
             <span className="strip-index">{positions[i]}</span>
             {v.kind === "video" && <span className="strip-kind"><Play size={9} fill="currentColor" /></span>}
           </button>;
@@ -4094,6 +4108,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
   const libraryKey = ctx.boot?.libraryKey ?? "";
   const libraryKind = ctx.boot?.libraryKind ?? "unknown";
   const [browsePolicy, setBrowsePolicy] = useBrowsePolicy(libraryKey);
+  const mediaPageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
   const policyEffective = browsePerformanceMode(browsePolicy, libraryKind) ? "性能优先" : "体验优先";
   const libraryKindLabel = libraryKind === "local" ? "本地库" : libraryKind === "remote" ? "网络库" : "库位置类型未知";
   const [form, setForm] = useState<SettingsForm | null>(null);
@@ -4108,7 +4123,6 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
       })
       .catch((e: Error) => toast(e.message, true));
   useEffect(() => {
-  const mediaPageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
     load();
   }, []);
 
