@@ -2061,15 +2061,24 @@ const ArtVideo = forwardRef<VideoApi, {
 });
 
 type ViewerRect = { left: number; top: number; width: number; height: number };
-type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number };
+type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number; handoff?: boolean };
 
 function mediaBox(modal: HTMLElement | null, isVideo: boolean): ViewerRect | null {
+  const video = isVideo ? modal?.querySelector<HTMLVideoElement>(".art-video-wrap.is-ready video") : null;
   const el = isVideo
-    ? modal?.querySelector<HTMLElement>(".art-video-wrap")
+    ? video || modal?.querySelector<HTMLElement>(".art-video-wrap")
     : modal?.querySelector<HTMLElement>(".image-stage img");
   if (!el) return null;
   const r = el.getBoundingClientRect();
   if (r.width < 8 || r.height < 8) return null;
+  // The player frame can include letterboxing. Match the pixels shown in the
+  // video, so the native image doesn't overshoot the web frame during handoff.
+  if (video?.videoWidth && video.videoHeight && getComputedStyle(video).objectFit === "contain") {
+    const fit = Math.min(r.width / video.videoWidth, r.height / video.videoHeight);
+    const width = video.videoWidth * fit;
+    const height = video.videoHeight * fit;
+    return { left: r.left + (r.width - width) / 2, top: r.top + (r.height - height) / 2, width, height };
+  }
   return { left: r.left, top: r.top, width: r.width, height: r.height };
 }
 
@@ -2226,7 +2235,7 @@ function MediaViewer({
   const [fsShowGhost, setFsShowGhost] = useState(false);
   const [fsGhostLive, setFsGhostLive] = useState(false);
   const [fsFade, setFsFade] = useState(false);
-  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null } | null>(null);
+  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null; rel: string } | null>(null);
 
   useEffect(() => {
     setImageReady(false);
@@ -2398,6 +2407,38 @@ function MediaViewer({
     }
   };
 
+  const stageFullscreenHandoff = (snapshot: string, rect: ViewerRect | null, radius: number) => {
+    if (!rect) return false;
+    setFsGhost({ src: snapshot, from: rect, to: rect, radius, handoff: true });
+    setFsShowGhost(true);
+    return true;
+  };
+
+  const finishNativeHandoff = async (staged: boolean, nativeFade: number) => {
+    if (staged) {
+      // Make sure WebView2 has painted the same still before withdrawing the
+      // native cover; a ready video can temporarily lose its surface on resize.
+      await nextPaint();
+      const still = modal.current?.querySelector<HTMLImageElement>(".viewer-fs-cover.handoff .viewer-fs-ghost");
+      if (still && !still.complete) {
+        await Promise.race([still.decode().catch(() => undefined), new Promise<void>((resolve) => window.setTimeout(resolve, 80))]);
+        await nextPaint();
+      }
+    }
+    await hideFullscreenCover(staged ? nativeFade : fullscreenFadeMs);
+    if (staged) {
+      await nextPaint();
+      setFsFade(true);
+      await nextPaint();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
+    }
+    setFsGhost(null);
+    setFsShowGhost(false);
+    setFsGhostLive(false);
+    setFsFade(false);
+    finishFullscreenTransition();
+  };
+
   const finishFullscreenTransition = () => {
     setTransitionBackdrop(null);
     fsBusy.current = false;
@@ -2432,6 +2473,7 @@ function MediaViewer({
         screenX: window.screenX,
         screenY: window.screenY,
         rect: measured,
+        rel: item.rel,
       };
       windowFsRef.current = true;
       const startScreen = screenRect(measured);
@@ -2463,14 +2505,9 @@ function MediaViewer({
         } catch {
           /* the static frame still covers the resize */
         }
+        const staged = stageFullscreenHandoff(snapshot, target, radius);
         await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenZoomMs + 8));
-        await hideFullscreenCover(fullscreenFadeMs);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
-        setFsGhost(null);
-        setFsShowGhost(false);
-        setFsGhostLive(false);
-        setFsFade(false);
-        finishFullscreenTransition();
+        await finishNativeHandoff(staged, 0);
         return;
       }
       // Fallback: the same backdrop under a page-owned scaling image.
@@ -2519,17 +2556,18 @@ function MediaViewer({
     } else {
       const ret = fsReturn.current;
       const currentScreen = screenRect(measured);
-      const targetScreen = ret?.rect ? [
+      const savedTarget = ret?.rel === item.rel && ret.rect ? [
         Math.round(ret.windowX + ret.rect.left),
         Math.round(ret.windowY + ret.rect.top),
         Math.round(ret.rect.width),
         Math.round(ret.rect.height),
       ] : null;
       let native = false;
-      if (backdrop && snapshot && currentScreen && targetScreen) {
+      if (backdrop && snapshot && currentScreen) {
         try {
           const res = await call<{ shown: boolean }>("showFullscreenCover", {
-            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: fullscreenZoomMs,
+            cover: backdrop, sharp: snapshot, from: currentScreen, to: savedTarget || currentScreen, radius,
+            duration: savedTarget ? fullscreenZoomMs : 0,
           });
           native = Boolean(res?.shown);
         } catch {
@@ -2537,22 +2575,29 @@ function MediaViewer({
         }
       }
       if (native) {
-        const zoomEndsAt = performance.now() + fullscreenZoomMs;
+        let zoomEndsAt = performance.now() + fullscreenZoomMs;
         windowFsRef.current = false;
         await applyWindowFullscreen(false);
         await nextPaint();
         setWindowFs(false);
         if (hideChrome) setImmersive(false);
         await nextPaint();
+        const target = (isVideo ? mediaBox(modal.current, true) : imageTargetRect()) || mediaBox(modal.current, isVideo);
+        const restored = screenRect(target);
+        if (!savedTarget && currentScreen && restored) {
+          try {
+            await call("animateFullscreenCover", { from: currentScreen, to: restored, radius, duration: fullscreenZoomMs });
+          } catch {
+            /* the still in the restored viewer can still take over */
+          }
+          zoomEndsAt = performance.now() + fullscreenZoomMs;
+        }
+        const staged = stageFullscreenHandoff(snapshot, target, radius);
         const remaining = zoomEndsAt - performance.now();
         if (remaining > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
-        await hideFullscreenCover(fullscreenFadeMs);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
-        setFsGhost(null);
-        setFsShowGhost(false);
-        setFsGhostLive(false);
-        setFsFade(false);
-        finishFullscreenTransition();
+        // Reveal the restored desktop around the window, while the still in
+        // WebView2 keeps the media itself in place.
+        await finishNativeHandoff(staged, 55);
         return;
       }
       // Fallback: animate the page ghost, then restore the window underneath.
@@ -2872,7 +2917,7 @@ function MediaViewer({
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
       {fsGhost && (
-        <div className={`viewer-fs-cover ${fsFade ? "settle" : ""}`} style={backdropStyle} aria-hidden="true">
+        <div className={`viewer-fs-cover ${fsGhost.handoff ? "handoff" : ""} ${fsFade ? "settle" : ""}`} style={backdropStyle} aria-hidden="true">
           {fsShowGhost && fsGhost.src && (
             <img
               className={`viewer-fs-ghost ${fsGhostLive ? "live" : ""}`}

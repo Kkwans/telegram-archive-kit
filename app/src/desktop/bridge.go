@@ -468,12 +468,17 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		return map[string]bool{"fullscreen": b.setScreenFullscreen(p.Fullscreen, p.Cover)}, nil
 	case "hideFullscreenCover":
-		hideFsCover(p.Fade, func() {
+		done := hideFsCover(p.Fade, func() {
 			if b.fsWindow.Active && b.window != nil {
 				raiseActiveFullscreen(uintptr(b.window.NativeWindow()))
 			}
 		})
-		return nil, nil
+		select {
+		case <-done:
+			return nil, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	case "showFullscreenCover":
 		if b.window == nil || b.window.NativeWindow() == nil {
 			return map[string]bool{"shown": false}, nil

@@ -2814,6 +2814,8 @@ html[data-theme="dark"] .media-type-card { background: rgba(255, 255, 255, .05);
   transition: opacity .2s ease;
 }
 .viewer-fs-cover.settle { opacity: 0; }
+.viewer-fs-cover.handoff { transition-duration: .1s; }
+.viewer-fs-cover.handoff .viewer-fs-ghost { box-shadow: none; }
 .viewer-fs-ghost {
   position: fixed; z-index: 2; object-fit: contain;
   background: #05070b;
