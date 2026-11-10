@@ -128,6 +128,7 @@ async function frostSnapshot(src: string): Promise<string> {
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [chats, setChats] = useState<ChatRow[]>([]);
+  const [chatsStatus, setChatsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [selected, setSelected] = useState("");
   const [page, setPage] = useState("home");
   const [dl, setDl] = useState<DownloadState | null>(null);
@@ -158,6 +159,7 @@ export default function App() {
   const lastNotice = useRef(0);
   const lastPending = useRef(0);
   const lastDialog = useRef(0);
+  const desktopContent = useRef("");
   const seenTasks = useRef(new Map<string, string>());
   const tasksReady = useRef(false);
   const libraryLoad = useRef<AbortController | null>(null);
@@ -185,12 +187,6 @@ export default function App() {
   const setToastSeconds = useCallback((seconds: number) => {
     toastSeconds.current = Math.min(10, Math.max(1, Math.round(seconds) || 3));
   }, []);
-
-  useEffect(() => {
-    call<{ toastSeconds?: number }>("getSettings")
-      .then((settings) => setToastSeconds(Number(settings?.toastSeconds || 3)))
-      .catch(() => undefined);
-  }, [setToastSeconds]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -254,12 +250,16 @@ export default function App() {
   }, [palette]);
 
   const consume = useCallback((st: DesktopState) => {
-    setDl(st.download ?? null);
-    setOp(st.operation ?? null);
-    setDone(st.done ?? null);
-    setLogin(st.login ?? null);
-    setTasks(st.tasks ?? []);
-    setRunning(st.running);
+    const content = JSON.stringify([st.download, st.operation, st.done, st.login, st.tasks, st.running]);
+    if (desktopContent.current !== content) {
+      desktopContent.current = content;
+      setDl(st.download ?? null);
+      setOp(st.operation ?? null);
+      setDone(st.done ?? null);
+      setLogin(st.login ?? null);
+      setTasks(st.tasks ?? []);
+      setRunning(st.running);
+    }
     if (st.notice && st.notice.seq !== lastNotice.current) {
       lastNotice.current = st.notice.seq;
       if (st.notice.text) toast(st.notice.text, true);
@@ -298,6 +298,7 @@ export default function App() {
     const controller = new AbortController();
     libraryLoad.current = controller;
     summariesDuringLoad.current.clear();
+    setChatsStatus((status) => status === "ready" ? status : "loading");
     const { signal } = controller;
     const bootstrap = call<Bootstrap>("bootstrap", undefined, signal).then((next) => {
       if (signal.aborted) return null;
@@ -308,6 +309,7 @@ export default function App() {
       if (!sameLibrary) {
         setChats([]);
         setSelected("");
+        setChatsStatus("loading");
       }
       return { next, key, sameLibrary };
     });
@@ -315,7 +317,11 @@ export default function App() {
       bootstrap,
       call<{ libraryKey: string; chats: ChatRow[] }>("listChats", undefined, signal),
     ]).then(([bootResult, list]) => {
-      if (signal.aborted || bootResult.status !== "fulfilled" || !bootResult.value) return;
+      if (signal.aborted) return;
+      if (bootResult.status !== "fulfilled" || !bootResult.value) {
+        setChatsStatus((status) => status === "ready" ? status : "error");
+        return;
+      }
       const { next, key, sameLibrary } = bootResult.value;
       if (list.status === "fulfilled" && list.value.libraryKey === key) {
         const rows = list.value.chats.map((row) => {
@@ -324,7 +330,10 @@ export default function App() {
         });
         setBoot({ ...next, chats: rows.length });
         setChats(rows);
+        setChatsStatus("ready");
         setSelected((prev) => (sameLibrary && rows.some((row) => row.slug === prev) ? prev : rows.find((row) => row.current)?.slug || rows[0]?.slug || ""));
+      } else {
+        setChatsStatus((status) => status === "ready" ? status : "error");
       }
     }).finally(() => {
       if (libraryLoad.current === controller) {
@@ -357,8 +366,11 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
-    call<{ videoSeekSeconds: number; videoLongPressRate: number; videoLongPressDelayMs: number; videoMaxVolume: number; videoVolumeStep: number; videoFrameAspect: string; speedWindowSeconds: number; viewerBackdrop: string }>("getSettings")
-      .then((s) =>
+    const controller = new AbortController();
+    call<{ videoSeekSeconds: number; videoLongPressRate: number; videoLongPressDelayMs: number; videoMaxVolume: number; videoVolumeStep: number; videoFrameAspect: string; speedWindowSeconds: number; viewerBackdrop: string; toastSeconds?: number }>("getSettings", undefined, controller.signal)
+      .then((s) => {
+        if (controller.signal.aborted) return;
+        setToastSeconds(s.toastSeconds || 3);
         setPrefs({
           seekSeconds: s.videoSeekSeconds || 5,
           longPressRate: s.videoLongPressRate || 4,
@@ -368,17 +380,16 @@ export default function App() {
           videoFrameAspect: s.videoFrameAspect || "original",
           speedWindowSeconds: s.speedWindowSeconds || 180,
           backdrop: s.viewerBackdrop || "ambient",
-        })
-      )
+        });
+      })
       .catch(() => undefined);
-    const controller = new AbortController();
     let timer = 0;
     const tick = async () => {
       try {
         const st = await call<DesktopState>("state", undefined, controller.signal);
         if (controller.signal.aborted) return;
         consume(st);
-        if (st.download) {
+        if (st.running && st.download) {
           const now = Date.now();
           if (now - lastSample.current > 900) {
             lastSample.current = now;
@@ -397,7 +408,7 @@ export default function App() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [consume]);
+  }, [consume, setToastSeconds]);
 
   useEffect(() => {
     let disposed = false;
@@ -481,6 +492,7 @@ export default function App() {
     () => ({
       boot,
       chats,
+      chatsStatus,
       selected,
       setSelected,
       dl,
@@ -504,7 +516,7 @@ export default function App() {
       applyPrefs: setPrefs,
       setToastSeconds,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, refresh, applyMediaSummary, toast, setToastSeconds]
+    [boot, chats, chatsStatus, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, refresh, applyMediaSummary, toast, setToastSeconds]
   );
 
   useEffect(() => {

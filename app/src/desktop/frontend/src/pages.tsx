@@ -72,7 +72,6 @@ import type {
   ChatRow,
   DoneState,
   DownloadState,
-  HomeStats,
   LoginState,
   MediaItem,
   MediaPage,
@@ -92,6 +91,7 @@ import { bytes, dateTime, duration, rate, rateParts } from "./format";
 export interface PageCtx {
   boot: Bootstrap | null;
   chats: ChatRow[];
+  chatsStatus: "loading" | "ready" | "error";
   selected: string;
   setSelected: (slug: string) => void;
   dl: DownloadState | null;
@@ -147,9 +147,8 @@ const MEDIA_KINDS = [
 ] as const;
 
 export function Home({ ctx }: { ctx: PageCtx }) {
-  const { boot, chats, selected, setSelected, refresh, toast, go, tasks, openTasks, openTask, pickFiles } = ctx;
-  const [stats, setStats] = useState<HomeStats | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { boot, chats, chatsStatus, selected, setSelected, toast, go, tasks, openTasks, openTask, pickFiles } = ctx;
+  const [storage, setStorage] = useState<{ key: string; status: "loading" | "ready" | "error"; diskFree: number; diskTotal: number } | null>(null);
   const [syncSlug, setSyncSlug] = useState(selected);
   const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
   useEffect(() => {
@@ -157,19 +156,40 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   }, [selected]);
 
   useEffect(() => {
-    if (!boot?.libraryKey) { setStats(null); return; }
+    const key = boot?.libraryKey;
+    if (!key) return;
     const controller = new AbortController();
-    setStats(null);
-    setLoading(true);
-    call<HomeStats>("homeStats", undefined, controller.signal)
-      .then((next) => { if (!controller.signal.aborted) setStats(next); })
-      .catch((e: Error) => { if (!controller.signal.aborted) toast(e.message, true); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    setStorage({ key, status: "loading", diskFree: 0, diskTotal: 0 });
+    call<{ diskFree: number; diskTotal: number }>("homeStorage", undefined, controller.signal)
+      .then((next) => { if (!controller.signal.aborted) setStorage({ key, status: "ready", ...next }); })
+      .catch(() => { if (!controller.signal.aborted) setStorage({ key, status: "error", diskFree: 0, diskTotal: 0 }); });
     return () => controller.abort();
   }, [boot?.libraryKey]);
 
+  const totals = useMemo(() => chats.reduce((out, chat) => {
+    out.messages += chat.messages;
+    out.missing += chat.missing;
+    out.pages += chat.pages;
+    out.official += chat.official;
+    if (!chat.mediaReady) {
+      out.pendingMedia++;
+      return out;
+    }
+    out.media += chat.media;
+    out.images += chat.images ?? 0;
+    out.videos += chat.videos ?? 0;
+    out.audio += chat.audio ?? 0;
+    out.files += chat.files ?? 0;
+    out.mediaBytes += chat.totalBytes ?? 0;
+    if (chat.media > 0) out.chatsWithMedia++;
+    return out;
+  }, { messages: 0, missing: 0, pages: 0, official: 0, media: 0, images: 0, videos: 0, audio: 0, files: 0, mediaBytes: 0, pendingMedia: 0, chatsWithMedia: 0 }), [chats]);
+  const stats = chatsStatus === "ready" ? totals : null;
   const totalMedia = stats ? stats.images + stats.videos + stats.audio + stats.files : 0;
-  const missingTotal = chats.reduce((n, c) => n + c.missing, 0);
+  const currentStorage = storage?.key === boot?.libraryKey ? storage : null;
+  const diskKnown = currentStorage?.status === "ready" && currentStorage.diskTotal > 0;
+  const diskUnavailable = currentStorage?.status === "error" || (currentStorage?.status === "ready" && !diskKnown);
+  const diskUsed = diskKnown ? Math.min(100, Math.max(0, Math.round(((currentStorage.diskTotal - currentStorage.diskFree) * 100) / currentStorage.diskTotal))) : 0;
   const recentChats = useMemo(
     () => [...chats].sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "")).slice(0, 5),
     [chats]
@@ -220,7 +240,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           <h1>你的离线档案库，一眼掌握</h1>
           <p className="home-lede">把 Telegram 的聊天、图片和视频整理成离线档案；下载、构建与检索都在这里完成。</p>
           <div className="home-cta">
-            <button className="btn primary" onClick={importJSON} disabled={loading}>
+            <button className="btn primary" onClick={importJSON}>
               <Download size={14} /> 导入 result.json
             </button>
             <button className="btn ghost" onClick={() => boot && call("openLibrary", {}).catch((e: Error) => toast(e.message, true))}>
@@ -262,19 +282,19 @@ export function Home({ ctx }: { ctx: PageCtx }) {
       <section className="stat-grid">
         <div className="stat">
           <span>聊天</span>
-          <div><b>{chats.length}</b><em>个档案</em></div>
+          <div>{stats ? <><b>{chats.length}</b><em>个档案</em></> : chatsStatus === "error" ? <b>不可用</b> : <span className="skeleton-line w-60" />}</div>
         </div>
         <div className="stat">
           <span>消息</span>
-          <div>{stats ? <><b>{stats.messages.toLocaleString()}</b><em>条</em></> : <span className="skeleton-line w-80" />}</div>
+          <div>{stats ? <><b>{stats.messages.toLocaleString()}</b><em>条</em></> : chatsStatus === "error" ? <b>不可用</b> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
           <span>{stats?.pendingMedia ? "已核对媒体" : "本地媒体"}</span>
-          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个{stats.pendingMedia ? ` · ${stats.pendingMedia} 个聊天待核对` : ""}</em></> : <span className="skeleton-line w-80" />}</div>
+          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个{stats.pendingMedia ? ` · ${stats.pendingMedia} 个聊天待核对` : ""}</em></> : chatsStatus === "error" ? <b>不可用</b> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
           <span>缺失媒体</span>
-          <div>{stats ? <><b className={stats.missing > 0 ? "warn" : ""}>{stats.missing}</b><em>个</em></> : <span className="skeleton-line w-60" />}</div>
+          <div>{stats ? <><b className={stats.missing > 0 ? "warn" : ""}>{stats.missing}</b><em>个</em></> : chatsStatus === "error" ? <b>不可用</b> : <span className="skeleton-line w-60" />}</div>
         </div>
       </section>
 
@@ -282,7 +302,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         <section className="panel">
           <div className="panel-head">
             <h3><ChartPie size={14} /> 媒体构成</h3>
-            <span className="meta">{loading || !stats ? "正在统计…" : stats.pendingMedia ? `已核对 ${totalMedia.toLocaleString()} 个 · ${stats.pendingMedia} 个聊天待核对` : `共 ${totalMedia.toLocaleString()} 个`}</span>
+            <span className="meta">{!stats ? chatsStatus === "error" ? "统计暂不可用" : "正在读取…" : stats.pendingMedia ? `已核对 ${totalMedia.toLocaleString()} 个 · ${stats.pendingMedia} 个聊天待核对` : `共 ${totalMedia.toLocaleString()} 个`}</span>
           </div>
           <div className="media-composition">
             <div className="kind-list">
@@ -301,7 +321,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               })}
             </div>
             <div className="media-facts">
-              <span><b>{chats.filter((c) => c.mediaReady && c.media > 0).length}</b> 个已核对聊天有媒体</span>
+              <span><b>{stats ? stats.chatsWithMedia : "—"}</b> 个已核对聊天有媒体</span>
               <span>已核对聊天平均 <b>{stats && chats.length > (stats.pendingMedia ?? 0) ? Math.round(stats.media / (chats.length - (stats.pendingMedia ?? 0))).toLocaleString() : "—"}</b> 个</span>
               <span>最大类型 <b>{stats && totalMedia ? MEDIA_KINDS.reduce((best, k) => (stats[k.key] > stats[best.key] ? k : best), MEDIA_KINDS[0]).label : "—"}</b></span>
             </div>
@@ -315,16 +335,16 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           </div>
           <div className="storage-body">
             <div>
-              <div className="storage-bar"><b style={{ width: `${stats && stats.diskTotal > 0 ? Math.min(100, Math.max(0, Math.round(((stats.diskTotal - stats.diskFree) * 100) / stats.diskTotal))) : 0}%` }} /></div>
+              <div className="storage-bar"><b style={{ width: `${diskUsed}%` }} /></div>
               <div className="storage-labels">
-                <span>磁盘已用 {stats && stats.diskTotal > 0 ? Math.round(((stats.diskTotal - stats.diskFree) * 100) / stats.diskTotal) : 0}%</span>
-                <span>剩余 {bytes(stats?.diskFree ?? 0)}</span>
+                <span>磁盘已用 {diskKnown ? `${diskUsed}%` : diskUnavailable ? "不可用" : "读取中…"}</span>
+                <span>剩余 {diskKnown ? bytes(currentStorage.diskFree) : "—"}</span>
               </div>
             </div>
             <div className="storage-facts">
               <div><span>{stats?.pendingMedia ? "已核对媒体体积" : "媒体体积"}</span><b>{stats ? bytes(stats.mediaBytes) : "—"}</b>{Boolean(stats?.pendingMedia) && <small>{stats?.pendingMedia} 个聊天待核对</small>}</div>
-              <div><span>网页</span><b>{stats?.pages ?? 0} 页</b></div>
-              <div><span>官方导出</span><b>{stats?.official ?? 0} 个</b></div>
+              <div><span>网页</span><b>{stats ? `${stats.pages} 页` : "—"}</b></div>
+              <div><span>官方导出</span><b>{stats ? `${stats.official} 个` : "—"}</b></div>
             </div>
             <div className="storage-path">
               <div>
@@ -348,7 +368,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             </button>
           </div>
           {recentChats.length === 0 ? (
-            <div className="chart-empty">还没有聊天，先到档案库导入 result.json。</div>
+            <div className="chart-empty">{chatsStatus === "loading" ? "正在读取聊天…" : chatsStatus === "error" ? "聊天列表暂不可用，请稍后重试。" : "还没有聊天，先到档案库导入 result.json。"}</div>
           ) : (
             <div className="recent-chats">
               {recentChats.map((c) => (

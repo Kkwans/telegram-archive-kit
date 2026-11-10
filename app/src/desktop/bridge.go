@@ -330,8 +330,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.Tasks(), nil
 	case "taskDetail":
 		return b.facade.TaskDetail(p.ID)
-	case "homeStats":
-		return b.facade.HomeStats(), nil
+	case "homeStorage":
+		return b.facade.HomeStorage(), nil
 	case "clearTasks":
 		b.facade.ClearFinishedTasks()
 		return nil, nil
