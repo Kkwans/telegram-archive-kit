@@ -255,6 +255,7 @@ type apiParams struct {
 	Query               string              `json:"query"`
 	Sort                string              `json:"sort"`
 	Page                int                 `json:"page"`
+	PageSize            int                 `json:"pageSize"`
 	Version             string              `json:"version"`
 	Refresh             bool                `json:"refresh"`
 	LibraryKey          string              `json:"libraryKey"`
@@ -277,7 +278,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.LibraryChats()
 	case "chatMedia":
 		return b.facade.ChatMedia(ctx, takapp.MediaQuery{
-			Slug: p.Slug, Kind: p.Kind, Sort: p.Sort, Query: p.Query, Page: p.Page,
+			Slug: p.Slug, Kind: p.Kind, Sort: p.Sort, Query: p.Query, Page: p.Page, PageSize: p.PageSize,
 			Version: p.Version, Refresh: p.Refresh, LibraryKey: p.LibraryKey,
 		})
 	case "startImportJSON":

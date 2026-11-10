@@ -109,6 +109,10 @@ func TestMediaCatalogPaginationRefreshAndLocalFirstPage(t *testing.T) {
 	if err != nil || len(second.Items) != 50 || second.Total != 123 || second.Version != first.Version || second.Items[0].Rel == first.Items[0].Rel {
 		t.Fatalf("bad second page: %+v, %v", second, err)
 	}
+	third, err := f.ChatMedia(context.Background(), MediaQuery{Slug: slug, Page: 3, PageSize: 17, Version: first.Version})
+	if err != nil || len(third.Items) != 17 || third.PageSize != 17 || third.Total != 123 || third.Items[0].Rel != first.Items[34].Rel {
+		t.Fatalf("incorrect page with a custom size: %+v, %v", third, err)
+	}
 	sorted, err := f.ChatMedia(context.Background(), MediaQuery{Slug: slug, Sort: "size-asc", Version: first.Version})
 	if err != nil || len(sorted.Items) != 50 || sorted.Items[0].Size != 1 {
 		t.Fatalf("bad size order: %+v, %v", sorted, err)
@@ -130,6 +134,14 @@ func TestMediaCatalogPaginationRefreshAndLocalFirstPage(t *testing.T) {
 	local, err := cold.ChatMedia(context.Background(), MediaQuery{Slug: slug})
 	if err != nil || local.Version != first.Version || len(local.Items) != 50 {
 		t.Fatalf("local first page: %v, %v", local.Total, err)
+	}
+	large, err := cold.ChatMedia(context.Background(), MediaQuery{Slug: slug, PageSize: 75})
+	if err != nil || len(large.Items) != 75 || large.PageSize != 75 || large.Items[50].Rel != second.Items[0].Rel {
+		t.Fatalf("incorrect first page from persisted full index: %+v, %v", large, err)
+	}
+	bounded, err := cold.ChatMedia(context.Background(), MediaQuery{Slug: slug, PageSize: 5000})
+	if err != nil || bounded.PageSize != maxMediaPageSize || len(bounded.Items) != bounded.Total {
+		t.Fatalf("incorrect capped page size: %+v, %v", bounded, err)
 	}
 	if err := os.Rename(ws+"-offline", ws); err != nil {
 		t.Fatal(err)

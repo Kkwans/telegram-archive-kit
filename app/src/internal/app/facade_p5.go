@@ -45,6 +45,7 @@ type MediaQuery struct {
 	Query      string `json:"query"`
 	Version    string `json:"version"`
 	Page       int    `json:"page"`
+	PageSize   int    `json:"pageSize"`
 	Refresh    bool   `json:"refresh"`
 }
 

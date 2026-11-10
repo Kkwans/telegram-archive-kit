@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowDownToLine,
@@ -18,7 +18,6 @@ import {
   HardDrive,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Copy,
   ExternalLink,
   Eye,
@@ -870,6 +869,40 @@ function browsePerformanceMode(policy: BrowsePolicy, kind: Bootstrap["libraryKin
 
 interface ImageLimiter {
   schedule: (start: (done: () => void) => void) => () => void;
+const defaultMediaPageSize = 50;
+const maxMediaPageSize = 200;
+const mediaPageSizeKey = "tak-media-page-size";
+const mediaPageSizeChanged = "tak-media-page-size-change";
+
+function validMediaPageSize(size: number) {
+  return Number.isInteger(size) && size >= 1 && size <= maxMediaPageSize;
+}
+
+function readMediaPageSize() {
+  try {
+    const size = Number(localStorage.getItem(mediaPageSizeKey));
+    return validMediaPageSize(size) ? size : defaultMediaPageSize;
+  } catch {
+    return defaultMediaPageSize;
+  }
+}
+
+function subscribeMediaPageSize(sync: () => void) {
+  window.addEventListener(mediaPageSizeChanged, sync);
+  window.addEventListener("storage", sync);
+  return () => {
+    window.removeEventListener(mediaPageSizeChanged, sync);
+    window.removeEventListener("storage", sync);
+  };
+}
+
+function mediaPageNumbers(page: number, total: number): number[] {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+  if (page <= 3) return [1, 2, 3, 4, -1, total];
+  if (page >= total - 2) return [1, -1, total - 3, total - 2, total - 1, total];
+  return [1, -1, page - 1, page, page + 1, -2, total];
+}
+
 }
 
 function createImageLimiter(limit: number): ImageLimiter {
@@ -973,6 +1006,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const [reload, setReload] = useState(0);
   const [result, setResult] = useState<{ key: string; data: MediaPage } | null>(null);
   const [loading, setLoading] = useState(false);
+  const pageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
   const [error, setError] = useState("");
   const [cancelledPage, setCancelledPage] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
@@ -983,6 +1017,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerError, setViewerError] = useState("");
   const [audioItem, setAudioItem] = useState<{ item: MediaItem; version: string } | null>(null);
+  const [previousPageSize, setPreviousPageSize] = useState(pageSize);
   const refreshNext = useRef(false);
   const requestWasRefresh = useRef(false);
   const retryRefresh = useRef(false);
@@ -1000,6 +1035,13 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   useLayoutEffect(() => {
     if (!toolsOpen) return;
     const place = () => {
+  if (pageSize !== previousPageSize) {
+    setPreviousPageSize(pageSize);
+    setPage(1);
+    setViewer(null);
+    setViewerBusy(false);
+    setAudioItem(null);
+  }
       const rect = toolsButton.current?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.min(290, window.innerWidth - 16);
@@ -1042,7 +1084,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
     return () => window.clearTimeout(timer);
   }, [searchText, query]);
 
-  const catalogKey = JSON.stringify([libraryKey, chat.slug, filter, sort, query]);
+  const catalogKey = JSON.stringify([libraryKey, chat.slug, filter, sort, query, pageSize]);
   const catalog = useRef<{ key: string; version: string; pages: Map<number, MediaPage> }>({ key: "", version: "", pages: new Map() });
   const onSummaryRef = useRef(onSummary);
   const applySummaryRef = useRef(ctx.applyMediaSummary);
@@ -1083,7 +1125,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
     setError("");
     setLoading(true);
     call<MediaPage>("chatMedia", {
-      slug: chat.slug, kind: filter, sort, query, page, version: requestedVersion, refresh: force, libraryKey,
+      slug: chat.slug, kind: filter, sort, query, page, pageSize, version: requestedVersion, refresh: force, libraryKey,
     }, controller.signal).then((next) => {
       if (controller.signal.aborted || catalog.current.key !== catalogKey) return;
       if (requestedVersion && next.version !== requestedVersion) {
@@ -1115,7 +1157,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
       controller.abort();
       if (pageRequest.current === controller) pageRequest.current = null;
     };
-  }, [libraryKey, chat.slug, catalogKey, filter, sort, query, page, reload]);
+  }, [libraryKey, chat.slug, catalogKey, filter, sort, query, page, pageSize, reload]);
 
   const displayed = result?.key === catalogKey ? result.data : null;
   const searchPending = searchText.trim() !== query;
@@ -1128,7 +1170,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
     first = requestAnimationFrame(() => {
       second = requestAnimationFrame(() => {
         void call<MediaPage>("chatMedia", {
-          slug: chat.slug, kind: filter, sort, query, page: sourcePage.page + 1, version: sourcePage.version, libraryKey,
+          slug: chat.slug, kind: filter, sort, query, page: sourcePage.page + 1, pageSize: sourcePage.pageSize, version: sourcePage.version, libraryKey,
         }, controller.signal).then((next) => {
           if (!controller.signal.aborted && catalog.current.key === catalogKey && catalog.current.version === sourcePage.version && next.version === sourcePage.version) remember(next);
         }).catch(() => undefined);
@@ -1137,7 +1179,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); controller.abort(); };
   }, [performanceMode, loading, searchPending, cancelledPage, sourcePage, catalogKey, chat.slug, filter, sort, query]);
 
-  useEffect(() => () => viewerRequest.current?.abort(), []);
+  useEffect(() => () => viewerRequest.current?.abort(), [pageSize]);
   const cancelViewerRequest = () => {
     viewerRequest.current?.abort();
     viewerRequest.current = null;
@@ -1174,7 +1216,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
         let next = catalog.current.pages.get(nextPage);
         if (!next) {
           next = await call<MediaPage>("chatMedia", {
-            slug: chat.slug, kind: filter, sort, query, page: nextPage, version: current.page.version, libraryKey,
+            slug: chat.slug, kind: filter, sort, query, page: nextPage, pageSize: current.page.pageSize, version: current.page.version, libraryKey,
           }, controller.signal);
         }
         if (controller.signal.aborted || catalog.current.key !== catalogKey || viewerRef.current?.rel !== current.rel) return;
@@ -1244,7 +1286,10 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const summary = displayed?.summary;
   const media = displayed?.items.filter((item) => item.kind !== "file") ?? [];
   const files = displayed?.items.filter((item) => item.kind === "file") ?? [];
-  const totalPages = Math.max(1, Math.ceil((displayed?.total ?? 0) / (displayed?.pageSize || 50)));
+  const totalPages = Math.max(1, Math.ceil((displayed?.total ?? 0) / pageSize));
+  const navigatePage = (next: number) => {
+    if (!loading && !searchPending && next >= 1 && next <= totalPages) setPage(next);
+  };
   const viewerItems = useMemo(() => viewer?.page.items.filter((item) => item.kind === "image" || item.kind === "video") ?? [], [viewer?.page]);
   const viewerIndex = viewerItems.findIndex((item) => item.rel === viewer?.rel);
   const rawViewerIndex = viewer?.page.items.findIndex((item) => item.rel === viewer.rel) ?? -1;
@@ -1347,9 +1392,16 @@ export function MediaGallery({ ctx, chat, onSummary }: {
           )}
           <div className="media-pagination">
             <span aria-live="polite">{searchPending ? "正在搜索…" : loading ? "正在读取…" : displayed.total ? "第 " + ((displayed.page - 1) * displayed.pageSize + 1).toLocaleString() + "–" + ((displayed.page - 1) * displayed.pageSize + displayed.items.length).toLocaleString() + " 项，共 " + displayed.total.toLocaleString() + " 项" : "共 0 项"}</span>
-            <div><button className="btn sm ghost" disabled={loading || searchPending || page <= 1} onClick={() => setPage((n) => n - 1)}><ChevronLeft size={13} /> 上一页</button>
-              <span>第 {displayed.page} / {totalPages} 页</span>
-              <button className="btn sm ghost" disabled={loading || searchPending || page >= totalPages} onClick={() => setPage((n) => n + 1)}>下一页 <ChevronRight size={13} /></button></div>
+            <nav aria-label="媒体分页">
+              <button className="btn sm ghost" disabled={loading || searchPending || page <= 1} onClick={() => navigatePage(page - 1)}><ChevronLeft size={13} /> 上一页</button>
+              {mediaPageNumbers(displayed.page, totalPages).map((number) => number < 0
+                ? <span key={number} className="media-page-gap" aria-hidden="true">…</span>
+                : <button key={number} className="btn sm ghost media-page-number" aria-label={`第 ${number} 页`}
+                    aria-current={number === displayed.page ? "page" : undefined}
+                    aria-disabled={loading || searchPending || undefined}
+                    onClick={() => navigatePage(number)}>{number}</button>)}
+              <button className="btn sm ghost" disabled={loading || searchPending || page >= totalPages} onClick={() => navigatePage(page + 1)}>下一页 <ChevronRight size={13} /></button>
+            </nav>
           </div>
         </div>
       )}
@@ -4056,6 +4108,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
       })
       .catch((e: Error) => toast(e.message, true));
   useEffect(() => {
+  const mediaPageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
     load();
   }, []);
 
@@ -4250,15 +4303,31 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <SettingsField label="媒体浏览策略" liveHint hint={libraryKey
             ? `${libraryKindLabel} · 当前生效：${policyEffective}。按档案库保存，修改后立即生效，无需点击保存。`
             : "正在识别当前档案库…"}>
-            <div className="media-native-select">
-              <select className="ui-select-btn" aria-label="媒体浏览策略" value={browsePolicy} disabled={!libraryKey}
-                onChange={(event) => { if (!setBrowsePolicy(event.target.value as BrowsePolicy)) toast("无法保存媒体浏览策略，请检查本机存储。", true); }}>
-                <option value="auto">自动</option>
-                <option value="experience">体验优先</option>
-                <option value="performance">性能优先</option>
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </div>
+            <Select ariaLabel="媒体浏览策略" value={browsePolicy} disabled={!libraryKey}
+              options={[{ value: "auto", label: "自动" }, { value: "experience", label: "体验优先" }, { value: "performance", label: "性能优先" }]}
+              onChange={(value) => { if (!setBrowsePolicy(value as BrowsePolicy)) toast("无法保存媒体浏览策略，请检查本机存储。", true); }} />
+          </SettingsField>
+          <SettingsField label="媒体每页条数" hint="默认 50 条。输入 1–200 的整数，按回车或离开输入框后生效。">
+            <input key={mediaPageSize} type="number" min={1} max={maxMediaPageSize} step={1}
+              aria-label="媒体每页条数" defaultValue={mediaPageSize}
+              onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+              onBlur={(event) => {
+                const input = event.currentTarget;
+                const value = input.valueAsNumber;
+                if (!validMediaPageSize(value)) {
+                  input.value = String(mediaPageSize);
+                  toast("媒体每页条数需为 1–200 的整数。", true);
+                  return;
+                }
+                if (value === mediaPageSize) return;
+                try {
+                  localStorage.setItem(mediaPageSizeKey, String(value));
+                  window.dispatchEvent(new Event(mediaPageSizeChanged));
+                } catch {
+                  input.value = String(mediaPageSize);
+                  toast("无法保存媒体每页条数，请检查本机存储。", true);
+                }
+              }} />
           </SettingsField>
           <div className="switch-grid">
             <SettingsToggle

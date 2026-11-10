@@ -20,6 +20,7 @@ import (
 
 const (
 	mediaPageSize          = 50
+	maxMediaPageSize       = 200
 	mediaCatalogSchema     = 1
 	mediaCatalogTTL        = 5 * time.Minute
 	mediaCatalogRetryDelay = 30 * time.Second
@@ -451,6 +452,10 @@ func normalizeCatalogQuery(q *MediaQuery) error {
 	if q.Page < 1 {
 		q.Page = 1
 	}
+	if q.PageSize < 1 {
+		q.PageSize = mediaPageSize
+	}
+	q.PageSize = min(q.PageSize, maxMediaPageSize)
 	switch q.Sort {
 	case "newest", "oldest", "size-desc", "size-asc":
 	default:
@@ -508,12 +513,13 @@ func (f *Facade) queryMediaCatalog(ctx context.Context, root string, q MediaQuer
 		f.maybeRefreshCatalogLocked(key, root, q.Slug, e)
 		if q.Version != "" && q.Version != header.Version {
 			f.mediaMu.Unlock()
-			return MediaPageDTO{Items: []MediaItemDTO{}, Total: header.Summary.Total, Page: q.Page, PageSize: mediaPageSize, Version: header.Version, Summary: header.Summary, Stale: true}, nil
+			return MediaPageDTO{Items: []MediaItemDTO{}, Total: header.Summary.Total, Page: q.Page, PageSize: q.PageSize, Version: header.Version, Summary: header.Summary, Stale: true}, nil
 		}
-		if q.Page == 1 && q.Kind == "all" && q.Query == "" {
-			list := append([]MediaItemDTO{}, header.First[q.Sort]...)
+		if q.Page == 1 && q.Kind == "all" && q.Query == "" && (q.PageSize <= mediaPageSize || header.Summary.Total <= mediaPageSize) {
+			first := header.First[q.Sort]
+			list := append([]MediaItemDTO{}, first[:min(q.PageSize, len(first))]...)
 			f.mediaMu.Unlock()
-			return MediaPageDTO{Items: list, Total: header.Summary.Total, Page: q.Page, PageSize: mediaPageSize, Version: header.Version, Summary: header.Summary, Stale: stale}, nil
+			return MediaPageDTO{Items: list, Total: header.Summary.Total, Page: q.Page, PageSize: q.PageSize, Version: header.Version, Summary: header.Summary, Stale: stale}, nil
 		}
 		if snapshot == nil {
 			path, version := f.mediaCatalogPath(key), header.Version
@@ -555,15 +561,16 @@ func (f *Facade) queryMediaCatalog(ctx context.Context, root string, q MediaQuer
 }
 
 func filterCatalogPage(items []MediaItemDTO, q MediaQuery) MediaPageDTO {
-	page := MediaPageDTO{Items: []MediaItemDTO{}, Page: q.Page, PageSize: mediaPageSize}
+	page := MediaPageDTO{Items: []MediaItemDTO{}, Page: q.Page, PageSize: q.PageSize}
 	start := int64(math.MaxInt64)
-	if int64(q.Page)-1 <= math.MaxInt64/mediaPageSize {
-		start = (int64(q.Page) - 1) * mediaPageSize
+	size := int64(q.PageSize)
+	if int64(q.Page)-1 <= (math.MaxInt64-size)/size {
+		start = (int64(q.Page) - 1) * size
 	}
 	if q.Kind == "all" && q.Query == "" {
 		page.Total = len(items)
 		if start < int64(len(items)) {
-			end := start + mediaPageSize
+			end := start + size
 			if end > int64(len(items)) {
 				end = int64(len(items))
 			}
@@ -590,7 +597,7 @@ func filterCatalogPage(items []MediaItemDTO, q MediaQuery) MediaPageDTO {
 		if q.Query != "" && !strings.Contains(strings.ToLower(item.Name), q.Query) && !strings.Contains(strings.ToLower(item.ID), q.Query) {
 			continue
 		}
-		if int64(page.Total) >= start && len(page.Items) < mediaPageSize {
+		if int64(page.Total) >= start && len(page.Items) < q.PageSize {
 			page.Items = append(page.Items, item)
 		}
 		page.Total++
