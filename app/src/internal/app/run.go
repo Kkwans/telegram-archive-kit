@@ -1327,16 +1327,11 @@ func (a *App) actionOpenLibrary(slug string) {
 }
 
 func localFileURL(path, chatSlug string) string {
-	abs, _ := filepath.Abs(path)
-	slash := filepath.ToSlash(abs)
-	if runtime.GOOS == "windows" && len(slash) >= 2 && slash[1] == ':' {
-		slash = "/" + slash
-	}
-	u := url.URL{Scheme: "file", Path: slash}
+	target := archive.PathToFileURL(path)
 	if chatSlug != "" {
-		u.Fragment = "chat=" + chatSlug
+		target += "#" + (&url.URL{Fragment: "chat=" + chatSlug}).EscapedFragment()
 	}
-	return u.String()
+	return target
 }
 
 func openInBrowser(target string) error {

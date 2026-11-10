@@ -79,6 +79,11 @@ func CleanHTMLText(s string) string {
 func PathToFileURL(path string) string {
 	abs, _ := filepath.Abs(path)
 	slash := filepath.ToSlash(abs)
+	if unc, ok := strings.CutPrefix(slash, "//"); ok {
+		if host, rest, found := strings.Cut(unc, "/"); found && host != "" {
+			return (&url.URL{Scheme: "file", Host: host, Path: "/" + rest}).String()
+		}
+	}
 	if len(slash) >= 2 && slash[1] == ':' {
 		slash = "/" + slash
 	}
