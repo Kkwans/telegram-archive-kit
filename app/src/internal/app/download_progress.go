@@ -266,6 +266,29 @@ func (c *progressCapture) doneSizeSnapshot() map[string]int64 {
 	return out
 }
 
+// activeTransferredBytes sums the bytes already transferred by files that are
+// still downloading. progressFromBaseline only counts completed files, which
+// made the summary stuck at 0 B until a whole file finished.
+func (c *progressCapture) activeTransferredBytes(plan downloadPlan, baseline, completed map[string]bool) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var total int64
+	for id := range c.active {
+		if baseline[id] || completed[id] {
+			continue
+		}
+		transferred := c.transferred[id]
+		if transferred <= 0 {
+			continue
+		}
+		if expected := plan.IDs[id]; expected > 0 && transferred > expected {
+			transferred = expected
+		}
+		total += transferred
+	}
+	return total
+}
+
 func (c *progressCapture) activeSnapshot() map[string]bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

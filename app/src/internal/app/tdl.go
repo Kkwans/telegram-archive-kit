@@ -917,10 +917,13 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	baselineDone, baselineBytes := a.downloadExistingSnapshot(slug, basePlan)
 	pd, speeds, _ := capture.snapshot()
 	done, bytesNow := progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
+	bytesNow += capture.activeTransferredBytes(basePlan, baselineDone, pd)
 	activeSpeed := sumRates(speeds)
 	active, finished := capture.dashboardTasks(basePlan)
 	activeProg, doneProg := capture.taskProgress(basePlan, time.Now())
-	ui.Render(newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg))
+	snap := newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg)
+	snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
+	ui.Render(snap)
 	lastBytes = bytesNow
 
 	for {
@@ -937,12 +940,15 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 			}
 			pd, speeds, recent := capture.snapshot()
 			done, bytesNow = progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
+			bytesNow += capture.activeTransferredBytes(basePlan, baselineDone, pd)
 			activeSpeed = sumRates(speeds)
 			if activeSpeed <= 0 {
 				activeSpeed = smoothedSpeed
 			}
 			if runErr == nil {
-				ui.Render(newDownloadSnapshot(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), recent, "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads))
+				snap := newDownloadSnapshot(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), recent, "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads)
+				snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
+				ui.Render(snap)
 				time.Sleep(260 * time.Millisecond)
 				return nil, nil
 			}
@@ -955,6 +961,7 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 		case now := <-ticker.C:
 			pd, speeds, _ = capture.snapshot()
 			done, bytesNow = progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
+			bytesNow += capture.activeTransferredBytes(basePlan, baselineDone, pd)
 			dt := now.Sub(lastTick).Seconds()
 			measured := float64(0)
 			if dt > 0 && bytesNow >= lastBytes {
@@ -998,7 +1005,9 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 			}
 			active, finished := capture.dashboardTasks(basePlan)
 			activeProg, doneProg := capture.taskProgress(basePlan, now)
-			ui.Render(newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, smoothedSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg))
+			snap := newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, smoothedSpeed, time.Since(startedAll), "正在下载", "", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg)
+			snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
+			ui.Render(snap)
 			lastBytes, lastTick = bytesNow, now
 		default:
 			select {
@@ -1015,6 +1024,19 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 			}
 		}
 	}
+}
+
+// averageRunSpeed measures this attempt's average from bytes that actually
+// moved, so a pending file or a retry pause cannot pin it to zero.
+func averageRunSpeed(bytesNow, baseBytes int64, elapsed time.Duration) float64 {
+	if elapsed <= 0 {
+		return 0
+	}
+	delta := bytesNow - baseBytes
+	if delta <= 0 {
+		return 0
+	}
+	return float64(delta) / elapsed.Seconds()
 }
 
 func sumRates(m map[string]float64) float64 {
