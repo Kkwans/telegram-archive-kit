@@ -838,7 +838,11 @@ function useBrowsePolicy(key: string): [BrowsePolicy, (value: BrowsePolicy) => b
   const [choice, setChoice] = useState(() => ({ key, value: readBrowsePolicy(key) }));
   const value = choice.key === key ? choice.value : readBrowsePolicy(key);
   useEffect(() => {
-    const sync = () => setChoice({ key, value: readBrowsePolicy(key) });
+    const sync = () => {
+      const next = readBrowsePolicy(key);
+      setChoice((current) => current.key === key && current.value === next ? current : { key, value: next });
+    };
+    sync();
     window.addEventListener("tak-media-policy-change", sync);
     window.addEventListener("storage", sync);
     return () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -165,6 +165,10 @@ export default function App() {
   const libraryLoad = useRef<AbortController | null>(null);
   const activeLibraryKey = useRef("");
   const summariesDuringLoad = useRef(new Map<string, MediaSummary>());
+  const galleryReturn = useRef<{
+    libraryKey: string; slug: string; top: number; anchor?: HTMLElement; offset: number;
+  } | null>(null);
+  const scrollArea = useRef<HTMLDivElement>(null);
   const pickerWaiters = useRef(new Map<string, { resolve: (paths: string[]) => void; reject: (e: Error) => void }>());
 
   const dismissToast = useCallback((id: number) => {
@@ -474,11 +478,51 @@ export default function App() {
 
   const [onlineRequest, setOnlineRequest] = useState<{ filter: string; seq: number } | null>(null);
   const [taskFocus, setTaskFocus] = useState("");
-  const go = (next: string) => {
+  const go = useCallback((next: string) => {
+    if (page === "chats" && next === "settings" && selected) {
+      const area = scrollArea.current;
+      const viewport = area?.getBoundingClientRect();
+      const anchor = area && viewport ? Array.from(area.querySelectorAll<HTMLElement>(".media-tile:not(.skeleton), .file-row")).find((item) => {
+        const rect = item.getBoundingClientRect();
+        return rect.bottom > viewport.top && rect.top < viewport.bottom;
+      }) : undefined;
+      galleryReturn.current = {
+        libraryKey: activeLibraryKey.current, slug: selected, top: area?.scrollTop ?? 0, anchor,
+        offset: anchor && viewport ? anchor.getBoundingClientRect().top - viewport.top : 0,
+      };
+    } else if (next !== "chats" && next !== "settings") {
+      galleryReturn.current = null;
+    }
     setSideTip(null);
     setAppTip(null);
     setPage(next);
-  };
+  }, [page, selected]);
+  useLayoutEffect(() => {
+    const saved = galleryReturn.current;
+    if (!saved || page === "settings") return;
+    if (page !== "chats" || saved.libraryKey !== activeLibraryKey.current || saved.slug !== selected) {
+      galleryReturn.current = null;
+      return;
+    }
+    const restore = () => {
+      const area = scrollArea.current;
+      if (galleryReturn.current !== saved || !area) return;
+      if (saved.anchor && area.contains(saved.anchor)) {
+        area.scrollTop += saved.anchor.getBoundingClientRect().top - area.getBoundingClientRect().top - saved.offset;
+      } else {
+        area.scrollTop = saved.top;
+      }
+    };
+    restore();
+    // Returning can realize tiles that were skipped while the gallery was hidden.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        restore();
+        if (galleryReturn.current === saved) galleryReturn.current = null;
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [page, selected]);
   const openOnline = (filter = "all") => {
     setOnlineRequest({ filter, seq: Date.now() });
     go("online");
@@ -516,7 +560,7 @@ export default function App() {
       applyPrefs: setPrefs,
       setToastSeconds,
     }),
-    [boot, chats, chatsStatus, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, refresh, applyMediaSummary, toast, setToastSeconds]
+    [boot, chats, chatsStatus, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, go, refresh, applyMediaSummary, toast, setToastSeconds]
   );
 
   useEffect(() => {
@@ -615,7 +659,7 @@ export default function App() {
       { id: "act-logs", label: "打开日志目录", hint: "诊断", section: "操作", run: () => call("revealLogs").catch((e: Error) => toast(e.message, true)) }
     );
     return [...nav, ...actions, ...chatsCmds];
-  }, [chats, selected, theme]);
+  }, [chats, selected, theme, go, refresh, toast]);
 
   const filteredCommands = useMemo(() => {
     const q = paletteQuery.trim().toLowerCase();
@@ -891,10 +935,12 @@ export default function App() {
         </aside>
 
         <main className="main">
-          <div className="scroll">
+          <div className="scroll" ref={scrollArea}>
             {page === "home" && <Home ctx={ctx} />}
             {page === "online" && <OnlineChatsPage ctx={ctx} />}
-            {page === "chats" && <Chats ctx={ctx} />}
+            {(page === "chats" || (page === "settings" && galleryReturn.current !== null && galleryReturn.current.libraryKey === boot?.libraryKey)) && (
+              <Activity mode={page === "chats" ? "visible" : "hidden"}><Chats ctx={ctx} /></Activity>
+            )}
             {page === "library" && <Library ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
             {page === "tasks" && (
