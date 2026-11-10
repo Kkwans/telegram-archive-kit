@@ -2103,6 +2103,9 @@ function nextPaint(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
+const fullscreenZoomMs = 180;
+const fullscreenFadeMs = 100;
+
 function buildFullscreenCover(snapshot: string, inset?: { rect: ViewerRect; radius: number }): Promise<string> {
   if (!snapshot) return Promise.resolve("");
   return new Promise((resolve) => {
@@ -2490,13 +2493,13 @@ function MediaViewer({
         const target = (isVideo ? mediaBox(modal.current, isVideo) : imageTargetRect()) || mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
         const endScreen = screenRect(target) || startScreen;
         try {
-          await call("animateFullscreenCover", { from: startScreen, to: endScreen, radius, duration: 200 });
+          await call("animateFullscreenCover", { from: startScreen, to: endScreen, radius, duration: fullscreenZoomMs });
         } catch {
           /* the static frame still covers the resize */
         }
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 210));
-        await hideFullscreenCover(120);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenZoomMs + 8));
+        await hideFullscreenCover(fullscreenFadeMs);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
         setFsGhost(null);
         setFsShowGhost(false);
         setFsGhostLive(false);
@@ -2561,7 +2564,7 @@ function MediaViewer({
       if (backdrop && snapshot && currentScreen && targetScreen) {
         try {
           const res = await call<{ shown: boolean }>("showFullscreenCover", {
-            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: 200,
+            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: fullscreenZoomMs,
           });
           native = Boolean(res?.shown);
         } catch {
@@ -2569,16 +2572,17 @@ function MediaViewer({
         }
       }
       if (native) {
+        const zoomEndsAt = performance.now() + fullscreenZoomMs;
         windowFsRef.current = false;
         await applyWindowFullscreen(false);
         await nextPaint();
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 60));
         setWindowFs(false);
         if (hideChrome) setImmersive(false);
         await nextPaint();
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 140));
-        await hideFullscreenCover(120);
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+        const remaining = zoomEndsAt - performance.now();
+        if (remaining > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
+        await hideFullscreenCover(fullscreenFadeMs);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
         setFsGhost(null);
         setFsShowGhost(false);
         setFsGhostLive(false);

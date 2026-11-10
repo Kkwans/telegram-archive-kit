@@ -52,6 +52,7 @@ var (
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procSetStretchBltMode  = gdi32.NewProc("SetStretchBltMode")
 	procStretchBlt         = gdi32.NewProc("StretchBlt")
+	procBitBlt             = gdi32.NewProc("BitBlt")
 	procSetLayeredAttrs    = user32.NewProc("SetLayeredWindowAttributes")
 	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 	procSelectClipRgn      = gdi32.NewProc("SelectClipRgn")
@@ -175,10 +176,14 @@ var (
 	coverAnimGen   atomic.Int64
 	coverAlpha     atomic.Int32
 
-	coverComposeDC  uintptr
-	coverComposeDIB uintptr
-	coverComposeW   int
-	coverComposeH   int
+	coverComposeDC   uintptr
+	coverComposeDIB  uintptr
+	coverComposeW    int
+	coverComposeH    int
+	coverBackdropDC  uintptr
+	coverBackdropDIB uintptr
+	coverBackdropW   int
+	coverBackdropH   int
 )
 
 // ensureCoverCompose returns a memory DC backed by a DIB the size of the cover
@@ -200,12 +205,42 @@ func ensureCoverCompose(w, h int) uintptr {
 		procDeleteObject.Call(coverComposeDIB)
 		coverComposeDIB = 0
 	}
-	mem, dib := buildCoverDIB(w, h, make([]byte, w*h*4))
+	mem, dib := buildCoverDIB(w, h, nil)
 	if mem == 0 {
 		return 0
 	}
 	coverComposeDC, coverComposeDIB = mem, dib
 	coverComposeW, coverComposeH = w, h
+	return mem
+}
+
+// The blur does not move during the zoom. Scale it once per transition and
+// copy it into the frame buffer before drawing the moving sharp image.
+func resetCoverBackdrop() {
+	if coverBackdropDC != 0 {
+		procDeleteDC.Call(coverBackdropDC)
+		procDeleteObject.Call(coverBackdropDIB)
+		coverBackdropDC, coverBackdropDIB = 0, 0
+	}
+}
+
+func scaledCoverBackdrop(w, h int32, src uintptr, srcW, srcH int) uintptr {
+	if coverBackdropDC != 0 && coverBackdropW == int(w) && coverBackdropH == int(h) {
+		return coverBackdropDC
+	}
+	resetCoverBackdrop()
+	mem, dib := buildCoverDIB(int(w), int(h), nil)
+	if mem == 0 {
+		return 0
+	}
+	procSetStretchBltMode.Call(mem, halftone)
+	if ok, _, _ := procStretchBlt.Call(mem, 0, 0, uintptr(w), uintptr(h), src, 0, 0, uintptr(srcW), uintptr(srcH), srcCopy); ok == 0 {
+		procDeleteDC.Call(mem)
+		procDeleteObject.Call(dib)
+		return 0
+	}
+	coverBackdropDC, coverBackdropDIB = mem, dib
+	coverBackdropW, coverBackdropH = int(w), int(h)
 	return mem
 }
 
@@ -239,8 +274,14 @@ func updateCoverSurface() bool {
 		return false
 	}
 	procSetStretchBltMode.Call(compose, halftone)
-	if ok, _, _ := procStretchBlt.Call(compose, 0, 0, uintptr(cw), uintptr(ch), mem, 0, 0, uintptr(bw), uintptr(bh), srcCopy); ok == 0 {
-		return false
+	var copied uintptr
+	if bg := scaledCoverBackdrop(cw, ch, mem, bw, bh); bg != 0 {
+		copied, _, _ = procBitBlt.Call(compose, 0, 0, uintptr(cw), uintptr(ch), bg, 0, 0, srcCopy)
+	}
+	if copied == 0 {
+		if ok, _, _ := procStretchBlt.Call(compose, 0, 0, uintptr(cw), uintptr(ch), mem, 0, 0, uintptr(bw), uintptr(bh), srcCopy); ok == 0 {
+			return false
+		}
 	}
 	if sharp != 0 && sw > 0 && sh > 0 {
 		rect := from
@@ -386,7 +427,9 @@ func buildCoverDIB(w, h int, pix []byte) (uintptr, uintptr) {
 		return 0, 0
 	}
 	procSelectObject.Call(mem, dib)
-	copy(unsafe.Slice((*byte)(bits), len(pix)), pix)
+	if len(pix) > 0 {
+		copy(unsafe.Slice((*byte)(bits), len(pix)), pix)
+	}
 	return mem, dib
 }
 
@@ -451,22 +494,38 @@ func coverRectFromCSS(values []int, scale float64) coverRect {
 	}
 }
 
+var flushComposition = dwmapi.NewProc("DwmFlush")
+
+// Wait off the UI thread so a slow composition frame cannot block input.
+func waitCoverFrame() {
+	started := time.Now()
+	hr, _, _ := flushComposition.Call()
+	if hr != 0 {
+		time.Sleep(8 * time.Millisecond)
+	} else if time.Since(started) < time.Millisecond {
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func startCoverTicker(hwnd uintptr, gen int64, duration time.Duration) {
 	if hwnd == 0 || duration <= 0 {
 		return
 	}
 	go func() {
-		deadline := time.Now().Add(duration + 50*time.Millisecond)
-		for time.Now().Before(deadline) {
-			if coverAnimGen.Load() != gen || coverHWND != hwnd {
+		deadline := time.Now().Add(duration)
+		for {
+			waitCoverFrame()
+			done := application.InvokeSyncWithResult(func() bool {
+				if coverAnimGen.Load() != gen || coverHWND != hwnd || !coverVisible.Load() {
+					return true
+				}
+				paintCover()
+				return !time.Now().Before(deadline)
+			})
+			if done {
 				return
 			}
-			application.InvokeSync(paintCover)
-			// Sample faster than the display refresh so every composited frame
-			// gets a fresh position; 15ms beat against 16.7ms vsync and juddered.
-			time.Sleep(8 * time.Millisecond)
 		}
-		application.InvokeSync(paintCover)
 	}()
 }
 
@@ -593,6 +652,7 @@ func hideCoverWindow(hwnd uintptr) {
 	procShowWindow.Call(hwnd, swHide)
 	coverVisible.Store(false)
 	coverAlpha.Store(255)
+	resetCoverBackdrop()
 }
 
 // showFsCover paints dataURL over the primary monitor before the window is
@@ -672,7 +732,7 @@ func hideFsCover(fadeMs int, afterHide func()) {
 					paintCover()
 				}
 			})
-			time.Sleep(16 * time.Millisecond)
+			waitCoverFrame()
 		}
 		application.InvokeSync(finish)
 	}()
