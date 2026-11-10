@@ -991,6 +991,9 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 		active, finished := capture.dashboardTasks(basePlan)
 		activeProg, doneProg := capture.taskProgress(basePlan, time.Now())
 		snap := newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg)
+		if recent == nil {
+			recent = []string{}
+		}
 		snap.Recent = recent
 		snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
 		ui.Render(snap)
@@ -1132,7 +1135,7 @@ func (a *App) cleanupInterruptedMedia(slug string, active map[string]bool, plan 
 		return
 	}
 	// tdl writes only into media/. Never remove pre-existing paths, unknown-size
-	// files, or files in files/ that may belong to an earlier archive operation.
+	// files, resized images, or files belonging to another archive operation.
 	_ = filepath.WalkDir(a.mediaDir(slug), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
