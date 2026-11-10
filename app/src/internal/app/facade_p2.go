@@ -780,7 +780,7 @@ func (f *Facade) Diagnostics() []DiagRow {
 		status := "连接正常"
 		if !st.Reachable {
 			state, status = "warn", "不可访问"
-		} else if !st.Writable {
+		} else if st.WritableKnown && !st.Writable {
 			state, status = "warn", "只读"
 		}
 		label := "SMB / UNC"

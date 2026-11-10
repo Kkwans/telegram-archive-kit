@@ -19,6 +19,7 @@ type RemoteStatusDTO struct {
 	Kind            string `json:"kind"`
 	Reachable       bool   `json:"reachable"`
 	Writable        bool   `json:"writable"`
+	WritableKnown   bool   `json:"writableKnown"`
 	FreeBytes       uint64 `json:"freeBytes"`
 	FreeKnown       bool   `json:"freeKnown"`
 	LatencyMs       int64  `json:"latencyMs"`
@@ -28,14 +29,17 @@ type RemoteStatusDTO struct {
 	Error           string `json:"error,omitempty"`
 }
 
-// RemoteStatus probes the current library root. It never blocks on a full
-// network enumeration: one stat and one tiny write are enough to tell the UI
-// whether a remote library is usable.
+// RemoteStatus checks reachability without writing to the current library.
 func (f *Facade) RemoteStatus() RemoteStatusDTO {
-	return f.RemoteStatusFor(f.a.Settings.LibraryRoot)
+	return f.remoteStatus(f.a.Settings.LibraryRoot, false)
 }
 
+// RemoteStatusFor is the explicit test in the connection dialog.
 func (f *Facade) RemoteStatusFor(root string) RemoteStatusDTO {
+	return f.remoteStatus(root, true)
+}
+
+func (f *Facade) remoteStatus(root string, testWrite bool) RemoteStatusDTO {
 	remote, kind := platform.NetworkPathKind(root)
 	if !remote && f.a.Settings.LastRemoteRoot != "" && strings.EqualFold(filepath.Clean(root), filepath.Clean(f.a.Settings.LastRemoteRoot)) {
 		// A mapped drive can vanish from Windows after a network drop. Keep the
@@ -61,18 +65,13 @@ func (f *Facade) RemoteStatusFor(root string) RemoteStatusDTO {
 		return out
 	}
 	out.Reachable = true
-	if remote {
-		test := filepath.Join(root, ".tak-write-test")
-		writeStart := time.Now()
-		if err := os.WriteFile(test, []byte("ok"), 0600); err == nil {
+	if testWrite {
+		out.WritableKnown = true
+		if err := platform.ProbeDirectoryWrite(root); err == nil {
 			out.Writable = true
-			_ = os.Remove(test)
 		} else {
 			out.Error = "目录不可写：" + err.Error()
 		}
-		out.LatencyMs = time.Since(writeStart).Milliseconds()
-	} else {
-		out.Writable = true
 	}
 	out.FreeBytes = platform.FreeSpaceBytes(root)
 	out.FreeKnown = out.FreeBytes > 0

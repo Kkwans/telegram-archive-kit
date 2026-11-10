@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"telegramarchivekit/internal/platform"
 )
 
 type rcloneMount struct {
@@ -92,9 +94,7 @@ func (b *Bridge) StartRcloneMount(remote, subpath, drive string) (string, error)
 		default:
 		}
 		if st, err := os.Stat(root); err == nil && st.IsDir() {
-			test := filepath.Join(root, ".tak-write-test")
-			if err := os.WriteFile(test, []byte("ok"), 0600); err == nil {
-				_ = os.Remove(test)
+			if err := platform.ProbeDirectoryWrite(root); err == nil {
 				return root, nil
 			}
 		}
