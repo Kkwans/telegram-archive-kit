@@ -2338,7 +2338,10 @@ function MediaViewer({
     const next = items[index + 1];
     const prev = items[index - 1];
     const warm = async (target: MediaItem, limit: number, complete: boolean) => {
-      const res = await fetch(mediaURL(chat.slug, target.rel, libraryKey, version, true), {
+      // A local partial read skips remuxing and may serve different bytes.
+      // Other prefetches use the playback URL so the browser can reuse them.
+      const skipRemux = libraryKind === "local" && !complete;
+      const res = await fetch(mediaURL(chat.slug, target.rel, libraryKey, version, skipRemux), {
         headers: complete ? undefined : { Range: `bytes=0-${limit - 1}` },
         signal: controller.signal, cache: "force-cache",
       });
@@ -4135,6 +4138,8 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
   const libraryKey = ctx.boot?.libraryKey ?? "";
   const libraryKind = ctx.boot?.libraryKind ?? "unknown";
   const [browsePolicy, setBrowsePolicy] = useBrowsePolicy(libraryKey);
+  const [policyDraft, setPolicyDraft] = useState<{ key: string; value: BrowsePolicy } | null>(null);
+  const selectedPolicy = policyDraft?.key === libraryKey ? policyDraft.value : browsePolicy;
   const mediaPageSize = useSyncExternalStore(subscribeMediaPageSize, readMediaPageSize);
   const policyEffective = browsePerformanceMode(browsePolicy, libraryKind) ? "性能优先" : "体验优先";
   const libraryKindLabel = libraryKind === "local" ? "本地库" : libraryKind === "remote" ? "网络库" : "库位置类型未知";
@@ -4147,6 +4152,7 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
       .then((data) => {
         setForm(data);
         setOriginal(data);
+        setPolicyDraft(null);
       })
       .catch((e: Error) => toast(e.message, true));
   useEffect(() => {
@@ -4164,26 +4170,35 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
     );
   }
 
-  const dirty = original ? JSON.stringify(form) !== JSON.stringify(original) : false;
+  const formDirty = original ? JSON.stringify(form) !== JSON.stringify(original) : false;
+  const policyDirty = selectedPolicy !== browsePolicy;
+  const dirty = formDirty || policyDirty;
   const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) => setForm((f) => (f ? { ...f, [key]: value } : f));
 
   const save = async () => {
     setSaving(true);
     try {
-      const next = await call<SettingsForm>("setSettings", { settings: form });
-      setForm(next);
-      setOriginal(next);
-      applyPrefs({
-        seekSeconds: next.videoSeekSeconds,
-        longPressRate: next.videoLongPressRate,
-        longPressDelayMs: next.videoLongPressDelayMs,
-        maxVolume: next.videoMaxVolume,
-        volumeStep: next.videoVolumeStep,
-        videoFrameAspect: next.videoFrameAspect || "original",
-        speedWindowSeconds: next.speedWindowSeconds,
-        backdrop: next.viewerBackdrop || "ambient",
-      });
-      setToastSeconds(next.toastSeconds);
+      if (formDirty) {
+        const next = await call<SettingsForm>("setSettings", { settings: form });
+        setForm(next);
+        setOriginal(next);
+        applyPrefs({
+          seekSeconds: next.videoSeekSeconds,
+          longPressRate: next.videoLongPressRate,
+          longPressDelayMs: next.videoLongPressDelayMs,
+          maxVolume: next.videoMaxVolume,
+          volumeStep: next.videoVolumeStep,
+          videoFrameAspect: next.videoFrameAspect || "original",
+          speedWindowSeconds: next.speedWindowSeconds,
+          backdrop: next.viewerBackdrop || "ambient",
+        });
+        setToastSeconds(next.toastSeconds);
+      }
+      if (policyDirty && !setBrowsePolicy(selectedPolicy)) {
+        toast("无法保存媒体浏览策略，请检查本机存储。", true);
+        return;
+      }
+      setPolicyDraft(null);
       toast("设置已保存", "success");
     } catch (e) {
       toast((e as Error).message, true);
@@ -4342,11 +4357,11 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
             />
           </SettingsField>
           <SettingsField label="媒体浏览策略" liveHint hint={libraryKey
-            ? `${libraryKindLabel} · 当前生效：${policyEffective}。按档案库保存，修改后立即生效，无需点击保存。`
+            ? `${libraryKindLabel} · 当前生效：${policyEffective}。体验优先预取下一页和相邻视频，性能优先只加载需要的页面和可见缩略图。点击保存设置后生效。`
             : "正在识别当前档案库…"}>
-            <Select ariaLabel="媒体浏览策略" value={browsePolicy} disabled={!libraryKey}
+            <Select ariaLabel="媒体浏览策略" value={selectedPolicy} disabled={!libraryKey || saving}
               options={[{ value: "auto", label: "自动" }, { value: "experience", label: "体验优先" }, { value: "performance", label: "性能优先" }]}
-              onChange={(value) => { if (!setBrowsePolicy(value as BrowsePolicy)) toast("无法保存媒体浏览策略，请检查本机存储。", true); }} />
+              onChange={(value) => setPolicyDraft({ key: libraryKey, value: value as BrowsePolicy })} />
           </SettingsField>
           <SettingsField label="媒体每页条数" hint="默认 50 条。输入 1–200 的整数，按回车或离开输入框后生效。">
             <input key={mediaPageSize} type="number" min={1} max={maxMediaPageSize} step={1}
