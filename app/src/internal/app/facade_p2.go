@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -815,14 +816,18 @@ func (f *Facade) Diagnostics() []DiagRow {
 }
 
 func (f *Facade) ListLogs() []LogInfo {
-	dir := f.a.logsDir()
+	root := f.libraryRoot()
+	out := []LogInfo{}
+	if root == "" {
+		return out
+	}
+	dir := filepath.Join(root, ".logs")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return out
 	}
-	var out []LogInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+		if !e.Type().IsRegular() || !strings.EqualFold(filepath.Ext(e.Name()), ".log") {
 			continue
 		}
 		info, err := e.Info()
@@ -839,19 +844,32 @@ func (f *Facade) ListLogs() []LogInfo {
 }
 
 func (f *Facade) ReadLog(name string) (string, error) {
-	base := filepath.Base(strings.TrimSpace(name))
-	if base == "" || base != name {
+	root := f.libraryRoot()
+	if root == "" || filepath.Base(name) != name || !filepath.IsLocal(name) ||
+		strings.ContainsAny(name, `/\:`) || !strings.EqualFold(filepath.Ext(name), ".log") {
 		return "", errors.New("日志名称无效")
 	}
-	b, err := os.ReadFile(filepath.Join(f.a.logsDir(), base))
+	dir := filepath.Join(root, ".logs")
+	if err := checkWorkspaceDirectory(dir); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, name)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return "", err
 	}
-	const max = 256 * 1024
-	if len(b) > max {
-		b = b[len(b)-max:]
+	if !info.Mode().IsRegular() {
+		return "", errors.New("日志必须是普通文件")
 	}
-	return string(b), nil
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	const maxBytes = 256 * 1024
+	length := min(info.Size(), maxBytes)
+	b, err := io.ReadAll(io.NewSectionReader(file, info.Size()-length, length))
+	return string(b), err
 }
 
 func (f *Facade) LogsDir() string { return f.a.logsDir() }

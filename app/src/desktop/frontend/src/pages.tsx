@@ -4299,35 +4299,57 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
   const [rows, setRows] = useState<DiagRow[]>([]);
   const [logs, setLogs] = useState<LogInfo[]>([]);
   const [active, setActive] = useState("");
-  const [content, setContent] = useState("");
+  const [logResult, setLogResult] = useState<{ name: string; text: string; error?: boolean } | null>(null);
+  const [readingLog, setReadingLog] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState("");
+  const loadController = useRef<AbortController | null>(null);
 
-  const load = async () => {
+  const load = () => {
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
     setLoading(true);
-    try {
-      const nextRows = await call<DiagRow[]>("diagnostics");
-      setRows(nextRows);
-      const list = await call<LogInfo[]>("listLogs");
-      setLogs(list);
-      if (!active && list.length > 0) setActive(list[0].name);
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setLoading(false);
-    }
+    setLogsLoading(true);
+    setLogsError("");
+    const diagnostics = call<DiagRow[] | null>("diagnostics", undefined, controller.signal)
+      .then((next) => { if (!controller.signal.aborted) setRows(Array.isArray(next) ? next : []); })
+      .catch((e: Error) => { if (!controller.signal.aborted) toast(e.message, true); });
+    const logList = call<LogInfo[] | null>("listLogs", undefined, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        const list = Array.isArray(result) ? result : [];
+        setLogs(list);
+        setActive((current) => list.some((entry) => entry.name === current) ? current : list[0]?.name ?? "");
+      })
+      .catch((e: Error) => { if (!controller.signal.aborted) setLogsError(e.message); })
+      .finally(() => { if (!controller.signal.aborted) setLogsLoading(false); });
+    void Promise.allSettled([diagnostics, logList]).then(() => {
+      if (!controller.signal.aborted) setLoading(false);
+      if (loadController.current === controller) loadController.current = null;
+    });
   };
   useEffect(() => {
     load();
+    return () => loadController.current?.abort();
   }, []);
 
   useEffect(() => {
-    if (!active) return;
-    call<string>("readLog", { name: active })
-      .then(setContent)
-      .catch((e: Error) => setContent(e.message));
+    if (!active) { setLogResult(null); setReadingLog(false); return; }
+    const controller = new AbortController();
+    setLogResult(null);
+    setReadingLog(true);
+    call<string>("readLog", { name: active }, controller.signal)
+      .then((text) => { if (!controller.signal.aborted) setLogResult({ name: active, text }); })
+      .catch((e: Error) => { if (!controller.signal.aborted) setLogResult({ name: active, text: e.message, error: true }); })
+      .finally(() => { if (!controller.signal.aborted) setReadingLog(false); });
+    return () => controller.abort();
   }, [active]);
 
+  const content = logResult?.name === active && !logResult.error ? logResult.text : "";
+  const logError = logResult?.name === active && logResult.error ? logResult.text : "";
   const value = (label: string) => rows.find((r) => r.label === label)?.value ?? "--";
   const appLabels = ["版本", "程序目录", "配置文件", "档案库", "聊天数量", "媒体总数", "缺失媒体"];
   const toolLabels = ["tdl", "tdl 版本", "tdl 会话目录", "会话文件", "Namespace", "FFmpeg", "磁盘剩余", "远程库", "远程缓存"];
@@ -4429,7 +4451,7 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
         <div className="log-split">
           <div className="log-list">
             {visibleLogs.length === 0 ? (
-              <div className="chart-empty">没有匹配的日志。</div>
+              <div className="chart-empty">{logsLoading ? "正在读取日志列表…" : logsError ? `日志列表暂不可用：${logsError}` : "没有匹配的日志。"}</div>
             ) : (
               visibleLogs.map((l) => (
                 <button key={l.name} className={l.name === active ? "on" : ""} onClick={() => setActive(l.name)}>
@@ -4448,7 +4470,7 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
               <b>{active || "选择日志"}</b>
               {activeLog && <span>{activeLog.modTime} · {bytes(activeLog.size)} · 仅显示末尾 256 KB</span>}
             </div>
-            <pre className="logview">{content || "选择左侧日志查看内容。"}</pre>
+            <pre className="logview">{readingLog ? "正在读取日志…" : logError ? `读取日志失败：${logError}` : content || "选择左侧日志查看内容。"}</pre>
           </div>
         </div>
       </section>
