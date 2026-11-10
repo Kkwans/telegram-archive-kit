@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -348,5 +350,99 @@ func TestTaskPercentUsesDownloadedBytes(t *testing.T) {
 	got := f.Tasks()[0]
 	if got.Percent != 25 {
 		t.Fatalf("percent must follow bytes (250/1000 = 25%%), got %d", got.Percent)
+	}
+}
+
+func TestTaskKeepsAudioFileAndEmptyPlanSnapshots(t *testing.T) {
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	f.a.Settings.LibraryRoot = t.TempDir()
+	slug := "chat-test"
+	if err := os.MkdirAll(filepath.Dir(f.a.sourcePath(slug)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.a.sourcePath(slug), []byte(`{"messages":[{"id":1,"media_type":"photo"},{"id":2,"media_type":"video_file"}]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name                   string
+		total, images, videos  int
+		audio, files           int
+		wantBytes, transferred int64
+	}{
+		{"audio", 2, 0, 0, 2, 0, 1000, 200},
+		{"files", 3, 0, 0, 0, 3, 1200, 300},
+		{"empty", 0, 0, 0, 0, 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &backgroundTask{dto: TaskDTO{Kind: "sync", Slug: slug, State: "running"}}
+			task.setDownloadPlan(tc.total, tc.wantBytes, tc.images, tc.videos, tc.audio, tc.files)
+			task.setDownloadBaseline(5, 500, 3, 2, 0, 0)
+			task.updateDownload(DownloadSnapshot{Done: 5, Total: 20, Bytes: 500 + tc.transferred, TotalBytes: 9000})
+			for _, detail := range []bool{false, true} {
+				got := task.snapshot()
+				f.displayTask(&got, detail)
+				if got.Total != tc.total || got.TotalBytes != tc.wantBytes || got.Bytes != tc.transferred ||
+					got.Images != tc.images || got.Videos != tc.videos || got.Audio != tc.audio || got.Files != tc.files {
+					t.Fatalf("source fallback or engine overwrote plan: %#v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskKeepsUnknownPlanSizeSnapshot(t *testing.T) {
+	f := &Facade{}
+	task := &backgroundTask{dto: TaskDTO{Kind: "sync", State: "running"}}
+	task.setDownloadPlan(2, 0, 0, 0, 2, 0)
+	task.updateDownload(DownloadSnapshot{Done: 1, Total: 10, Bytes: 100, TotalBytes: 5000})
+	got := task.snapshot()
+	f.displayTask(&got, false)
+	if got.TotalBytes != 0 || got.Bytes != 100 || got.Percent != 50 {
+		t.Fatalf("unknown snapshot size must remain unknown: %#v", got)
+	}
+}
+
+func TestConcurrentTaskSavesKeepLatestRawSnapshot(t *testing.T) {
+	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
+	const count = 24
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			task := f.createTask("sync", "test", "")
+			task.setDownloadPlan(2, 100, 0, 0, 2, 0)
+			task.setDownloadBaseline(4, 400, 0, 0, 4, 0)
+			task.updateDownload(DownloadSnapshot{Done: 4, Total: 6, Bytes: 400, TotalBytes: 500})
+			f.saveTasks()
+		}()
+	}
+	wg.Wait()
+	b, err := os.ReadFile(f.taskStorePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored []TaskDetailDTO
+	if err := json.Unmarshal(b, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != count {
+		t.Fatalf("stored %d tasks, want %d", len(stored), count)
+	}
+	for _, task := range stored {
+		if !task.PlanKnown || task.PlanTotal != 2 || task.Done != 4 || task.Bytes != 400 {
+			t.Fatalf("stored data is stale or display-derived: %#v", task.TaskDTO)
+		}
+	}
+}
+
+func TestCompletedRecordsSurviveSamePassAndEmptyFrames(t *testing.T) {
+	task := &backgroundTask{dto: TaskDTO{State: "running"}}
+	task.updateDownload(DownloadSnapshot{Pass: 1, Completed: []TaskProgress{{ID: "1", Name: "one", Done: true}}})
+	task.updateDownload(DownloadSnapshot{Pass: 1, Completed: []TaskProgress{{ID: "2", Name: "two", Done: true}}})
+	task.updateDownload(DownloadSnapshot{Pass: 1})
+	got := task.detail().Completed
+	if len(got) != 2 || got[0].ID != "2" || got[1].ID != "1" {
+		t.Fatalf("same-pass retry lost completed records: %#v", got)
 	}
 }

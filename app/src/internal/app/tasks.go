@@ -297,11 +297,9 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	t.dto.Concurrent = s.Concurrent
 	t.dto.Threads = s.Threads
 	t.active = append([]TaskProgress(nil), s.Active...)
-	if t.lastPass == 0 || s.Pass == t.lastPass {
-		t.completed = append([]TaskProgress(nil), s.Completed...)
-	} else {
-		t.completed = mergeTaskProgress(s.Completed, t.completed)
-	}
+	// Each attempt has its own capture, including retries in the same pass.
+	// Keep records from previous attempts when a later frame has fewer entries.
+	t.completed = mergeTaskProgress(s.Completed, t.completed)
 	if s.Pass > 0 {
 		t.lastPass = s.Pass
 	}
@@ -526,12 +524,15 @@ func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error)
 
 func (f *Facade) Tasks() []TaskDTO {
 	f.taskMu.Lock()
-	defer f.taskMu.Unlock()
 	out := make([]TaskDTO, 0, len(f.tasks))
 	for _, t := range f.tasks {
-		d := t.snapshot()
-		f.displayTask(&d, false)
-		out = append(out, d)
+		out = append(out, t.snapshot())
+	}
+	f.taskMu.Unlock()
+	// Legacy records may need to read result.json. Never hold the task list
+	// lock while doing filesystem I/O, which can otherwise stall task controls.
+	for i := range out {
+		f.displayTask(&out[i], false)
 	}
 	return out
 }
@@ -554,7 +555,7 @@ func (f *Facade) taskDetails() []TaskDetailDTO {
 // every media file that already existed at that moment. All values are derived
 // on a copy: writes back into the task record caused the composition to
 // oscillate between derived and raw values on every poll.
-func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
+func (f *Facade) displayTask(d *TaskDTO, allowSource bool) {
 	if d == nil || (d.Kind != "sync" && d.Kind != "sync-all") {
 		return
 	}
@@ -562,15 +563,10 @@ func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
 	srcLoaded := false
 	source := func() [4]int {
 		if !srcLoaded {
-			// Finished legacy records are rendered in the task list on every
-			// poll; only resumable/active rows may read the full source JSON.
-			switch d.State {
-			case "running", "paused", "stopped", "partial":
+			// List polling must remain independent of source.json size; detailed
+			// legacy composition can be recovered on demand in TaskDetail.
+			if allowSource {
 				src = f.sourceMediaComposition(d.Slug)
-			default:
-				if allowFinishedSource {
-					src = f.sourceMediaComposition(d.Slug)
-				}
 			}
 			srcLoaded = true
 		}
@@ -580,7 +576,13 @@ func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
 	// Records written before the preview plan existed only have engine counters.
 	// Treat the last snapshot as the starting point so they also show what is
 	// still missing, starting from zero.
-	if d.PlanTotal <= 0 {
+	// Before plan snapshots existed, some records retained type counters but
+	// no plan total. A known, empty snapshot is different: it means zero work.
+	legacy := !d.PlanKnown && d.PlanTotal <= 0
+	if d.PlanKnown && d.PlanTotal <= 0 && planCounts[0]+planCounts[1]+planCounts[2]+planCounts[3] > 0 {
+		legacy = true
+	}
+	if legacy {
 		d.PlanKnown = true
 		planTotal := d.Total - d.Done
 		if planTotal < 0 {
@@ -630,15 +632,10 @@ func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
 		return
 	}
 
-	planTotal := d.PlanTotal
-	if planCounts[0]+planCounts[1] == 0 {
-		if s := source(); s[0]+s[1] > 0 {
-			planCounts = s
-		}
-	}
+	planTotal := max(0, d.PlanTotal)
 	planCounts = normalizePlanComposition(allocateComposition(planCounts, planTotal), planTotal)
 
-	rawDone, rawBytes, rawTotalBytes := d.Done, d.Bytes, d.TotalBytes
+	rawDone, rawBytes := d.Done, d.Bytes
 	baseTotal, baseBytes := d.BaselineTotal, d.BaselineBytes
 	done := rawDone - baseTotal
 	if done < 0 {
@@ -652,14 +649,11 @@ func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
 		bytes = 0
 	}
 	planBytes := d.PlanBytes
-	if planBytes <= 0 {
-		planBytes = rawTotalBytes - baseBytes
-		if planBytes <= 0 && baseTotal == 0 {
-			planBytes = rawTotalBytes
-		}
-	}
 	if planBytes < 0 {
 		planBytes = 0
+	}
+	if planTotal == 0 {
+		bytes = 0
 	}
 	if planBytes > 0 && bytes > planBytes {
 		bytes = planBytes
@@ -668,9 +662,7 @@ func (f *Facade) displayTask(d *TaskDTO, allowFinishedSource bool) {
 	d.Done = done
 	d.Bytes = bytes
 	d.Total = planTotal
-	if planBytes > 0 {
-		d.TotalBytes = planBytes
-	}
+	d.TotalBytes = planBytes
 	// Progress follows downloaded bytes whenever the plan size is known; the
 	// media count is not a proxy for progress (a few large videos dominate).
 	d.Percent = 0
@@ -817,18 +809,9 @@ func scaleComposition(values [4]int, target int) [4]int {
 	return out
 }
 
-// effectivePlanComposition repairs legacy/malformed plans that classified all
-// media as files. The source message types are the authoritative type split.
+// A current preview is authoritative, including audio-only and file-only
+// plans. Legacy records are handled separately by displayTask.
 func (f *Facade) effectivePlanComposition(slug string, total, images, videos, audio, files int) [4]int {
-	if images+videos == 0 {
-		src := f.sourceMediaComposition(slug)
-		if src[0]+src[1] > 0 {
-			if total <= 0 {
-				total = src[0] + src[1] + src[2] + src[3]
-			}
-			return scaleComposition(src, total)
-		}
-	}
 	return [4]int{images, videos, audio, files}
 }
 
@@ -1014,6 +997,10 @@ func (f *Facade) taskStorePath() string {
 }
 
 func (f *Facade) saveTasks() {
+	// Serialize snapshot creation as well as the write: an older snapshot must
+	// never rename over a newer one when saves finish out of order.
+	f.taskSaveMu.Lock()
+	defer f.taskSaveMu.Unlock()
 	path := f.taskStorePath()
 	if path == "" {
 		return

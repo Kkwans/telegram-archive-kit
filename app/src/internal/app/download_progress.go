@@ -39,25 +39,31 @@ func loadDownloadPlan(path string) (downloadPlan, error) {
 }
 
 func parseDownloadPlan(b []byte) (downloadPlan, error) {
-	var root map[string]any
+	var root RawExport
 	dec := json.NewDecoder(strings.NewReader(string(b)))
 	dec.UseNumber()
 	if err := dec.Decode(&root); err != nil {
 		return downloadPlan{}, err
 	}
+	return downloadPlanForMessages(root.Messages, nil), nil
+}
+
+// downloadPlanForMessages can reuse an already-decoded source for previews.
+// A nil include map selects every message; a non-nil map selects only its IDs.
+func downloadPlanForMessages(messages []map[string]any, include map[string]bool) downloadPlan {
 	p := downloadPlan{IDs: map[string]int64{}, Names: map[string]string{}, Kinds: map[string]string{}}
-	arr, _ := root["messages"].([]any)
-	for _, x := range arr {
-		m, ok := x.(map[string]any)
-		if !ok {
-			continue
-		}
+	for _, m := range messages {
 		id := archive.AnyString(m["id"])
-		if id == "" || !archive.MessageExpectsMedia(m, archive.AnyString(m["media_type"])) {
+		if id == "" || (include != nil && !include[id]) || !archive.MessageExpectsMedia(m, archive.AnyString(m["media_type"])) {
 			continue
 		}
 		sz := archive.AnyInt64(m["file_size"])
-		if _, seen := p.IDs[id]; !seen {
+		if previous, seen := p.IDs[id]; seen {
+			if previous > 0 {
+				p.KnownBytes -= previous
+				p.KnownCount--
+			}
+		} else {
 			p.Total++
 			switch archive.AnyString(m["media_type"]) {
 			case "photo":
@@ -90,7 +96,7 @@ func parseDownloadPlan(b []byte) (downloadPlan, error) {
 			p.KnownCount++
 		}
 	}
-	return p, nil
+	return p
 }
 
 var dlMsgRe = regexp.MustCompile(`\):(\d+)\s+->`)
@@ -174,6 +180,9 @@ func (c *progressCapture) updateTask(clean string, keep bool) {
 	id := ""
 	if len(m) == 2 {
 		id = m[1]
+	}
+	if id != "" && c.done[id] {
+		return
 	}
 	if id != "" {
 		if _, ok := c.taskStart[id]; !ok {
@@ -274,19 +283,47 @@ func (c *progressCapture) activeTransferredBytes(plan downloadPlan, baseline, co
 	defer c.mu.Unlock()
 	var total int64
 	for id := range c.active {
-		if baseline[id] || completed[id] {
+		expected, wanted := plan.IDs[id]
+		if !wanted || baseline[id] || completed[id] {
 			continue
 		}
 		transferred := c.transferred[id]
 		if transferred <= 0 {
 			continue
 		}
-		if expected := plan.IDs[id]; expected > 0 && transferred > expected {
+		if expected > 0 && transferred > expected {
 			transferred = expected
 		}
 		total += transferred
 	}
 	return total
+}
+
+// progressSnapshot reads completed and in-flight counters together. A file can
+// finish between two separate reads, otherwise temporarily disappearing from
+// both totals and making the displayed bytes jump backwards.
+func (c *progressCapture) progressSnapshot(plan downloadPlan, baseline map[string]bool, baselineBytes int64) (int, int64, map[string]float64, []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	done, bytes := progressFromBaseline(plan, baseline, baselineBytes, c.done, c.doneBytes)
+	for id := range c.active {
+		expected, wanted := plan.IDs[id]
+		if !wanted || baseline[id] || c.done[id] {
+			continue
+		}
+		transferred := c.transferred[id]
+		if expected > 0 && transferred > expected {
+			transferred = expected
+		}
+		if transferred > 0 {
+			bytes += transferred
+		}
+	}
+	speeds := make(map[string]float64, len(c.speeds))
+	for id, speed := range c.speeds {
+		speeds[id] = speed
+	}
+	return done, bytes, speeds, append([]string(nil), c.recent...)
 }
 
 func (c *progressCapture) activeSnapshot() map[string]bool {
@@ -385,8 +422,12 @@ func (c *progressCapture) taskProgress(plan downloadPlan, now time.Time) (active
 		if !seen {
 			pct = -1
 		}
+		kind := plan.Kinds[id]
+		if kind == "" {
+			kind = archive.MediaKind(name)
+		}
 		t := TaskProgress{
-			ID: id, Name: name, Kind: archive.MediaKind(name),
+			ID: id, Name: name, Kind: kind,
 			Percent: pct, Transferred: c.transferred[id], Expected: plan.IDs[id],
 			Speed: c.speeds[id], ETAMs: c.etas[id].Milliseconds(),
 		}
@@ -405,9 +446,13 @@ func (c *progressCapture) taskProgress(plan downloadPlan, now time.Time) (active
 		if name == "" {
 			name = "媒体文件"
 		}
+		kind := plan.Kinds[v.ID]
+		if kind == "" {
+			kind = archive.MediaKind(name)
+		}
 		completed = append(completed, TaskProgress{
-			ID: v.ID, Name: name, Kind: archive.MediaKind(name), Done: true, Percent: 100,
-			Expected: plan.IDs[v.ID], ElapsedMs: c.completedElapsed[v.ID].Milliseconds(),
+			ID: v.ID, Name: name, Kind: kind, Done: true, Percent: 100,
+			Expected: plan.IDs[v.ID], Transferred: c.doneBytes[v.ID], ElapsedMs: c.completedElapsed[v.ID].Milliseconds(),
 		})
 	}
 	return
@@ -487,14 +532,15 @@ func progressFromBaseline(plan downloadPlan, baseline map[string]bool, baselineB
 	done = len(baseline)
 	bytes = baselineBytes
 	for id := range parsedDone {
-		if baseline[id] {
+		expected, wanted := plan.IDs[id]
+		if !wanted || baseline[id] {
 			continue
 		}
 		done++
-		if sz := parsedDoneBytes[id]; sz > 0 {
-			bytes += sz
-		} else if expected := plan.IDs[id]; expected > 0 {
+		if expected > 0 {
 			bytes += expected
+		} else if sz := parsedDoneBytes[id]; sz > 0 {
+			bytes += sz
 		}
 	}
 	if done > plan.Total {

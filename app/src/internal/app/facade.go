@@ -51,6 +51,7 @@ type Facade struct {
 	libLock     *sessionLock
 
 	taskMu          sync.Mutex
+	taskSaveMu      sync.Mutex
 	taskSeq         int64
 	tasks           []*backgroundTask
 	lastTaskPersist time.Time

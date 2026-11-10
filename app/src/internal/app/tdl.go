@@ -51,20 +51,59 @@ const (
 var errUserAbort = errors.New("用户已中止下载；已完成文件已保留")
 
 var (
-	tdlPidMu sync.Mutex
-	tdlPids  = map[int]struct{}{}
+	tdlStartMu sync.Mutex
+	tdlPidMu   sync.Mutex
+	tdlPids    = map[int]*trackedTdl{}
 )
+
+type trackedTdl struct {
+	pid      int
+	mu       sync.Mutex
+	exited   bool
+	stopDone chan struct{}
+	stopErr  error
+}
+
+// Cancellation, the watchdog and application shutdown all share one stop
+// operation per child. Subsequent callers wait for it within their own bound.
+func (p *trackedTdl) stop(ctx context.Context) error {
+	p.mu.Lock()
+	if p.exited {
+		p.mu.Unlock()
+		return nil
+	}
+	if p.stopDone != nil {
+		done := p.stopDone
+		p.mu.Unlock()
+		select {
+		case <-done:
+			p.mu.Lock()
+			err := p.stopErr
+			p.mu.Unlock()
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	p.stopDone = make(chan struct{})
+	done := p.stopDone
+	p.mu.Unlock()
+	err := killProcessTreeContext(ctx, p.pid)
+	p.mu.Lock()
+	p.stopErr = err
+	close(done)
+	p.mu.Unlock()
+	return err
+}
 
 // trackTdlPid remembers child processes launched by TAK so shutdown can remove
 // them without touching a tdl the user started elsewhere.
-func trackTdlPid(pid int) func() {
-	if pid <= 0 {
-		return func() {}
-	}
+func trackTdlPid(pid int) (*trackedTdl, func()) {
+	process := &trackedTdl{pid: pid}
 	tdlPidMu.Lock()
-	tdlPids[pid] = struct{}{}
+	tdlPids[pid] = process
 	tdlPidMu.Unlock()
-	return func() {
+	return process, func() {
 		tdlPidMu.Lock()
 		delete(tdlPids, pid)
 		tdlPidMu.Unlock()
@@ -72,17 +111,23 @@ func trackTdlPid(pid int) func() {
 }
 
 func killTrackedTdl() {
+	// Synchronize with the Start+track window so shutdown cannot miss a child.
+	tdlStartMu.Lock()
 	tdlPidMu.Lock()
-	pids := make([]int, 0, len(tdlPids))
-	for pid := range tdlPids {
-		pids = append(pids, pid)
+	processes := make([]*trackedTdl, 0, len(tdlPids))
+	for _, process := range tdlPids {
+		processes = append(processes, process)
 	}
-	tdlPids = map[int]struct{}{}
 	tdlPidMu.Unlock()
-	for _, pid := range pids {
-		_ = killProcessTree(pid)
+	tdlStartMu.Unlock()
+	for _, process := range processes {
+		ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+		_ = process.stop(ctx)
+		cancel()
 	}
 }
+
+var errTdlStillStopping = errors.New("上一个下载进程仍在退出，请稍后重试")
 
 var errDeferredExhausted = errors.New("疑难文件重试次数已耗尽")
 
@@ -878,35 +923,50 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 		defer logFile.Close()
 	}
 	capture := newProgressCapture(logFile)
+	// The child can finish a file immediately. Snapshot both the completed
+	// baseline and pre-existing output paths before allowing it to write.
+	baselineDone, baselineBytes := a.downloadExistingSnapshot(slug, basePlan)
+	existingPaths := a.existingDownloadPaths(slug)
+	if ctx.Err() != nil {
+		return nil, errUserAbort
+	}
 	cmd := hideWindow(exec.Command(exe, args...))
 	cmd.Stdout = capture
 	cmd.Stderr = capture
 	cmd.Stdin = nil
+	tdlStartMu.Lock()
+	tdlPidMu.Lock()
+	previousRunning := len(tdlPids) > 0
+	tdlPidMu.Unlock()
+	if previousRunning {
+		tdlStartMu.Unlock()
+		return nil, errTdlStillStopping
+	}
+	if ctx.Err() != nil {
+		tdlStartMu.Unlock()
+		return nil, errUserAbort
+	}
 	if err := cmd.Start(); err != nil {
+		tdlStartMu.Unlock()
 		f := &TdlFailure{Kind: tdlFailureUnknown, Summary: "无法启动 tdl", Detail: err.Error(), LogPath: logPath, ExitCode: -1}
 		return f, f
 	}
+	process, untrack := trackTdlPid(cmd.Process.Pid)
+	tdlStartMu.Unlock()
 	result := make(chan error, 1)
-	go func() { result <- cmd.Wait() }()
-	untrack := trackTdlPid(cmd.Process.Pid)
-	defer untrack()
-
-	// tdl must die together with the task. Otherwise a paused/stopped download
-	// keeps running, holds the session file lock and can start another pass.
-	killChild := func() {
-		if cmd.Process != nil {
-			_ = killProcessTree(cmd.Process.Pid)
-		}
-	}
-	watchStop := make(chan struct{})
 	go func() {
-		select {
-		case <-ctx.Done():
-			killChild()
-		case <-watchStop:
-		}
+		err := cmd.Wait()
+		process.mu.Lock()
+		process.exited = true
+		process.mu.Unlock()
+		untrack()
+		result <- err
 	}()
-	defer close(watchStop)
+	// This loop is the sole owner of attempt cancellation. Keep tracking the
+	// process until Wait actually returns, even if bounded shutdown times out.
+	stopAttempt := func() (error, bool) {
+		return stopDownloadAttempt(result, process, 1200*time.Millisecond)
+	}
 
 	lastTick := time.Now()
 	lastBytes := int64(0)
@@ -914,10 +974,7 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	ticker := time.NewTicker(650 * time.Millisecond)
 	defer ticker.Stop()
 
-	baselineDone, baselineBytes := a.downloadExistingSnapshot(slug, basePlan)
-	pd, speeds, _ := capture.snapshot()
-	done, bytesNow := progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
-	bytesNow += capture.activeTransferredBytes(basePlan, baselineDone, pd)
+	done, bytesNow, speeds, _ := capture.progressSnapshot(basePlan, baselineDone, baselineBytes)
 	activeSpeed := sumRates(speeds)
 	active, finished := capture.dashboardTasks(basePlan)
 	activeProg, doneProg := capture.taskProgress(basePlan, time.Now())
@@ -925,43 +982,49 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
 	ui.Render(snap)
 	lastBytes = bytesNow
+	renderCompleted := func() {
+		done, bytesNow, speeds, recent := capture.progressSnapshot(basePlan, baselineDone, baselineBytes)
+		activeSpeed := sumRates(speeds)
+		if activeSpeed <= 0 {
+			activeSpeed = smoothedSpeed
+		}
+		active, finished := capture.dashboardTasks(basePlan)
+		activeProg, doneProg := capture.taskProgress(basePlan, time.Now())
+		snap := newDownloadSnapshotFull(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads, active, finished, activeProg, doneProg)
+		snap.Recent = recent
+		snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
+		ui.Render(snap)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			killChild()
-			<-result
-			a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
+			runErr, exited := stopAttempt()
+			if exited && runErr == nil {
+				renderCompleted()
+				return nil, nil
+			}
+			if exited {
+				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan, existingPaths)
+			}
 			return nil, errUserAbort
 		case runErr := <-result:
-			if ctx.Err() != nil {
-				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
+			if ctx.Err() != nil && runErr != nil {
+				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan, existingPaths)
 				return nil, errUserAbort
 			}
-			pd, speeds, recent := capture.snapshot()
-			done, bytesNow = progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
-			bytesNow += capture.activeTransferredBytes(basePlan, baselineDone, pd)
-			activeSpeed = sumRates(speeds)
-			if activeSpeed <= 0 {
-				activeSpeed = smoothedSpeed
-			}
 			if runErr == nil {
-				snap := newDownloadSnapshot(chatName, pass, basePlan, done, bytesNow, activeSpeed, time.Since(startedAll), recent, "已完成", "正在重新核对本地文件…", 0, effectiveConcurrent, effectiveThreads)
-				snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
-				ui.Render(snap)
-				time.Sleep(260 * time.Millisecond)
+				renderCompleted()
 				return nil, nil
 			}
 			// A killed/failed worker can leave a partially-written final filename.
 			// Remove only files belonging to tasks that were active but never emitted
 			// `done!`; known-size completed files are kept.
-			a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
+			a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan, existingPaths)
 			failure := classifyTdlFailure(capture.rawSnapshot(), runErr, logPath)
 			return failure, failure
 		case now := <-ticker.C:
-			pd, speeds, _ = capture.snapshot()
-			done, bytesNow = progressFromBaseline(basePlan, baselineDone, baselineBytes, pd, capture.doneSizeSnapshot())
-			bytesNow += capture.activeTransferredBytes(basePlan, baselineDone, pd)
+			done, bytesNow, speeds, _ = capture.progressSnapshot(basePlan, baselineDone, baselineBytes)
 			dt := now.Sub(lastTick).Seconds()
 			measured := float64(0)
 			if dt > 0 && bytesNow >= lastBytes {
@@ -990,12 +1053,14 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 			stallAfter := time.Duration(max(30, a.Settings.StallTimeoutSeconds)) * time.Second
 			if capture.movementAge() >= stallAfter && time.Since(startedAll) >= stallAfter {
 				activeIDs := capture.activeIDs()
-				_ = killProcessTree(cmd.Process.Pid)
-				select {
-				case <-result:
-				case <-time.After(3 * time.Second):
+				runErr, exited := stopAttempt()
+				if exited && runErr == nil {
+					renderCompleted()
+					return nil, nil
 				}
-				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
+				if exited {
+					a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan, existingPaths)
+				}
 				f := &TdlFailure{
 					Kind: tdlFailureNetwork, Stalled: true, ActiveIDs: activeIDs,
 					Summary: fmt.Sprintf("tdl 连续 %d 秒没有进展，暂缓当前媒体并继续其他文件", int(stallAfter.Seconds())),
@@ -1009,20 +1074,24 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 			snap.SpeedAvg = averageRunSpeed(bytesNow, baselineBytes, time.Since(startedAll))
 			ui.Render(snap)
 			lastBytes, lastTick = bytesNow, now
-		default:
-			select {
-			case <-ctx.Done():
-				_ = killProcessTree(cmd.Process.Pid)
-				// Do not let a misbehaving child make cancellation feel like the old Ctrl+C hang.
-				select {
-				case <-result:
-				case <-time.After(1200 * time.Millisecond):
-				}
-				a.cleanupInterruptedMedia(slug, capture.activeSnapshot(), basePlan)
-				return nil, errUserAbort
-			case <-time.After(70 * time.Millisecond):
-			}
 		}
+	}
+}
+
+func stopDownloadAttempt(result <-chan error, process *trackedTdl, timeout time.Duration) (error, bool) {
+	select {
+	case err := <-result:
+		return err, true
+	default:
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	_ = process.stop(ctx)
+	select {
+	case err := <-result:
+		return err, true
+	case <-ctx.Done():
+		return nil, false
 	}
 }
 
@@ -1047,37 +1116,52 @@ func sumRates(m map[string]float64) float64 {
 	return v
 }
 
-func (a *App) cleanupInterruptedMedia(slug string, active map[string]bool, plan downloadPlan) {
+func (a *App) existingDownloadPaths(slug string) map[string]bool {
+	paths := map[string]bool{}
+	_ = filepath.WalkDir(a.mediaDir(slug), func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			paths[path] = true
+		}
+		return nil
+	})
+	return paths
+}
+
+func (a *App) cleanupInterruptedMedia(slug string, active map[string]bool, plan downloadPlan, existingPaths map[string]bool) {
 	if len(active) == 0 {
 		return
 	}
-	for _, root := range a.storageDirs(slug) {
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			base := d.Name()
-			id := archive.MessageIDFromFilename(base)
-			if !active[id] {
-				return nil
-			}
-			info, er := d.Info()
-			if er != nil {
-				return nil
-			}
-			expected := plan.IDs[id]
-			if expected > 0 && info.Size() == expected {
-				return nil
-			}
-			_ = os.Remove(path)
+	// tdl writes only into media/. Never remove pre-existing paths, unknown-size
+	// files, or files in files/ that may belong to an earlier archive operation.
+	_ = filepath.WalkDir(a.mediaDir(slug), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
-		})
-	}
+		}
+		base := d.Name()
+		id := archive.MessageIDFromFilename(base)
+		expected, wanted := plan.IDs[id]
+		if !wanted || !active[id] || expected <= 0 || plan.Kinds[id] == "image" || existingPaths[path] {
+			return nil
+		}
+		info, er := d.Info()
+		if er != nil {
+			return nil
+		}
+		if info.Size() >= expected {
+			return nil
+		}
+		_ = os.Remove(path)
+		return nil
+	})
 }
 
 func killProcessTree(pid int) error {
+	return killProcessTreeContext(context.Background(), pid)
+}
+
+func killProcessTreeContext(ctx context.Context, pid int) error {
 	if runtime.GOOS == "windows" {
-		return hideWindow(exec.Command("taskkill", "/PID", fmt.Sprint(pid), "/T", "/F")).Run()
+		return hideWindow(exec.CommandContext(ctx, "taskkill", "/PID", fmt.Sprint(pid), "/T", "/F")).Run()
 	}
 	p, err := os.FindProcess(pid)
 	if err != nil {

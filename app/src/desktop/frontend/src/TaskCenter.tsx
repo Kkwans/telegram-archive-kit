@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Activity,
@@ -204,6 +204,19 @@ const MEDIA_GROUPS = [
   { key: "file", label: "文件", icon: FileText },
 ] as const;
 
+function allocateBytes(total: number, weights: number[]): number[] {
+  const target = Math.max(0, Math.round(total));
+  const sum = weights.reduce((value, weight) => value + Math.max(0, weight), 0);
+  if (!sum || !target) return weights.map(() => 0);
+  const exact = weights.map((weight) => target * Math.max(0, weight) / sum);
+  const result = exact.map(Math.floor);
+  let remaining = target - result.reduce((value, part) => value + part, 0);
+  const order = exact.map((value, index) => ({ index, remainder: value - result[index] }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (let i = 0; i < order.length && remaining > 0; i++, remaining--) result[order[i].index]++;
+  return result;
+}
+
 
 function TaskSpeedChart({ task }: { task: TaskDetail }) {
   const samples = task.series ?? [];
@@ -354,10 +367,12 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
     return size;
   });
   const liveSizeTotal = liveSize.reduce((sum, size) => sum + size, 0);
+  const totalSizes = allocateBytes(task.totalBytes ?? 0, mediaTotals.map((item) => item.count));
+  const doneSizes = allocateBytes(task.bytes ?? 0, liveSizeTotal > 0 ? liveSize : (recordedCount > 0 ? mediaTotals.map((item) => item.done) : plannedCounts));
   const sizedTotals = mediaTotals.map((item, index) => ({
     ...item,
-    totalSize: totalCount > 0 ? Math.round((task.totalBytes ?? 0) * item.count / totalCount) : 0,
-    doneSize: liveSizeTotal > 0 ? Math.round((task.bytes ?? 0) * liveSize[index] / liveSizeTotal) : 0,
+    totalSize: totalSizes[index],
+    doneSize: doneSizes[index],
   }));
   const recent = completed.slice(0, 5);
   const pageSize = 10;
@@ -944,7 +959,11 @@ export function TasksPage({
   const [now, setNow] = useState(Date.now());
   const [active, setActive] = useState<TaskDetail | null>(null);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
+  const [selectionVersion, setSelectionVersion] = useState(0);
+  const selection = useRef(0);
   const [clearConfirm, setClearConfirm] = useState(false);
+
+  useEffect(() => () => { selection.current++; }, []);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -967,15 +986,24 @@ export function TasksPage({
   const done = tasks.filter((t) => t.state === "done").length;
 
   const loadTask = async (taskID: string) => {
+    const version = ++selection.current;
     const known = tasks.find((task) => task.id === taskID);
-    const download = known ? kindMeta(known.kind).group === "download" : true;
+    const show = (detail: TaskDetail) => {
+      setSelectionVersion(version);
+      if (kindMeta(detail.kind).group === "download") {
+        setModalTask(null);
+        setActive(detail);
+      } else {
+        setActive(null);
+        setModalTask(detail);
+      }
+    };
     try {
       const detail = await call<TaskDetail>("taskDetail", { id: taskID });
-      if (kindMeta(detail.kind).group === "download") setActive(detail);
-      else setModalTask(detail);
+      if (version === selection.current) show(detail);
     } catch (e) {
-      if (known && download) setActive({ ...known, series: [] });
-      else if (known) setModalTask({ ...known, series: [] });
+      if (version !== selection.current) return;
+      if (known) show({ ...known, series: [] });
       toast((e as Error).message, true);
     }
   };
@@ -1020,37 +1048,41 @@ export function TasksPage({
   useEffect(() => {
     if (!active || active.state !== "running") return;
     let cancelled = false;
-    const id = window.setInterval(() => {
-      call<TaskDetail>("taskDetail", { id: active.id })
-        .then((detail) => {
-          if (!cancelled) setActive((current) => current && current.id === detail.id ? detail : current);
-        })
-        .catch(() => undefined);
-    }, 1000);
+    let timer: number;
+    const poll = async () => {
+      try {
+        const detail = await call<TaskDetail>("taskDetail", { id: active.id });
+        if (!cancelled && selection.current === selectionVersion) setActive((current) => current && current.id === detail.id ? detail : current);
+      } catch { /* Keep the current snapshot until the next poll. */ }
+      if (!cancelled && selection.current === selectionVersion) timer = window.setTimeout(poll, 1000);
+    };
+    timer = window.setTimeout(poll, 1000);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearTimeout(timer);
     };
-  }, [active?.id, active?.state]);
+  }, [active?.id, active?.state, selectionVersion]);
 
   useEffect(() => {
     if (!modalTask || modalTask.state !== "running") return;
     let cancelled = false;
-    const id = window.setInterval(() => {
-      call<TaskDetail>("taskDetail", { id: modalTask.id })
-        .then((detail) => {
-          if (!cancelled) setModalTask((current) => current && current.id === detail.id ? detail : current);
-        })
-        .catch(() => undefined);
-    }, 800);
+    let timer: number;
+    const poll = async () => {
+      try {
+        const detail = await call<TaskDetail>("taskDetail", { id: modalTask.id });
+        if (!cancelled && selection.current === selectionVersion) setModalTask((current) => current && current.id === detail.id ? detail : current);
+      } catch { /* Keep the current snapshot until the next poll. */ }
+      if (!cancelled && selection.current === selectionVersion) timer = window.setTimeout(poll, 800);
+    };
+    timer = window.setTimeout(poll, 800);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearTimeout(timer);
     };
-  }, [modalTask?.id, modalTask?.state]);
+  }, [modalTask?.id, modalTask?.state, selectionVersion]);
 
   if (active) {
-    return <TaskDetailView task={active} onBack={() => setActive(null)} onOpenTask={(taskID) => void loadTask(taskID)} toast={toast} />;
+    return <TaskDetailView key={active.id} task={active} onBack={() => { selection.current++; setActive(null); }} onOpenTask={(taskID) => void loadTask(taskID)} toast={toast} />;
   }
 
   const modalMeta = modalTask ? kindMeta(modalTask.kind) : null;
@@ -1196,7 +1228,7 @@ export function TasksPage({
       </section>
 
       {modalTask && createPortal(
-        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setModalTask(null); }}>
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) { selection.current++; setModalTask(null); } }}>
           <div className="modal task-modal task-info-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
             <div className="task-modal-head task-info-head">
               <div className="task-info-heading">
@@ -1218,7 +1250,7 @@ export function TasksPage({
                   {modalChat && modalChat !== modalHeading && <b>{modalChat}</b>}
                 </div>
               </div>
-              <button className="icon-btn" aria-label="关闭任务详情" onClick={() => setModalTask(null)}>
+              <button className="icon-btn" aria-label="关闭任务详情" onClick={() => { selection.current++; setModalTask(null); }}>
                 <X size={15} />
               </button>
             </div>
@@ -1272,7 +1304,7 @@ export function TasksPage({
             )}
 
             <div className="modal-actions">
-              <button className="btn ghost" onClick={() => setModalTask(null)}><X size={12} /> 关闭</button>
+              <button className="btn ghost" onClick={() => { selection.current++; setModalTask(null); }}><X size={12} /> 关闭</button>
             </div>
           </div>
         </div>,
