@@ -814,6 +814,36 @@ function readBrowsePolicy(key: string): BrowsePolicy {
   }
 }
 
+function useBrowsePolicy(key: string): [BrowsePolicy, (value: BrowsePolicy) => boolean] {
+  const [choice, setChoice] = useState(() => ({ key, value: readBrowsePolicy(key) }));
+  const value = choice.key === key ? choice.value : readBrowsePolicy(key);
+  useEffect(() => {
+    const sync = () => setChoice({ key, value: readBrowsePolicy(key) });
+    window.addEventListener("tak-media-policy-change", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("tak-media-policy-change", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [key]);
+  const choose = (next: BrowsePolicy) => {
+    if (!key) return false;
+    try {
+      localStorage.setItem("tak-media-policy-v1:" + key, next);
+      setChoice({ key, value: next });
+      window.dispatchEvent(new Event("tak-media-policy-change"));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return [value, choose];
+}
+
+function browsePerformanceMode(policy: BrowsePolicy, kind: Bootstrap["libraryKind"]): boolean {
+  return policy === "performance" || (policy === "auto" && kind !== "local");
+}
+
 interface ImageLimiter {
   schedule: (start: (done: () => void) => void) => () => void;
 }
@@ -904,9 +934,8 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const { toast } = ctx;
   const libraryKey = ctx.boot?.libraryKey ?? "";
   const libraryKind = ctx.boot?.libraryKind ?? "unknown";
-  const [policyChoice, setPolicyChoice] = useState(() => ({ key: libraryKey, value: readBrowsePolicy(libraryKey) }));
-  const policy = policyChoice.key === libraryKey ? policyChoice.value : readBrowsePolicy(libraryKey);
-  const performanceMode = policy === "performance" || (policy === "auto" && libraryKind !== "local");
+  const [policy] = useBrowsePolicy(libraryKey);
+  const performanceMode = browsePerformanceMode(policy, libraryKind);
   const limiter = useMemo(() => createImageLimiter(4), []);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolsPosition, setToolsPosition] = useState({ left: 0, top: 0, width: 290 });
@@ -951,7 +980,8 @@ export function MediaGallery({ ctx, chat, onSummary }: {
       if (!rect) return;
       const width = Math.min(290, window.innerWidth - 16);
       const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-      const top = window.innerHeight - rect.bottom < 240 && rect.top > 240 ? rect.top - 234 : rect.bottom + 6;
+      const height = toolsPanel.current?.getBoundingClientRect().height ?? 120;
+      const top = window.innerHeight - rect.bottom < height + 6 && rect.top > height + 6 ? rect.top - height - 6 : rect.bottom + 6;
       setToolsPosition({ left, top: Math.max(8, top), width });
     };
     place();
@@ -1161,13 +1191,6 @@ export function MediaGallery({ ctx, chat, onSummary }: {
     call("revealMedia", { slug: chat.slug, path: item.rel, libraryKey }).catch((e: Error) => toast(e.message, true));
   const openExternal = (item: MediaItem) =>
     call("openMedia", { slug: chat.slug, path: item.rel, libraryKey }).catch((e: Error) => toast(e.message, true));
-  const choosePolicy = (value: string) => {
-    const next = value as BrowsePolicy;
-    setPolicyChoice({ key: libraryKey, value: next });
-    if (libraryKey) {
-      try { localStorage.setItem("tak-media-policy-v1:" + libraryKey, next); } catch { /* storage is optional */ }
-    }
-  };
   const refresh = () => {
     refreshNext.current = true;
     if (displayed && displayed.version === catalog.current.version) remember(displayed);
@@ -1246,16 +1269,6 @@ export function MediaGallery({ ctx, chat, onSummary }: {
             <input id="media-search-input" ref={searchInput} value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="搜索媒体和文件" />
             {searchText && <button className="media-search-clear" aria-label="清除搜索" onClick={() => { setSearchText(""); searchInput.current?.focus(); }}><X size={13} /></button>}
           </div>
-          <span className="media-option-label">浏览策略</span>
-          <div className="media-native-select">
-            <select className="ui-select-btn" aria-label="媒体浏览策略" value={policy} onChange={(event) => choosePolicy(event.target.value)}>
-              <option value="auto">自动</option>
-              <option value="experience">体验优先</option>
-              <option value="performance">性能优先</option>
-            </select>
-            <ChevronDown size={14} aria-hidden="true" />
-          </div>
-          <span className="media-option-hint">{policy === "auto" ? "自动：" : ""}{performanceMode ? "性能优先，仅加载视野内预览" : "体验优先，预读下一页"}</span>
           <div className="media-option-actions">
             {loading ? <button className="btn sm ghost" onClick={cancelLoad}><X size={12} /> 取消读取</button>
               : <button className="btn sm ghost" onClick={refresh}><RefreshCw size={12} /> 重新核对</button>}
@@ -3972,12 +3985,12 @@ interface SettingsForm {
   version: string;
 }
 
-function SettingsField({ label, hint, children, wide }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) {
+function SettingsField({ label, hint, children, wide, liveHint }: { label: string; hint?: string; children: ReactNode; wide?: boolean; liveHint?: boolean }) {
   return (
     <div className={`field ${wide ? "wide" : ""}`}>
       <label>{label}</label>
       <div className="field-control">{children}</div>
-      {hint && <span className="hint">{hint}</span>}
+      {hint && <span className="hint" aria-live={liveHint ? "polite" : undefined}>{hint}</span>}
     </div>
   );
 }
@@ -3999,6 +4012,11 @@ function SettingsToggle({ checked, onChange, title, desc }: { checked: boolean; 
 
 export function SettingsPage({ ctx }: { ctx: PageCtx }) {
   const { toast, applyPrefs, setToastSeconds } = ctx;
+  const libraryKey = ctx.boot?.libraryKey ?? "";
+  const libraryKind = ctx.boot?.libraryKind ?? "unknown";
+  const [browsePolicy, setBrowsePolicy] = useBrowsePolicy(libraryKey);
+  const policyEffective = browsePerformanceMode(browsePolicy, libraryKind) ? "性能优先" : "体验优先";
+  const libraryKindLabel = libraryKind === "local" ? "本地库" : libraryKind === "remote" ? "网络库" : "库位置类型未知";
   const [form, setForm] = useState<SettingsForm | null>(null);
   const [original, setOriginal] = useState<SettingsForm | null>(null);
   const [saving, setSaving] = useState(false);
@@ -4201,6 +4219,19 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
                 { value: "frosted", label: "磨砂模糊" },
               ]}
             />
+          </SettingsField>
+          <SettingsField label="媒体浏览策略" liveHint hint={libraryKey
+            ? `${libraryKindLabel} · 当前生效：${policyEffective}。按档案库保存，修改后立即生效，无需点击保存。`
+            : "正在识别当前档案库…"}>
+            <div className="media-native-select">
+              <select className="ui-select-btn" aria-label="媒体浏览策略" value={browsePolicy} disabled={!libraryKey}
+                onChange={(event) => { if (!setBrowsePolicy(event.target.value as BrowsePolicy)) toast("无法保存媒体浏览策略，请检查本机存储。", true); }}>
+                <option value="auto">自动</option>
+                <option value="experience">体验优先</option>
+                <option value="performance">性能优先</option>
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </div>
           </SettingsField>
           <div className="switch-grid">
             <SettingsToggle
