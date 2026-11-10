@@ -52,6 +52,7 @@ type Facade struct {
 
 	taskMu          sync.Mutex
 	taskSaveMu      sync.Mutex
+	rebuildMu       sync.Mutex
 	taskSeq         int64
 	tasks           []*backgroundTask
 	lastTaskPersist time.Time

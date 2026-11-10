@@ -1246,6 +1246,8 @@ func (f *Facade) StartExportChat(slug, dstRoot string) (string, error) {
 
 func (f *Facade) StartRefreshWeb(slug string) (string, error) {
 	return f.startTask("refresh", "重建网页："+slug, func(t *backgroundTask) error {
+		f.rebuildMu.Lock()
+		defer f.rebuildMu.Unlock()
 		name := slug
 		chatID := ""
 		messages, media := 0, 0
@@ -1261,8 +1263,9 @@ func (f *Facade) StartRefreshWeb(slug string) (string, error) {
 		if img, vid, aud, fl := f.a.workspaceReportStats(slug); img+vid+aud+fl > 0 {
 			t.setMediaStats(img, vid, aud, fl)
 		}
-		t.update(30, "扫描与渲染")
-		if err := f.RefreshWeb(slug); err != nil {
+		if _, err := f.a.buildWorkspaceModeWithProgressCtx(t.context(), slug, true, func(p OperationProgress) {
+			t.update(p.Percent, p.Stage+" · "+p.Detail)
+		}); err != nil {
 			return err
 		}
 		t.update(100, "网页已重建："+name)
@@ -1272,6 +1275,8 @@ func (f *Facade) StartRefreshWeb(slug string) (string, error) {
 
 func (f *Facade) StartRefreshAllWeb() (string, error) {
 	return f.startTask("refresh-all", "重建全部网页", func(t *backgroundTask) error {
+		f.rebuildMu.Lock()
+		defer f.rebuildMu.Unlock()
 		list := f.a.listWorkspaces()
 		t.setInfo("", "", "", f.a.Settings.LibraryRoot, 0, 0)
 		t.fileProgress(0, len(list))
@@ -1298,6 +1303,56 @@ func (f *Facade) StartRefreshAllWeb() (string, error) {
 		t.update(100, fmt.Sprintf("重建 %d 个聊天", ok))
 		if failures > 0 {
 			return fmt.Errorf("%d 个聊天重建失败", failures)
+		}
+		return nil
+	}), nil
+}
+
+func (f *Facade) StartCompleteAllWeb() (string, error) {
+	if err := f.a.guardWritable(); err != nil {
+		return "", err
+	}
+	return f.startTask("complete-all", "补齐全库封面与网页", func(t *backgroundTask) error {
+		f.rebuildMu.Lock()
+		defer f.rebuildMu.Unlock()
+		ctx := t.context()
+		list := f.a.listWorkspaces()
+		if len(list) == 0 {
+			return fmt.Errorf("没有可补齐的聊天")
+		}
+		t.setInfo("", "", "", f.a.Settings.LibraryRoot, 0, 0)
+		t.fileProgress(0, len(list))
+		var failures []string
+		remainingCovers := 0
+		for i, m := range list {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			label := fmt.Sprintf("第 %d/%d 个聊天 · %s", i+1, len(list), m.Chat.Name)
+			arc, err := f.a.buildWorkspaceWithCovers(ctx, m.Slug, false, true, func(p OperationProgress) {
+				t.update(min(99, (i*100+p.Percent)/len(list)), label+" · "+p.Stage+" · "+p.Detail)
+			})
+			if err != nil {
+				failures = append(failures, m.Chat.Name+"："+err.Error())
+			} else {
+				remainingCovers += arc.Stats.MissingImagePreviews + arc.Stats.MissingVideoPreviews
+			}
+			t.fileProgress(i+1, len(list))
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		t.update(99, "刷新档案库首页")
+		if err := f.a.buildLibrary(); err != nil {
+			return err
+		}
+		detail := fmt.Sprintf("完成 %d 个聊天，失败 %d 个", len(list)-len(failures), len(failures))
+		if remainingCovers > 0 {
+			detail += fmt.Sprintf("，仍有 %d 张封面未生成", remainingCovers)
+		}
+		t.update(100, detail)
+		if len(failures) > 0 {
+			return fmt.Errorf("%d 个聊天补齐失败：%s", len(failures), strings.Join(failures, "；"))
 		}
 		return nil
 	}), nil

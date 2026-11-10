@@ -45,6 +45,7 @@ const KIND_META: Record<string, { label: string; group: string; icon: typeof Dow
   export: { label: "导出", group: "export", icon: FolderInput },
   refresh: { label: "重建", group: "build", icon: RefreshCw },
   "refresh-all": { label: "重建全部", group: "build", icon: RefreshCw },
+  "complete-all": { label: "全库补齐", group: "build", icon: RefreshCw },
   merge: { label: "合并档案库", group: "merge", icon: GitMerge },
 };
 
@@ -150,7 +151,7 @@ function taskInfoCards(task: TaskDetail): TaskInfoCard[] {
   } else if (task.kind === "refresh") {
     add("内容", content);
     add("归档目录", task.source || "", { mono: true, wide: true });
-  } else if (task.kind === "refresh-all") {
+  } else if (task.kind === "refresh-all" || task.kind === "complete-all") {
     if (task.filesTotal) add("聊天", `${task.filesDone ?? 0} / ${task.filesTotal} 个`);
     add("档案库", task.target || "", { mono: true, wide: true });
   } else if (task.kind === "merge") {

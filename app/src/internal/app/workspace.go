@@ -781,6 +781,10 @@ func (a *App) buildWorkspaceModeWithProgress(slug string, rebuildLibrary bool, p
 }
 
 func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string, rebuildLibrary bool, progress func(OperationProgress)) (*Archive, error) {
+	return a.buildWorkspaceWithCovers(ctx, slug, rebuildLibrary, a.Settings.GenerateThumbnails, progress)
+}
+
+func (a *App) buildWorkspaceWithCovers(ctx context.Context, slug string, rebuildLibrary, generateThumbnails bool, progress func(OperationProgress)) (*Archive, error) {
 	if err := a.guardWritable(); err != nil {
 		return nil, err
 	}
@@ -789,7 +793,7 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 			return e
 		}
 		if progress != nil {
-			progress(OperationProgress{Stage: fmt.Sprintf("步骤 %d/8 · %s", n, message), Detail: detail, Current: int64(n - 1), Total: 8, Unit: "阶段"})
+			progress(OperationProgress{Stage: fmt.Sprintf("步骤 %d/8 · %s", n, message), Detail: detail, Current: int64(n - 1), Total: 8, Unit: "阶段", Percent: (n - 1) * 100 / 8})
 		}
 		return nil
 	}
@@ -828,20 +832,30 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 	// timeline/gallery responsiveness. Generation is cached, background-priority and
 	// reports progress to interactive callers, so the first build is visible rather
 	// than looking frozen.
-	if a.Settings.GenerateThumbnails {
-		if media.FindFFmpeg() == "" && a.thumbnailsNeedFFmpeg(slug, arc) {
+	if generateThumbnails {
+		plan := a.planThumbnails(ctx, slug, arc)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		decoder := ""
+		if len(plan.tasks) > 0 {
+			decoder = media.FindFFmpeg()
+		}
+		if decoder == "" && plan.needsFFmpeg {
 			if progress != nil {
 				progress(OperationProgress{Stage: "步骤 2/8 · 自动安装视频预览引擎", Detail: "正在下载并校验 FFmpeg，安装完成后继续构建"})
 			}
-			if _, e := media.EnsureFFmpegInstalled(ctx, func(done, total int64, phase string) {
+			var e error
+			decoder, e = media.EnsureFFmpegInstalled(ctx, func(done, total int64, phase string) {
 				if progress != nil {
-					progress(OperationProgress{Stage: phase, Detail: "FFmpeg 安装程序正在准备", Current: done, Total: total, Unit: "字节"})
+					progress(OperationProgress{Stage: phase, Detail: "FFmpeg 安装程序正在准备", Current: done, Total: total, Unit: "字节", Percent: 12})
 				}
-			}); e != nil {
+			})
+			if e != nil {
 				return nil, fmt.Errorf("无法为视频生成预览图：自动安装 FFmpeg 失败：%w", e)
 			}
 		}
-		a.ensureImageThumbnailsProgressCtx(ctx, slug, arc, func(done, total int, name string) {
+		if err := plan.generate(ctx, arc, decoder, func(done, total int, name string) {
 			if progress == nil {
 				return
 			}
@@ -849,8 +863,10 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 			if strings.TrimSpace(name) != "" {
 				detail = truncatePlain(name, 72)
 			}
-			progress(OperationProgress{Stage: "步骤 2/8 · 正在生成图片及视频封面", Detail: fmt.Sprintf("%d/%d · %s", done, total, detail), Current: int64(done), Total: int64(total), Unit: "张"})
-		})
+			progress(OperationProgress{Stage: "步骤 2/8 · 图片及视频封面", Detail: fmt.Sprintf("已处理 %d/%d 张 · 复用 %d 张 · %s", done, total, plan.cached, detail), Current: int64(done), Total: int64(total), Unit: "张", Percent: (100 + done*100/max(total, 1)) / 8})
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if e := stage(3, "整理缩略图完整性", "记录不能解码的文件，以便稍后补齐"); e != nil {
 		return nil, e
@@ -940,7 +956,7 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 		}
 	}
 	if progress != nil {
-		progress(OperationProgress{Stage: "归档构建完成", Detail: fmt.Sprintf("%d 条消息 · %d 个媒体 · 缺失 %d", arc.Stats.Messages, arc.Stats.MediaFiles, arc.Stats.MissingMedia), Current: 8, Total: 8, Unit: "阶段"})
+		progress(OperationProgress{Stage: "归档构建完成", Detail: fmt.Sprintf("%d 条消息 · %d 个媒体 · 缺失 %d", arc.Stats.Messages, arc.Stats.MediaFiles, arc.Stats.MissingMedia), Current: 8, Total: 8, Unit: "阶段", Percent: 100})
 	}
 	return arc, nil
 }

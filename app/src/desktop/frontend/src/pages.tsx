@@ -3463,6 +3463,18 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const completeAll = async () => {
+    setBusy("complete-all");
+    try {
+      const { taskId } = await call<{ taskId: string }>("startCompleteAllWeb");
+      toast("全库补齐任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  };
+
   const openChat = (slug: string) => {
     setSelected(slug);
     go("chats");
@@ -3573,6 +3585,14 @@ export function Library({ ctx }: { ctx: PageCtx }) {
             <span className="action-text">
               <b>重建全部网页</b>
               <em>重新生成所有聊天的浏览页面与搜索索引</em>
+            </span>
+            <ChevronRight size={16} />
+          </button>
+          <button className="action-card" disabled={!chats.length || busy === "complete-all" || ctx.tasks.some((task) => task.kind === "complete-all" && task.state === "running")} onClick={completeAll}>
+            <span className="action-icon"><Images size={18} /></span>
+            <span className="action-text">
+              <b>补齐全库封面与网页</b>
+              <em>复用已有封面，补齐缺失预览并更新各聊天网页</em>
             </span>
             <ChevronRight size={16} />
           </button>

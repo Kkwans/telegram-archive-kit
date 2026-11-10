@@ -16,37 +16,9 @@ import (
 )
 
 func (a *App) ensureImageThumbnails(slug string, arc *Archive) {
-	a.ensureImageThumbnailsProgress(slug, arc, nil)
-}
-
-// thumbnailsNeedFFmpeg reports whether a decoder is actually required. Official
-// ChatExports ship thumbnails for their files, so importing them must not block
-// on downloading FFmpeg just because the build flag is enabled.
-func (a *App) thumbnailsNeedFFmpeg(slug string, arc *Archive) bool {
-	if arc == nil {
-		return false
-	}
-	for _, m := range arc.Messages {
-		for _, x := range m.Media {
-			if x.Kind != "image" && x.Kind != "video" {
-				continue
-			}
-			if x.Thumb != "" {
-				if st, err := os.Stat(media.MediaLocalPath(a.workspaceDir(slug), x.Thumb)); err == nil && !st.IsDir() && st.Size() > 0 {
-					continue
-				}
-			}
-			if x.Kind == "video" {
-				return true
-			}
-			switch strings.ToLower(filepath.Ext(x.Name)) {
-			case ".jpg", ".jpeg", ".png", ".gif":
-			default:
-				return true
-			}
-		}
-	}
-	return false
+	ctx := context.Background()
+	plan := a.planThumbnails(ctx, slug, arc)
+	_ = plan.generate(ctx, arc, media.FindFFmpeg(), nil)
 }
 
 type thumbTask struct {
@@ -55,7 +27,8 @@ type thumbTask struct {
 	dst    string
 	rel    string
 	name   string
-	kind   string
+	video  bool
+	decode bool
 }
 
 type thumbResult struct {
@@ -63,62 +36,107 @@ type thumbResult struct {
 	err  error
 }
 
-func (a *App) ensureImageThumbnailsProgress(slug string, arc *Archive, progress func(done, total int, name string)) {
-	a.ensureImageThumbnailsProgressCtx(context.Background(), slug, arc, progress)
+type thumbnailPlan struct {
+	tasks       []thumbTask
+	cached      int
+	needsFFmpeg bool
 }
-func (a *App) ensureImageThumbnailsProgressCtx(ctx context.Context, slug string, arc *Archive, progress func(done, total int, name string)) {
-	if arc == nil {
-		return
-	}
-	thumbDir := filepath.Join(a.workspaceDir(slug), "thumbs")
-	_ = os.MkdirAll(thumbDir, 0755)
 
-	decoder := media.FindFFmpeg()
-	var tasks []thumbTask
-	done := 0
+// NAS directory listings supply file metadata in batches. Keep a snapshot for
+// this build only, and fall back to Stat when a directory cannot be listed.
+func thumbnailFileLookup() func(string) bool {
+	directories := make(map[string]map[string]bool)
+	return func(path string) bool {
+		dir, name := filepath.Split(path)
+		key := catalogRelKey(filepath.Clean(dir))
+		files, cached := directories[key]
+		if !cached {
+			entries, err := os.ReadDir(dir)
+			if err == nil || os.IsNotExist(err) {
+				files = make(map[string]bool, len(entries))
+				for _, entry := range entries {
+					if entry.IsDir() {
+						continue
+					}
+					if info, err := entry.Info(); err == nil && info.Mode().IsRegular() {
+						files[catalogRelKey(entry.Name())] = info.Size() > 0
+					}
+				}
+			}
+			directories[key] = files
+		}
+		if files != nil {
+			return files[catalogRelKey(name)]
+		}
+		info, err := os.Stat(path)
+		return err == nil && info.Mode().IsRegular() && info.Size() > 0
+	}
+}
+
+func (a *App) planThumbnails(ctx context.Context, slug string, arc *Archive) thumbnailPlan {
+	var plan thumbnailPlan
+	if arc == nil {
+		return plan
+	}
+	workspace := a.workspaceDir(slug)
+	exists := thumbnailFileLookup()
 	for mi := range arc.Messages {
 		for xi := range arc.Messages[mi].Media {
+			if ctx.Err() != nil {
+				return plan
+			}
 			x := &arc.Messages[mi].Media[xi]
 			if x.Kind != "image" && x.Kind != "video" {
 				continue
 			}
-			ext := strings.ToLower(filepath.Ext(x.Name))
-			if x.Kind == "image" && ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".gif" && decoder == "" {
+			if x.Thumb != "" && exists(media.MediaLocalPath(workspace, x.Thumb)) {
+				plan.cached++
 				continue
 			}
-			if x.Kind == "video" && decoder == "" {
-				continue
-			}
-			// Telegram's own ChatExport ships a `*_thumb.jpg` beside each file.
-			// Accept it as the cover instead of decoding the video again.
-			if x.Thumb != "" {
-				if st, err := os.Stat(media.MediaLocalPath(a.workspaceDir(slug), x.Thumb)); err == nil && !st.IsDir() && st.Size() > 0 {
-					done++
-					continue
-				}
-			}
-			src := media.MediaLocalPath(a.workspaceDir(slug), x.Path)
-			if !fileExists(src) {
-				continue
-			}
+			x.Thumb = ""
 			h := sha1.Sum([]byte(x.Path + fmt.Sprint(x.Size)))
 			name := "thumb_" + sanitizeASCII(arc.Messages[mi].ID) + "_" + hex.EncodeToString(h[:])[:10] + ".jpg"
-			dst := filepath.Join(thumbDir, name)
 			rel := filepath.ToSlash(filepath.Join("thumbs", name))
-			if fileExists(dst) {
+			dst := filepath.Join(workspace, filepath.FromSlash(rel))
+			if exists(dst) {
 				x.Thumb = rel
-				done++
+				plan.cached++
 				continue
 			}
-			tasks = append(tasks, thumbTask{mi: mi, xi: xi, src: src, dst: dst, rel: rel, name: x.Name, kind: x.Kind})
+			src := media.MediaLocalPath(workspace, x.Path)
+			if !exists(src) {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(x.Name))
+			video := x.Kind == "video"
+			decode := video || ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".gif"
+			plan.needsFFmpeg = plan.needsFFmpeg || decode
+			plan.tasks = append(plan.tasks, thumbTask{mi: mi, xi: xi, src: src, dst: dst, rel: rel, name: x.Name, video: video, decode: decode})
 		}
 	}
+	return plan
+}
+
+func (p thumbnailPlan) generate(ctx context.Context, arc *Archive, decoder string, progress func(done, total int, name string)) error {
+	tasks := p.tasks
+	if decoder == "" && p.needsFFmpeg {
+		tasks = make([]thumbTask, 0, len(p.tasks))
+		for _, task := range p.tasks {
+			if !task.decode {
+				tasks = append(tasks, task)
+			}
+		}
+	}
+	done := p.cached
 	total := done + len(tasks)
 	if progress != nil {
 		progress(done, total, "")
 	}
 	if len(tasks) == 0 {
-		return
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(tasks[0].dst), 0755); err != nil {
+		return err
 	}
 
 	// Thumbnail generation is intentionally background-priority. It is enabled by
@@ -143,10 +161,10 @@ func (a *App) ensureImageThumbnailsProgressCtx(ctx context.Context, slug string,
 			defer wg.Done()
 			for t := range jobs {
 				var err error
-				if t.kind == "video" {
-					err = media.CreateVideoThumbnail(t.src, t.dst)
+				if t.video {
+					err = media.CreateVideoThumbnail(ctx, decoder, t.src, t.dst)
 				} else {
-					err = media.CreateImageThumbnail(t.src, t.dst, media.ThumbMaxSide)
+					err = media.CreateImageThumbnail(ctx, decoder, t.src, t.dst, media.ThumbMaxSide)
 				}
 				results <- thumbResult{task: t, err: err}
 			}
@@ -175,4 +193,5 @@ func (a *App) ensureImageThumbnailsProgressCtx(ctx context.Context, slug string,
 			progress(done, total, r.task.name)
 		}
 	}
+	return ctx.Err()
 }

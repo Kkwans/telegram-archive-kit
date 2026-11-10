@@ -25,6 +25,9 @@ func MediaLocalPath(workspace, p string) string {
 	if strings.HasPrefix(strings.ToLower(p), "file://") {
 		if u, err := url.Parse(p); err == nil {
 			path := u.Path
+			if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+				return filepath.FromSlash("//" + u.Host + path)
+			}
 			if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
 				path = path[1:]
 			}
@@ -37,7 +40,10 @@ func MediaLocalPath(workspace, p string) string {
 	return filepath.Join(workspace, filepath.FromSlash(p))
 }
 
-func CreateImageThumbnail(src, dst string, maxSide int) error {
+func CreateImageThumbnail(ctx context.Context, decoder, src, dst string, maxSide int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -47,8 +53,8 @@ func CreateImageThumbnail(src, dst string, maxSide int) error {
 	if err != nil {
 		// Windows has no native HEIC/WebP decoder in Go's standard image package.
 		// When FFmpeg is available, decode these formats through it instead.
-		if FindFFmpeg() != "" {
-			return createFFmpegStill(src, dst, false)
+		if decoder != "" {
+			return createFFmpegStill(ctx, decoder, src, dst, false)
 		}
 		return err
 	}
@@ -64,15 +70,20 @@ func CreateImageThumbnail(src, dst string, maxSide int) error {
 	if nw != w || nh != h {
 		out = resizeBilinear(img, nw, nh)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
-	o, err := os.Create(dst)
+	o, err := os.CreateTemp(filepath.Dir(dst), ".tak-preview-*.jpg")
 	if err != nil {
 		return err
 	}
-	defer o.Close()
-	return jpeg.Encode(o, out, &jpeg.Options{Quality: 84})
+	defer os.Remove(o.Name())
+	encodeErr := jpeg.Encode(o, out, &jpeg.Options{Quality: 84})
+	closeErr := o.Close()
+	if encodeErr != nil {
+		return encodeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(o.Name(), dst)
 }
 
 func resizeBilinear(src image.Image, dw, dh int) *image.RGBA {
@@ -140,41 +151,48 @@ func FindFFmpeg() string {
 
 // CreateVideoThumbnail needs a real decoder, not an HTML video seek. ffmpeg is
 // optional; failure preserves the original movie and the Viewer falls back.
-func CreateVideoThumbnail(src, dst string) error { return createFFmpegStill(src, dst, true) }
+func CreateVideoThumbnail(ctx context.Context, decoder, src, dst string) error {
+	return createFFmpegStill(ctx, decoder, src, dst, true)
+}
 
-func createFFmpegStill(src, dst string, isVideo bool) error {
-	exe := FindFFmpeg()
+func createFFmpegStill(ctx context.Context, exe, src, dst string, isVideo bool) error {
 	if exe == "" {
 		return fmt.Errorf("ffmpeg not installed: video poster unavailable")
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(dst), ".tak-preview-*.jpg")
+	if err != nil {
 		return err
 	}
-	tmp := dst + ".tak-preview.jpg"
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	tmp := file.Name()
+	defer os.Remove(tmp)
+	if err := file.Close(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	// Input seeks a little way in, avoiding black first frames when possible.
-	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error"}
+	common := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "2", "-filter_threads", "1"}
+	var seek []string
 	if isVideo {
-		args = append(args, "-ss", "00:00:00.6")
+		seek = []string{"-ss", "00:00:00.6"}
 	}
-	args = append(args, "-i", src, "-vf", "scale=w=720:h=720:force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "4", "-y", tmp)
+	output := []string{"-i", src, "-an", "-sn", "-dn", "-vf", "scale=w=720:h=720:force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "4", "-y", tmp}
+	args := append(append(common, seek...), output...)
 	cmd := hideWindow(exec.CommandContext(ctx, exe, args...))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		if isVideo {
-			// Very short videos and corrupt timestamps may reject a 0.6-second seek.
-			// Retry at the first decodable frame before reporting a missing poster.
-			fallbackArgs := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-i", src, "-vf", "scale=w=720:h=720:force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "4", "-y", tmp}
-			if retryOut, retryErr := hideWindow(exec.CommandContext(ctx, exe, fallbackArgs...)).CombinedOutput(); retryErr == nil && fileExists(tmp) {
-				return os.Rename(tmp, dst)
-			} else {
-				_ = retryOut
-			}
-		}
-		os.Remove(tmp)
+	out, err := cmd.CombinedOutput()
+	hasFrame := func() bool { st, err := os.Stat(tmp); return err == nil && st.Size() > 0 }
+	frameReady := err == nil && hasFrame()
+	if isVideo && ctx.Err() == nil && !frameReady {
+		// FFmpeg may exit successfully with no frame after a seek past the end.
+		// Retry at the first decodable frame before reporting a missing poster.
+		fallbackArgs := append(common, output...)
+		out, err = hideWindow(exec.CommandContext(ctx, exe, fallbackArgs...)).CombinedOutput()
+		frameReady = err == nil && hasFrame()
+	}
+	if err != nil {
 		return fmt.Errorf("ffmpeg thumbnail: %w: %s", err, string(out))
 	}
-	if !fileExists(tmp) {
+	if !frameReady {
 		return fmt.Errorf("ffmpeg produced no thumbnail")
 	}
 	return os.Rename(tmp, dst)

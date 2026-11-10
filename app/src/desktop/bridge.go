@@ -311,6 +311,12 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return map[string]string{"taskId": id}, nil
+	case "startCompleteAllWeb":
+		id, err := b.facade.StartCompleteAllWeb()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
 	case "startSyncAllMissing":
 		id, err := b.facade.StartSyncAllMissing()
 		if err != nil {

@@ -74,8 +74,21 @@ func TestThumbnailGeneration(t *testing.T) {
 	if arc.Messages[0].Media[0].Thumb == "" {
 		t.Fatal("thumbnail path missing")
 	}
-	if !fileExists(filepath.Join(a.workspaceDir(slug), filepath.FromSlash(arc.Messages[0].Media[0].Thumb))) {
+	thumb := &arc.Messages[0].Media[0].Thumb
+	cover := filepath.Join(a.workspaceDir(slug), filepath.FromSlash(*thumb))
+	if !fileExists(cover) {
 		t.Fatal("thumbnail file missing")
+	}
+	*thumb = "" // Building from source does not carry over generated thumbnail references.
+	if plan := a.planThumbnails(context.Background(), slug, arc); plan.cached != 1 || len(plan.tasks) != 0 || *thumb == "" {
+		t.Fatal("existing generated thumbnail should be reused")
+	}
+	if err := os.Truncate(cover, 0); err != nil {
+		t.Fatal(err)
+	}
+	a.ensureImageThumbnails(slug, arc)
+	if info, err := os.Stat(cover); err != nil || info.Size() == 0 || *thumb == "" {
+		t.Fatal("empty thumbnail should be regenerated")
 	}
 }
 
