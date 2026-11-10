@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,14 +32,14 @@ func TestChatMediaExcludesVideoThumbnails(t *testing.T) {
 	}
 	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
 	f.a.Settings.LibraryRoot = root
-	items, err := f.ChatMedia(slug)
+	page, err := f.ChatMedia(context.Background(), MediaQuery{Slug: slug})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Name != "real.mp4" {
-		t.Fatalf("thumbnail leaked into media list: %#v", items)
+	if len(page.Items) != 1 || page.Items[0].Name != "real.mp4" {
+		t.Fatalf("thumbnail leaked into media list: %#v", page.Items)
 	}
-	summary := f.workspaceMediaSummary(slug)
+	summary := page.Summary
 	if summary.Total != 1 || summary.Videos != 1 || summary.Images != 0 {
 		t.Fatalf("thumbnail leaked into media summary: %#v", summary)
 	}
@@ -70,11 +71,11 @@ func TestChatMediaFindsGeneratedThumbByMessageID(t *testing.T) {
 	}
 	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
 	f.a.Settings.LibraryRoot = root
-	items, err := f.ChatMedia(slug)
+	page, err := f.ChatMedia(context.Background(), MediaQuery{Slug: slug})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Thumb != "thumbs/thumb_42_abcdef.jpg" {
-		t.Fatalf("generated thumb not attached: %#v", items)
+	if len(page.Items) != 1 || page.Items[0].Thumb != "thumbs/thumb_42_abcdef.jpg" {
+		t.Fatalf("generated thumb not attached: %#v", page.Items)
 	}
 }

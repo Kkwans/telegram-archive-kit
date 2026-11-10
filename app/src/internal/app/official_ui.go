@@ -62,7 +62,7 @@ func (a *App) ensureProvisionalWorkspace(name string, lastTS int64) (WorkspaceMe
 	}
 	now := time.Now()
 	meta := WorkspaceMeta{Slug: slug, Chat: chat, ImportedAt: now, UpdatedAt: now, SourceVersion: version}
-	if err := writeJSON(a.workspaceMetaPath(slug), meta); err != nil {
+	if err := a.writeWorkspaceMeta(slug, meta); err != nil {
 		return WorkspaceMeta{}, err
 	}
 	a.Settings.LastWorkspaceSlug = slug
@@ -224,7 +224,7 @@ func (a *App) actionImportOfficialExportPath(folder string) {
 		meta.MediaCount = imported.MediaFiles
 		meta.MissingCount = 0
 		meta.UpdatedAt = time.Now()
-		_ = writeJSON(a.workspaceMetaPath(targetSlug), meta)
+		_ = a.writeWorkspaceMeta(targetSlug, meta)
 		_ = a.buildLibrary()
 	}
 

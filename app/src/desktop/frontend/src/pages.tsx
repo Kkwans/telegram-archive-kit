@@ -18,6 +18,7 @@ import {
   HardDrive,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Copy,
   ExternalLink,
   Eye,
@@ -30,6 +31,7 @@ import {
   Save,
   Search,
   Send,
+  SlidersHorizontal,
   Film,
   FileText,
   Images,
@@ -73,6 +75,8 @@ import type {
   HomeStats,
   LoginState,
   MediaItem,
+  MediaPage,
+  MediaSummary,
   OperationState,
   RemoteStatus,
   RemoteTools,
@@ -110,6 +114,7 @@ export interface PageCtx {
   prefs: ViewerPrefs;
   applyPrefs: (p: ViewerPrefs) => void;
   setToastSeconds: (seconds: number) => void;
+  applyMediaSummary?: (libraryKey: string, slug: string, summary: MediaSummary) => void;
 }
 
 const kindLabel = (kind: string): string =>
@@ -151,14 +156,17 @@ export function Home({ ctx }: { ctx: PageCtx }) {
     if (!syncSlug && selected) setSyncSlug(selected);
   }, [selected]);
 
-  const load = () => {
+  useEffect(() => {
+    if (!boot?.libraryKey) { setStats(null); return; }
+    const controller = new AbortController();
+    setStats(null);
     setLoading(true);
-    call<HomeStats>("homeStats")
-      .then(setStats)
-      .catch((e: Error) => toast(e.message, true))
-      .finally(() => setLoading(false));
-  };
-  useEffect(load, []);
+    call<HomeStats>("homeStats", undefined, controller.signal)
+      .then((next) => { if (!controller.signal.aborted) setStats(next); })
+      .catch((e: Error) => { if (!controller.signal.aborted) toast(e.message, true); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [boot?.libraryKey]);
 
   const totalMedia = stats ? stats.images + stats.videos + stats.audio + stats.files : 0;
   const missingTotal = chats.reduce((n, c) => n + c.missing, 0);
@@ -261,8 +269,8 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           <div>{stats ? <><b>{stats.messages.toLocaleString()}</b><em>条</em></> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
-          <span>本地媒体</span>
-          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个</em></> : <span className="skeleton-line w-80" />}</div>
+          <span>{stats?.pendingMedia ? "已核对媒体" : "本地媒体"}</span>
+          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个{stats.pendingMedia ? ` · ${stats.pendingMedia} 个聊天待核对` : ""}</em></> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
           <span>缺失媒体</span>
@@ -274,7 +282,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         <section className="panel">
           <div className="panel-head">
             <h3><ChartPie size={14} /> 媒体构成</h3>
-            <span className="meta">{loading ? "正在统计…" : `共 ${totalMedia.toLocaleString()} 个`}</span>
+            <span className="meta">{loading || !stats ? "正在统计…" : stats.pendingMedia ? `已核对 ${totalMedia.toLocaleString()} 个 · ${stats.pendingMedia} 个聊天待核对` : `共 ${totalMedia.toLocaleString()} 个`}</span>
           </div>
           <div className="media-composition">
             <div className="kind-list">
@@ -286,16 +294,16 @@ export function Home({ ctx }: { ctx: PageCtx }) {
                     <i style={{ background: k.color }} />
                     <span>{k.label}</span>
                     <div className="kind-bar"><b style={{ width: `${pct}%`, background: k.color }} /></div>
-                    <strong>{value.toLocaleString()}</strong>
-                    <em>{pct}%</em>
+                    <strong>{stats ? value.toLocaleString() : "—"}</strong>
+                    <em>{stats && totalMedia > 0 ? `${pct}%` : "—"}</em>
                   </div>
                 );
               })}
             </div>
             <div className="media-facts">
-              <span><b>{chats.filter((c) => c.media > 0).length}</b> 个聊天有媒体</span>
-              <span>平均每个聊天 <b>{chats.length ? Math.round((stats?.media ?? 0) / chats.length).toLocaleString() : 0}</b> 个</span>
-              <span>最大类型 <b>{MEDIA_KINDS.reduce((best, k) => ((stats?.[k.key] ?? 0) > (stats?.[best.key] ?? 0) ? k : best), MEDIA_KINDS[0]).label}</b></span>
+              <span><b>{chats.filter((c) => c.mediaReady && c.media > 0).length}</b> 个已核对聊天有媒体</span>
+              <span>已核对聊天平均 <b>{stats && chats.length > (stats.pendingMedia ?? 0) ? Math.round(stats.media / (chats.length - (stats.pendingMedia ?? 0))).toLocaleString() : "—"}</b> 个</span>
+              <span>最大类型 <b>{stats && totalMedia ? MEDIA_KINDS.reduce((best, k) => (stats[k.key] > stats[best.key] ? k : best), MEDIA_KINDS[0]).label : "—"}</b></span>
             </div>
           </div>
         </section>
@@ -314,7 +322,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               </div>
             </div>
             <div className="storage-facts">
-              <div><span>媒体体积</span><b>{bytes(stats?.mediaBytes ?? 0)}</b></div>
+              <div><span>{stats?.pendingMedia ? "已核对媒体体积" : "媒体体积"}</span><b>{stats ? bytes(stats.mediaBytes) : "—"}</b>{Boolean(stats?.pendingMedia) && <small>{stats?.pendingMedia} 个聊天待核对</small>}</div>
               <div><span>网页</span><b>{stats?.pages ?? 0} 页</b></div>
               <div><span>官方导出</span><b>{stats?.official ?? 0} 个</b></div>
             </div>
@@ -429,8 +437,8 @@ function MediaTypeGrid({ row }: { row: ChatRow }) {
             <span className="media-type-icon"><Icon size={16} /></span>
             <div className="media-type-main">
               <span>{type.label}</span>
-              <b>{value.count.toLocaleString()} <em>个</em></b>
-              <small>{value.size > 0 ? bytes(value.size) : "—"}</small>
+              <b>{row.mediaReady ? value.count.toLocaleString() : "—"} <em>个</em></b>
+              <small>{row.mediaReady ? bytes(value.size) : "待核对"}</small>
             </div>
           </div>
         );
@@ -446,8 +454,11 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [onlineTarget, setOnlineTarget] = useState<OnlineUpdateTarget | null>(null);
   const [onlineLoading, setOnlineLoading] = useState(false);
+  const [mediaSummary, setMediaSummary] = useState<{ key: string; slug: string; summary: MediaSummary } | null>(null);
 
-  const current = chats.find((c) => c.slug === selected) || null;
+  const selectedChat = chats.find((c) => c.slug === selected) || null;
+  const current = selectedChat && !ctx.applyMediaSummary && mediaSummary?.slug === selectedChat.slug && mediaSummary.key === ctx.boot?.libraryKey
+    ? rowWithSummary(selectedChat, mediaSummary.summary) : selectedChat;
   useEffect(() => {
     setStats(null);
     setBusy("");
@@ -589,7 +600,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         </div>
         <div className="stat">
           <span>占用空间</span>
-          <div><b>{(current.totalBytes ?? 0) > 0 ? bytes(current.totalBytes ?? 0) : "—"}</b></div>
+          <div><b>{current.mediaReady ? bytes(current.totalBytes ?? 0) : "待核对"}</b></div>
         </div>
         <div className="stat">
           <span>缺失</span>
@@ -604,7 +615,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
       <section className="panel chat-media-panel">
         <div className="panel-head">
           <h3><HardDrive size={14} /> 媒体构成</h3>
-          <span className="meta">共 {current.media.toLocaleString()} 个 · {(current.totalBytes ?? 0) > 0 ? bytes(current.totalBytes ?? 0) : "—"}</span>
+          <span className="meta">{current.mediaReady ? `共 ${current.media.toLocaleString()} 个 · ${bytes(current.totalBytes ?? 0)}` : "正在核对媒体统计…"}</span>
         </div>
         <MediaTypeGrid row={current} />
       </section>
@@ -683,7 +694,9 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         />
       )}
 
-      <MediaGallery ctx={ctx} chat={current} />
+      <MediaGallery key={`${ctx.boot?.libraryKey ?? ""}:${current.slug}`} ctx={ctx} chat={current} onSummary={(summary) => {
+        if (ctx.boot?.libraryKey) setMediaSummary({ key: ctx.boot.libraryKey, slug: current.slug, summary });
+      }} />
 
       <ConfirmDialog
         open={deleteConfirm}
@@ -707,10 +720,23 @@ const MEDIA_FILTERS = [
   { key: "file", label: "文件" },
 ];
 
-const mediaURL = (slug: string, rel: string) =>
-  `/api/media?slug=${encodeURIComponent(slug)}&f=${encodeURIComponent(rel)}`;
-const thumbURL = (slug: string, rel?: string) =>
-  rel ? mediaURL(slug, rel) : "";
+const mediaURL = (slug: string, rel: string, libraryKey: string, version: string, prefetch = false, preview = false) => {
+  const params = new URLSearchParams({ slug, f: rel, k: libraryKey, v: version });
+  if (prefetch) params.set("prefetch", "1");
+  if (preview) params.set("preview", "1");
+  return `/api/media?${params}`;
+};
+const thumbURL = (slug: string, rel: string | undefined, libraryKey: string, version: string) =>
+  rel ? mediaURL(slug, rel, libraryKey, version, false, true) : "";
+
+function rowWithSummary(row: ChatRow, summary: MediaSummary): ChatRow {
+  return {
+    ...row, mediaReady: true, media: summary.total, totalBytes: summary.bytes,
+    images: summary.images, videos: summary.videos, audio: summary.audio, files: summary.files,
+    imageBytes: summary.imageBytes, videoBytes: summary.videoBytes,
+    audioBytes: summary.audioBytes, fileBytes: summary.fileBytes,
+  };
+}
 
 const coverToneCache = new Map<string, string>();
 
@@ -756,6 +782,7 @@ function coverTone(src: string): Promise<string> {
         const sat = Math.round(Math.max(18, Math.min(42, s * 100)));
         const lig = Math.round(Math.max(13, Math.min(23, l * 100)));
         const tone = `hsl(${hue} ${sat}% ${lig}%)`;
+        if (coverToneCache.size >= 128) coverToneCache.delete(coverToneCache.keys().next().value!);
         coverToneCache.set(src, tone);
         resolve(tone);
       } catch {
@@ -775,14 +802,138 @@ function mediaIcon(kind: string) {
   return <FileText size={20} />;
 }
 
-export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
+type BrowsePolicy = "auto" | "experience" | "performance";
+
+function readBrowsePolicy(key: string): BrowsePolicy {
+  if (!key) return "auto";
+  try {
+    const value = localStorage.getItem("tak-media-policy-v1:" + key);
+    return value === "experience" || value === "performance" ? value : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+interface ImageLimiter {
+  schedule: (start: (done: () => void) => void) => () => void;
+}
+
+function createImageLimiter(limit: number): ImageLimiter {
+  const queue: { start: (done: () => void) => void; cancelled: boolean; finish?: () => void }[] = [];
+  let running = 0;
+  const drain = () => {
+    while (running < limit && queue.length) {
+      const task = queue.shift()!;
+      if (task.cancelled) continue;
+      running++;
+      let finished = false;
+      task.finish = () => {
+        if (finished) return;
+        finished = true;
+        running--;
+        drain();
+      };
+      task.start(task.finish);
+    }
+  };
+  return {
+    schedule(start) {
+      const task: { start: (done: () => void) => void; cancelled: boolean; finish?: () => void } = { start, cancelled: false };
+      queue.push(task);
+      drain();
+      return () => {
+        task.cancelled = true;
+        task.finish?.();
+      };
+    },
+  };
+}
+
+// Performance mode starts only images which intersect the scroll viewport and
+// permits a small number of simultaneous image transfers.
+function GalleryImage({ src, alt, performanceMode, limiter, suspended = false }: {
+  src: string; alt: string; performanceMode: boolean; limiter: ImageLimiter; suspended?: boolean;
+}) {
+  const img = useRef<HTMLImageElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [activeSrc, setActiveSrc] = useState<string>();
+  const loaded = useRef(false);
+  const finish = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    loaded.current = false;
+    setActiveSrc(undefined);
+  }, [src, performanceMode]);
+
+  useEffect(() => {
+    setVisible(false);
+    if (!performanceMode || suspended || !img.current) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => setVisible(entries.some((entry) => entry.isIntersecting)));
+    observer.observe(img.current);
+    return () => observer.disconnect();
+  }, [src, performanceMode, suspended]);
+
+  useEffect(() => {
+    if (!performanceMode || suspended || !visible || loaded.current) return;
+    const cancel = limiter.schedule((done) => {
+      finish.current = done;
+      setActiveSrc(src);
+    });
+    return () => {
+      cancel();
+      finish.current = null;
+      if (!loaded.current) setActiveSrc(undefined);
+    };
+  }, [src, performanceMode, visible, limiter, suspended]);
+
+  const complete = () => {
+    loaded.current = true;
+    finish.current?.();
+    finish.current = null;
+  };
+  return <img ref={img} src={performanceMode ? activeSrc : src} alt={alt} loading="lazy" decoding="async" onLoad={complete} onError={complete} />;
+}
+
+export function MediaGallery({ ctx, chat, onSummary }: {
+  ctx: PageCtx; chat: ChatRow; onSummary?: (summary: MediaSummary) => void;
+}) {
   const { toast } = ctx;
-  const [items, setItems] = useState<MediaItem[] | null>(null);
-  const [error, setError] = useState("");
+  const libraryKey = ctx.boot?.libraryKey ?? "";
+  const libraryKind = ctx.boot?.libraryKind ?? "unknown";
+  const [policyChoice, setPolicyChoice] = useState(() => ({ key: libraryKey, value: readBrowsePolicy(libraryKey) }));
+  const policy = policyChoice.key === libraryKey ? policyChoice.value : readBrowsePolicy(libraryKey);
+  const performanceMode = policy === "performance" || (policy === "auto" && libraryKind !== "local");
+  const limiter = useMemo(() => createImageLimiter(4), []);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [toolsPosition, setToolsPosition] = useState({ left: 0, top: 0, width: 290 });
+  const toolsButton = useRef<HTMLButtonElement>(null);
+  const toolsPanel = useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const [filter, setFilter] = useState("all");
-  const [limit, setLimit] = useState(120);
-  const [viewer, setViewer] = useState<{ items: MediaItem[]; index: number } | null>(null);
-  const [audioItem, setAudioItem] = useState<MediaItem | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [reload, setReload] = useState(0);
+  const [result, setResult] = useState<{ key: string; data: MediaPage } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [cancelledPage, setCancelledPage] = useState<number | null>(null);
+  const [notice, setNotice] = useState("");
+  const [viewer, setViewer] = useState<{ page: MediaPage; rel: string } | null>(null);
+  const viewerRef = useRef(viewer);
+  viewerRef.current = viewer;
+  const viewerRequest = useRef<AbortController | null>(null);
+  const [viewerBusy, setViewerBusy] = useState(false);
+  const [viewerError, setViewerError] = useState("");
+  const [audioItem, setAudioItem] = useState<{ item: MediaItem; version: string } | null>(null);
+  const refreshNext = useRef(false);
+  const requestWasRefresh = useRef(false);
+  const retryRefresh = useRef(false);
+  const pageRequest = useRef<AbortController | null>(null);
   const [size, setSize] = useState<"sm" | "md" | "lg" | "xl">(() => {
     const saved = localStorage.getItem("tak-media-size");
     return saved === "sm" || saved === "lg" || saved === "xl" ? saved : "md";
@@ -791,96 +942,284 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
     const saved = localStorage.getItem("tak-media-sort");
     return saved === "oldest" || saved === "size-desc" || saved === "size-asc" ? saved : "newest";
   });
-  useEffect(() => {
-    localStorage.setItem("tak-media-size", size);
-  }, [size]);
-  useEffect(() => {
-    localStorage.setItem("tak-media-sort", sort);
-  }, [sort]);
-
-  const load = () => {
-    setItems(null);
-    setError("");
-    call<MediaItem[]>("chatMedia", { slug: chat.slug })
-      .then(setItems)
-      .catch((e: Error) => setError(e.message));
-  };
-  useEffect(load, [chat.slug]);
-  useEffect(() => {
-    setLimit(120);
-    setViewer(null);
-    setAudioItem(null);
-  }, [filter, chat.slug]);
-
-  const mediaItems = useMemo(() => (items ?? []).filter((i) => i.kind !== "file"), [items]);
-  const fileItems = useMemo(() => (items ?? []).filter((i) => i.kind === "file"), [items]);
-  const orderItems = (list: MediaItem[]) => {
-    const timeKey = (item: MediaItem) => {
-      const messageID = Number(item.id);
-      return Number.isFinite(messageID) && messageID > 0 ? messageID : item.modTime || 0;
+  useEffect(() => { localStorage.setItem("tak-media-size", size); }, [size]);
+  useEffect(() => { localStorage.setItem("tak-media-sort", sort); }, [sort]);
+  useLayoutEffect(() => {
+    if (!toolsOpen) return;
+    const place = () => {
+      const rect = toolsButton.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(290, window.innerWidth - 16);
+      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
+      const top = window.innerHeight - rect.bottom < 240 && rect.top > 240 ? rect.top - 234 : rect.bottom + 6;
+      setToolsPosition({ left, top: Math.max(8, top), width });
     };
-    const ordered = [...list];
-    if (sort === "size-desc") return ordered.sort((a, b) => b.size - a.size);
-    if (sort === "size-asc") return ordered.sort((a, b) => a.size - b.size);
-    return ordered.sort((a, b) => {
-      const diff = timeKey(a) - timeKey(b);
-      return sort === "newest" ? (diff || a.name.localeCompare(b.name)) * -1 : diff || a.name.localeCompare(b.name);
+    place();
+    searchInput.current?.focus();
+    window.addEventListener("resize", place);
+    const closeOnScroll = () => setToolsOpen(false);
+    window.addEventListener("scroll", closeOnScroll, true);
+    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", closeOnScroll, true); };
+  }, [toolsOpen]);
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (toolsPanel.current?.contains(target) || toolsButton.current?.contains(target) || target.closest(".ui-select-menu.portal")) return;
+      setToolsOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setToolsOpen(false);
+      toolsButton.current?.focus();
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.removeEventListener("mousedown", onMouseDown); document.removeEventListener("keydown", onKeyDown); };
+  }, [toolsOpen]);
+  useEffect(() => {
+    const nextQuery = searchText.trim();
+    if (nextQuery === query) return;
+    const timer = window.setTimeout(() => {
+      setPage(1);
+      setQuery(nextQuery);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchText, query]);
+
+  const catalogKey = JSON.stringify([libraryKey, chat.slug, filter, sort, query]);
+  const catalog = useRef<{ key: string; version: string; pages: Map<number, MediaPage> }>({ key: "", version: "", pages: new Map() });
+  const onSummaryRef = useRef(onSummary);
+  const applySummaryRef = useRef(ctx.applyMediaSummary);
+  onSummaryRef.current = onSummary;
+  applySummaryRef.current = ctx.applyMediaSummary;
+
+  const remember = (target: MediaPage) => {
+    const pages = catalog.current.pages;
+    pages.delete(target.page);
+    pages.set(target.page, target);
+    while (pages.size > 3) pages.delete(pages.keys().next().value!);
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!libraryKey) {
+      setLoading(false);
+      return () => controller.abort();
+    }
+    if (catalog.current.key !== catalogKey) {
+      catalog.current = { key: catalogKey, version: "", pages: new Map() };
+      setNotice("");
+    }
+    const force = refreshNext.current;
+    refreshNext.current = false;
+    const candidate = !force ? catalog.current.pages.get(page) : undefined;
+    const cached = candidate?.version === catalog.current.version ? candidate : undefined;
+    if (cached) {
+      setResult({ key: catalogKey, data: cached });
+      setError("");
+      setLoading(false);
+      return () => controller.abort();
+    }
+    const requestedVersion = force ? "" : catalog.current.version;
+    requestWasRefresh.current = force;
+    pageRequest.current = controller;
+    setCancelledPage(null);
+    setError("");
+    setLoading(true);
+    call<MediaPage>("chatMedia", {
+      slug: chat.slug, kind: filter, sort, query, page, version: requestedVersion, refresh: force, libraryKey,
+    }, controller.signal).then((next) => {
+      if (controller.signal.aborted || catalog.current.key !== catalogKey) return;
+      if (requestedVersion && next.version !== requestedVersion) {
+        catalog.current.version = "";
+        catalog.current.pages.clear();
+        setNotice("媒体列表已更新，已返回第一页。");
+        setPage(1);
+        setReload((n) => n + 1);
+        return;
+      }
+      if (force || (catalog.current.version && catalog.current.version !== next.version)) catalog.current.pages.clear();
+      catalog.current.version = next.version;
+      remember(next);
+      setResult({ key: catalogKey, data: next });
+      setLoading(false);
+      retryRefresh.current = false;
+      if (pageRequest.current === controller) pageRequest.current = null;
+      onSummaryRef.current?.(next.summary);
+      applySummaryRef.current?.(libraryKey, chat.slug, next.summary);
+      if (next.page !== page) setPage(next.page);
+    }).catch((e: Error) => {
+      if (controller.signal.aborted) return;
+      setLoading(false);
+      retryRefresh.current = force;
+      if (pageRequest.current === controller) pageRequest.current = null;
+      setError(e.message);
+    });
+    return () => {
+      controller.abort();
+      if (pageRequest.current === controller) pageRequest.current = null;
+    };
+  }, [libraryKey, chat.slug, catalogKey, filter, sort, query, page, reload]);
+
+  const displayed = result?.key === catalogKey ? result.data : null;
+  const searchPending = searchText.trim() !== query;
+  const sourcePage = viewer?.page ?? (displayed?.page === page ? displayed : null);
+  useEffect(() => {
+    if (performanceMode || loading || searchPending || cancelledPage !== null || !sourcePage || sourcePage.page * sourcePage.pageSize >= sourcePage.total ||
+        catalog.current.key !== catalogKey || catalog.current.version !== sourcePage.version || catalog.current.pages.has(sourcePage.page + 1)) return;
+    const controller = new AbortController();
+    let first = 0, second = 0;
+    first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        void call<MediaPage>("chatMedia", {
+          slug: chat.slug, kind: filter, sort, query, page: sourcePage.page + 1, version: sourcePage.version, libraryKey,
+        }, controller.signal).then((next) => {
+          if (!controller.signal.aborted && catalog.current.key === catalogKey && catalog.current.version === sourcePage.version && next.version === sourcePage.version) remember(next);
+        }).catch(() => undefined);
+      });
+    });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); controller.abort(); };
+  }, [performanceMode, loading, searchPending, cancelledPage, sourcePage, catalogKey, chat.slug, filter, sort, query]);
+
+  useEffect(() => () => viewerRequest.current?.abort(), []);
+  const cancelViewerRequest = () => {
+    viewerRequest.current?.abort();
+    viewerRequest.current = null;
+    setViewerBusy(false);
+  };
+  const setViewerIndex = (index: number) => {
+    cancelViewerRequest();
+    setViewerError("");
+    setViewer((current) => {
+      if (!current) return current;
+      const item = current.page.items.filter((entry) => entry.kind === "image" || entry.kind === "video")[index];
+      return item ? { ...current, rel: item.rel } : current;
     });
   };
-  const orderedMedia = useMemo(() => orderItems(mediaItems), [mediaItems, sort]);
-  const orderedFiles = useMemo(() => orderItems(fileItems), [fileItems, sort]);
-  const images = useMemo(() => orderedMedia.filter((i) => i.kind === "image"), [orderedMedia]);
-  const videos = useMemo(() => orderedMedia.filter((i) => i.kind === "video"), [orderedMedia]);
-  const shown = useMemo(() => {
-    if (filter === "all") return orderedMedia;
-    return orderedMedia.filter((i) => i.kind === filter);
-  }, [orderedMedia, filter]);
-  const showFiles = filter === "all" || filter === "file";
-
-  const viewerPool = useMemo(() => {
-    if (filter === "image") return images;
-    if (filter === "video") return videos;
-    if (filter === "all") return orderedMedia.filter((i) => i.kind === "image" || i.kind === "video");
-    return orderedMedia.filter((i) => i.kind === "image" || i.kind === "video");
-  }, [filter, images, videos, orderedMedia]);
-
-  const openItem = (item: MediaItem) => {
-    if (item.kind === "audio") {
-      setAudioItem(item);
+  const stepViewer = async (direction: -1 | 1, auto = false) => {
+    const current = viewerRef.current;
+    if (!current) return;
+    cancelViewerRequest();
+    setViewerError("");
+    const list = current.page.items.filter((entry) => entry.kind === "image" || entry.kind === "video");
+    const index = list.findIndex((entry) => entry.rel === current.rel);
+    const local = list[index + direction];
+    if (local) {
+      if (!auto || local.kind === "video") setViewer({ ...current, rel: local.rel });
       return;
     }
-    if (item.kind !== "image" && item.kind !== "video") return;
-    const index = viewerPool.findIndex((i) => i.rel === item.rel);
-    setViewer({ items: viewerPool, index: Math.max(0, index) });
+    const controller = new AbortController();
+    viewerRequest.current = controller;
+    setViewerBusy(true);
+    try {
+      let nextPage = current.page.page + direction;
+      const lastPage = Math.max(1, Math.ceil(current.page.total / current.page.pageSize));
+      while (nextPage >= 1 && nextPage <= lastPage) {
+        let next = catalog.current.pages.get(nextPage);
+        if (!next) {
+          next = await call<MediaPage>("chatMedia", {
+            slug: chat.slug, kind: filter, sort, query, page: nextPage, version: current.page.version, libraryKey,
+          }, controller.signal);
+        }
+        if (controller.signal.aborted || catalog.current.key !== catalogKey || viewerRef.current?.rel !== current.rel) return;
+        if (next.version !== current.page.version) {
+          setViewerError("媒体列表已更新，请关闭查看器并刷新后继续。");
+          return;
+        }
+        remember(next);
+        const visual = next.items.filter((entry) => entry.kind === "image" || entry.kind === "video");
+        const target = direction > 0 ? visual[0] : visual[visual.length - 1];
+        if (target) {
+          if (!auto || target.kind === "video") setViewer({ page: next, rel: target.rel });
+          return;
+        }
+        nextPage += direction;
+      }
+      if (!auto) setViewerError(direction > 0 ? "后面没有更多图片或视频。" : "前面没有更多图片或视频。");
+    } catch (e) {
+      if (!controller.signal.aborted) setViewerError("读取相邻媒体失败：" + (e as Error).message);
+    } finally {
+      if (viewerRequest.current === controller) {
+        viewerRequest.current = null;
+        setViewerBusy(false);
+      }
+    }
   };
 
+  const openItem = (item: MediaItem) => {
+    if (!displayed || displayed.page !== page || loading || searchPending) return;
+    if (item.kind === "audio") {
+      setAudioItem({ item, version: displayed.version });
+    } else if (item.kind === "image" || item.kind === "video") {
+      setViewerError("");
+      setViewer({ page: displayed, rel: item.rel });
+    }
+  };
   const reveal = (item: MediaItem) =>
-    call("revealMedia", { slug: chat.slug, path: item.rel }).catch((e: Error) => toast(e.message, true));
+    call("revealMedia", { slug: chat.slug, path: item.rel, libraryKey }).catch((e: Error) => toast(e.message, true));
   const openExternal = (item: MediaItem) =>
-    call("openMedia", { slug: chat.slug, path: item.rel }).catch((e: Error) => toast(e.message, true));
+    call("openMedia", { slug: chat.slug, path: item.rel, libraryKey }).catch((e: Error) => toast(e.message, true));
+  const choosePolicy = (value: string) => {
+    const next = value as BrowsePolicy;
+    setPolicyChoice({ key: libraryKey, value: next });
+    if (libraryKey) {
+      try { localStorage.setItem("tak-media-policy-v1:" + libraryKey, next); } catch { /* storage is optional */ }
+    }
+  };
+  const refresh = () => {
+    refreshNext.current = true;
+    if (displayed && displayed.version === catalog.current.version) remember(displayed);
+    setPage(1);
+    setNotice("");
+    setReload((n) => n + 1);
+  };
+  const retry = () => {
+    const target = cancelledPage ?? page;
+    catalog.current.pages.delete(target);
+    refreshNext.current = retryRefresh.current;
+    setCancelledPage(null);
+    setPage(target);
+    setReload((n) => n + 1);
+  };
+  const cancelLoad = () => {
+    pageRequest.current?.abort();
+    pageRequest.current = null;
+    setLoading(false);
+    retryRefresh.current = requestWasRefresh.current;
+    setCancelledPage(page);
+    if (displayed && displayed.page !== page) {
+      if (displayed.version === catalog.current.version) remember(displayed);
+      setPage(displayed.page);
+    }
+  };
+  const summary = displayed?.summary;
+  const media = displayed?.items.filter((item) => item.kind !== "file") ?? [];
+  const files = displayed?.items.filter((item) => item.kind === "file") ?? [];
+  const totalPages = Math.max(1, Math.ceil((displayed?.total ?? 0) / (displayed?.pageSize || 50)));
+  const viewerItems = useMemo(() => viewer?.page.items.filter((item) => item.kind === "image" || item.kind === "video") ?? [], [viewer?.page]);
+  const viewerIndex = viewerItems.findIndex((item) => item.rel === viewer?.rel);
+  const rawViewerIndex = viewer?.page.items.findIndex((item) => item.rel === viewer.rel) ?? -1;
 
   return (
-    <section className="panel">
+    <section className="panel media-gallery" data-effective-policy={performanceMode ? "performance" : "experience"} data-browse-policy={policy}>
       <div className="panel-head media-head">
         <div className="media-title">
           <h3><Images size={14} /> 媒体与文件</h3>
-          <span className="meta">
-            {items ? `共 ${mediaItems.length} 个媒体 · ${fileItems.length} 个文件` : "正在读取…"}
-          </span>
+          <span className="meta">{summary ? `共 ${(summary.total - summary.files).toLocaleString()} 个媒体 · ${summary.files.toLocaleString()} 个文件` : "正在读取…"}</span>
+          <button ref={toolsButton} className={"icon-btn media-options-button" + (searchText.trim() ? " has-query" : "")}
+            aria-label="媒体浏览选项" aria-haspopup="dialog" aria-expanded={toolsOpen}
+            title={searchText.trim() ? "媒体浏览选项 · 已启用搜索" : "媒体浏览选项"} onClick={() => setToolsOpen((open) => !open)}>
+            <SlidersHorizontal size={13} />
+          </button>
         </div>
         <div className="media-tools">
           <div className="media-sort">
-            <Select
-              ariaLabel="媒体排序"
-              value={sort}
-              onChange={(v) => setSort(v as typeof sort)}
-              options={[
-                { value: "newest", label: "最新在前" },
-                { value: "oldest", label: "最早在前" },
-                { value: "size-desc", label: "大小从大到小" },
-                { value: "size-asc", label: "大小从小到大" },
-              ]}
-            />
+            <Select ariaLabel="媒体排序" value={sort} onChange={(value) => { setPage(1); setSort(value as typeof sort); }} options={[
+              { value: "newest", label: "最新在前" }, { value: "oldest", label: "最早在前" },
+              { value: "size-desc", label: "大小从大到小" }, { value: "size-asc", label: "大小从小到大" },
+            ]} />
           </div>
           <div className="media-size" role="group" aria-label="预览图大小">
             {[["sm", "小"], ["md", "中"], ["lg", "大"], ["xl", "超大"]].map(([key, label]) => (
@@ -889,132 +1228,110 @@ export function MediaGallery({ ctx, chat }: { ctx: PageCtx; chat: ChatRow }) {
           </div>
           <div className="tabs media-tabs" role="tablist" aria-label="媒体筛选">
             {MEDIA_FILTERS.map((f) => {
-            const count =
-              f.key === "all"
-                ? mediaItems.length
-                : f.key === "file"
-                  ? fileItems.length
-                  : mediaItems.filter((i) => i.kind === f.key).length;
-            return (
-              <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""} onClick={() => setFilter(f.key)}>
-                {f.label}
-                <span className="tab-count">{count}</span>
-                </button>
-              );
+              const count = !summary ? null : f.key === "all" ? summary.total : f.key === "image" ? summary.images :
+                f.key === "video" ? summary.videos : f.key === "audio" ? summary.audio : summary.files;
+              return <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? "on" : ""}
+                onClick={() => { setPage(1); setFilter(f.key); }}>
+                {f.label}<span className="tab-count">{count === null ? "—" : count.toLocaleString()}</span>
+              </button>;
             })}
           </div>
         </div>
       </div>
+      {toolsOpen && createPortal(
+        <div ref={toolsPanel} className="media-options-popover" role="dialog" aria-label="媒体浏览选项" style={toolsPosition}>
+          <label className="media-option-label" htmlFor="media-search-input">搜索文件名</label>
+          <div className="media-search">
+            <Search size={13} />
+            <input id="media-search-input" ref={searchInput} value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="搜索媒体和文件" />
+            {searchText && <button className="media-search-clear" aria-label="清除搜索" onClick={() => { setSearchText(""); searchInput.current?.focus(); }}><X size={13} /></button>}
+          </div>
+          <span className="media-option-label">浏览策略</span>
+          <div className="media-native-select">
+            <select className="ui-select-btn" aria-label="媒体浏览策略" value={policy} onChange={(event) => choosePolicy(event.target.value)}>
+              <option value="auto">自动</option>
+              <option value="experience">体验优先</option>
+              <option value="performance">性能优先</option>
+            </select>
+            <ChevronDown size={14} aria-hidden="true" />
+          </div>
+          <span className="media-option-hint">{policy === "auto" ? "自动：" : ""}{performanceMode ? "性能优先，仅加载视野内预览" : "体验优先，预读下一页"}</span>
+          <div className="media-option-actions">
+            {loading ? <button className="btn sm ghost" onClick={cancelLoad}><X size={12} /> 取消读取</button>
+              : <button className="btn sm ghost" onClick={refresh}><RefreshCw size={12} /> 重新核对</button>}
+          </div>
+        </div>, document.body
+      )}
+      {(displayed?.stale || notice) && <div className="media-context">
+        {displayed?.stale && <span>显示已保存的媒体快照，数据可能已变化。</span>}
+        {notice && <span role="status">{notice}</span>}
+        {displayed?.stale && <button className="btn sm ghost" onClick={refresh} disabled={loading}>重新核对</button>}
+      </div>}
 
-      {error ? (
-        <div className="state-box error">
-          <p>读取媒体列表失败：{error}</p>
-          <button className="btn ghost" onClick={load}>
-            <RefreshCw size={13} /> 重试
-          </button>
+      {error && <div className="media-error" role="alert"><span>读取媒体列表失败：{error}</span><button className="btn sm ghost" onClick={retry}>重试</button></div>}
+      {cancelledPage !== null && !loading && <div className="media-error cancelled" role="status"><span>已取消读取媒体列表。</span><button className="btn sm ghost" onClick={retry}>重试</button></div>}
+      {!displayed && !error && cancelledPage === null ? (
+        <div className="media-grid" aria-label="正在读取媒体列表" aria-busy="true">
+          {Array.from({ length: 12 }).map((_, i) => <div key={i} className="media-tile skeleton" />)}
         </div>
-      ) : items === null ? (
-        <div className="media-grid" aria-hidden="true">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="media-tile skeleton" />
-          ))}
-        </div>
-      ) : (
-        <>
-          {shown.length === 0 && filter !== "all" && filter !== "file" ? (
-            <div className="state-box">
-              <p>当前筛选没有文件。</p>
-              <button className="btn ghost" onClick={() => call("revealChat", { slug: chat.slug })}>
-                <FolderOpen size={13} /> 打开聊天目录
-              </button>
-            </div>
+      ) : displayed && (
+        <div aria-busy={loading || searchPending}>
+          {displayed.items.length === 0 ? (
+            <div className="state-box"><p>{query ? "没有找到匹配的媒体或文件。" : "当前筛选没有媒体或文件。"}</p></div>
           ) : (
-            shown.length > 0 && (
-              <div className={`media-grid size-${size}`}>
-                {shown.slice(0, limit).map((item) => (
-                  <button
-                    key={item.rel}
-                    className={`media-tile ${item.kind}`}
-                    title={`${item.name}${item.id ? ` · 消息 #${item.id}` : ""}`}
-                    onClick={() => openItem(item)}
-                  >
-                    {item.thumb ? (
-                      <img src={thumbURL(chat.slug, item.thumb)} alt={item.name} loading="lazy" />
-                    ) : item.kind === "image" ? (
-                      <img src={mediaURL(chat.slug, item.rel)} alt={item.name} loading="lazy" />
-                    ) : (
-                      <span className={`media-ph ${item.kind}`}>{mediaIcon(item.kind)}</span>
-                    )}
-                    {item.kind === "video" && (
-                      <span className="media-play">
-                        <Play size={14} fill="currentColor" />
-                      </span>
-                    )}
-                    <span className="media-cap">
-                      <b>{item.name}</b>
-                      <i>{bytes(item.size)}</i>
-                    </span>
+            <>
+              {media.length > 0 && <div className={"media-grid size-" + size}>
+                {media.map((item) => (
+                  <button key={displayed.version + ":" + item.rel} className={"media-tile " + item.kind} title={item.name + (item.id ? " · 消息 #" + item.id : "")}
+                    onClick={() => openItem(item)} disabled={loading || searchPending}>
+                    {item.thumb || item.kind === "image" ? (
+                      <GalleryImage src={item.thumb ? thumbURL(chat.slug, item.thumb, libraryKey, displayed.version) : mediaURL(chat.slug, item.rel, libraryKey, displayed.version, false, true)}
+                        alt={item.name} performanceMode={performanceMode} limiter={limiter} suspended={Boolean(viewer || audioItem)} />
+                    ) : <span className={"media-ph " + item.kind}>{mediaIcon(item.kind)}</span>}
+                    {item.kind === "video" && <span className="media-play"><Play size={14} fill="currentColor" /></span>}
+                    <span className="media-cap"><b>{item.name}</b><i>{bytes(item.size)}</i></span>
                   </button>
                 ))}
-              </div>
-            )
-          )}
-          {shown.length > limit && (
-            <div className="media-more">
-              <button className="btn ghost" onClick={() => setLimit((n) => n + 240)}>
-                加载更多（剩余 {shown.length - limit} 个）
-              </button>
-            </div>
-          )}
-
-          {showFiles && fileItems.length > 0 && (
-            <div className="file-block">
-              <div className="file-block-head">
-                <h4>文档与其它文件</h4>
-                <span>{fileItems.length} 个</span>
-              </div>
-              <div className="file-list">
-                {orderedFiles.map((f) => (
-                  <div className="file-row" key={f.rel}>
-                    <span className={`file-ext ext-${fileExt(f.name).slice(0, 4)}`}>{fileExt(f.name).toUpperCase().slice(0, 4) || "FILE"}</span>
-                    <div className="file-info">
-                      <b title={f.name}>{f.name}</b>
-                      <span>
-                        {f.id ? `消息 #${f.id} · ` : ""}
-                        {bytes(f.size)}
-                      </span>
-                    </div>
+              </div>}
+              {files.length > 0 && <div className="file-block">
+                <div className="file-block-head"><h4>文档与其它文件</h4><span>本页 {files.length} 个</span></div>
+                <div className="file-list">
+                  {files.map((f) => <div className="file-row" key={f.rel}>
+                    <span className={"file-ext ext-" + fileExt(f.name).slice(0, 4)}>{fileExt(f.name).toUpperCase().slice(0, 4) || "FILE"}</span>
+                    <div className="file-info"><b title={f.name}>{f.name}</b><span>{f.id ? "消息 #" + f.id + " · " : ""}{bytes(f.size)}</span></div>
                     <div className="file-actions">
-                      <button className="btn sm ghost" onClick={() => openExternal(f)}>
-                        <ExternalLink size={12} /> 打开
-                      </button>
-                      <button className="btn sm ghost" onClick={() => reveal(f)}>
-                        <LocateFixed size={12} /> 定位
-                      </button>
+                      <button className="btn sm ghost" disabled={loading || searchPending} onClick={() => openExternal(f)}><ExternalLink size={12} /> 打开</button>
+                      <button className="btn sm ghost" disabled={loading || searchPending} onClick={() => reveal(f)}><LocateFixed size={12} /> 定位</button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+                  </div>)}
+                </div>
+              </div>}
+            </>
           )}
-        </>
+          <div className="media-pagination">
+            <span aria-live="polite">{searchPending ? "正在搜索…" : loading ? "正在读取…" : displayed.total ? "第 " + ((displayed.page - 1) * displayed.pageSize + 1).toLocaleString() + "–" + ((displayed.page - 1) * displayed.pageSize + displayed.items.length).toLocaleString() + " 项，共 " + displayed.total.toLocaleString() + " 项" : "共 0 项"}</span>
+            <div><button className="btn sm ghost" disabled={loading || searchPending || page <= 1} onClick={() => setPage((n) => n - 1)}><ChevronLeft size={13} /> 上一页</button>
+              <span>第 {displayed.page} / {totalPages} 页</span>
+              <button className="btn sm ghost" disabled={loading || searchPending || page >= totalPages} onClick={() => setPage((n) => n + 1)}>下一页 <ChevronRight size={13} /></button></div>
+          </div>
+        </div>
       )}
 
-      {viewer && viewer.items[viewer.index] && (
-        <MediaViewer
-          chat={chat}
-          items={viewer.items}
-          index={viewer.index}
-          onIndex={(index) => setViewer((v) => (v ? { ...v, index } : v))}
-          onClose={() => setViewer(null)}
-          onReveal={reveal}
-          onOpen={openExternal}
-          prefs={ctx.prefs}
-        />
-      )}
-      {audioItem && (
-        <AudioViewer chat={chat} item={audioItem} onClose={() => setAudioItem(null)} onReveal={reveal} />
-      )}
+      {viewer && viewerIndex >= 0 && <MediaViewer
+        chat={chat} items={viewerItems} index={viewerIndex} onIndex={setViewerIndex}
+        onStep={(direction, auto) => void stepViewer(direction, auto)}
+        hasPrevious={viewerIndex > 0 || viewer.page.page > 1}
+        hasNext={viewerIndex < viewerItems.length - 1 || viewer.page.page * viewer.page.pageSize < viewer.page.total}
+        position={(viewer.page.page - 1) * viewer.page.pageSize + rawViewerIndex + 1} total={viewer.page.total}
+        positions={viewer.page.items.flatMap((item, i) => item.kind === "image" || item.kind === "video" ? [(viewer.page.page - 1) * viewer.page.pageSize + i + 1] : [])}
+        positionLabel={filter === "all" ? "全部文件中的位置" : "筛选结果中的位置"}
+        libraryKey={libraryKey} version={viewer.page.version} performanceMode={performanceMode} libraryKind={libraryKind}
+        limiter={limiter} loading={viewerBusy} error={viewerError}
+        onClose={() => { cancelViewerRequest(); setViewer(null); }}
+        onReveal={reveal} onOpen={openExternal} prefs={ctx.prefs}
+      />}
+      {audioItem && <AudioViewer chat={chat} item={audioItem.item} libraryKey={libraryKey} version={audioItem.version}
+        onClose={() => setAudioItem(null)} onReveal={reveal} />}
     </section>
   );
 }
@@ -1044,7 +1361,8 @@ const ArtVideo = forwardRef<VideoApi, {
   hasNext: boolean;
   autoNext: boolean;
   onNext: () => void;
-}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, onNext }, ref) {
+  onAutoNext: () => void;
+}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, onNext, onAutoNext }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const fitRef = useRef<() => void>(() => undefined);
@@ -1052,8 +1370,10 @@ const ArtVideo = forwardRef<VideoApi, {
   const playerRef = useRef<Artplayer | null>(null);
   const autoNextRef = useRef(autoNext);
   const onNextRef = useRef(onNext);
+  const onAutoNextRef = useRef(onAutoNext);
   autoNextRef.current = autoNext;
   onNextRef.current = onNext;
+  onAutoNextRef.current = onAutoNext;
   const [switching, setSwitching] = useState(false);
   const switchTimer = useRef(0);
   const frameAspectRef = useRef(frameAspect);
@@ -1305,7 +1625,7 @@ const ArtVideo = forwardRef<VideoApi, {
     playerBox.addEventListener("pointerleave", onPointerLeave);
     player.on("video:play", hideControls);
     player.on("video:ended", () => {
-      if (autoNextRef.current) onNextRef.current();
+      if (autoNextRef.current) onAutoNextRef.current();
     });
     player.setting.add({
       name: "tak-precise-speed",
@@ -1744,6 +2064,20 @@ function MediaViewer({
   items,
   index,
   onIndex,
+  onStep,
+  hasPrevious,
+  hasNext,
+  position,
+  positions,
+  total,
+  positionLabel,
+  libraryKey,
+  version,
+  performanceMode,
+  libraryKind,
+  limiter,
+  loading,
+  error,
   onClose,
   onReveal,
   onOpen,
@@ -1753,6 +2087,20 @@ function MediaViewer({
   items: MediaItem[];
   index: number;
   onIndex: (n: number) => void;
+  onStep: (direction: -1 | 1, auto?: boolean) => void;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  position: number;
+  positions: number[];
+  total: number;
+  positionLabel: string;
+  libraryKey: string;
+  version: string;
+  performanceMode: boolean;
+  libraryKind: "local" | "remote" | "unknown";
+  limiter: ImageLimiter;
+  loading: boolean;
+  error: string;
   onClose: () => void;
   onReveal: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
@@ -1760,10 +2108,10 @@ function MediaViewer({
 }) {
   const item = items[index];
   const isVideo = item.kind === "video";
-  const src = mediaURL(chat.slug, item.rel);
-  const poster = item.thumb ? thumbURL(chat.slug, item.thumb) : "";
+  const src = mediaURL(chat.slug, item.rel, libraryKey, version);
+  const poster = item.thumb ? thumbURL(chat.slug, item.thumb, libraryKey, version) : "";
   const knownRatio = item.width && item.height ? item.width / item.height : 0;
-  const ambient = item.thumb ? thumbURL(chat.slug, item.thumb) : isVideo ? poster : src;
+  const ambient = item.thumb ? thumbURL(chat.slug, item.thumb, libraryKey, version) : isVideo ? poster : src;
   const modal = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -1842,8 +2190,8 @@ function MediaViewer({
   useEffect(() => {
     if (imageReady) setImageBusy(false);
   }, [imageReady]);
-  const stateRef = useRef({ index, items, onIndex, onClose, prefs, kind: item.kind });
-  stateRef.current = { index, items, onIndex, onClose, prefs, kind: item.kind };
+  const stateRef = useRef({ onStep, onClose, prefs, kind: item.kind });
+  stateRef.current = { onStep, onClose, prefs, kind: item.kind };
 
   useEffect(() => {
     if (prefs.backdrop !== "solid") return;
@@ -1855,32 +2203,49 @@ function MediaViewer({
   }, [ambient, prefs.backdrop]);
 
   useEffect(() => {
+    if (performanceMode) return;
     const controller = new AbortController();
     const next = items[index + 1];
     const prev = items[index - 1];
-    const range = (target: MediaItem, bytes: number) =>
-      fetch(mediaURL(chat.slug, target.rel), {
-        headers: { Range: `bytes=0-${bytes}` },
-        signal: controller.signal,
-        cache: "force-cache",
-      }).catch(() => undefined);
-    if (next?.kind === "video") {
-      if (item.kind === "video" && next.size > 0 && next.size <= 64 * 1024 * 1024) {
-        // Prime the next clip completely so automatic continuation starts at once.
-        fetch(mediaURL(chat.slug, next.rel), { signal: controller.signal, cache: "force-cache" })
-          .then((res) => res.arrayBuffer())
-          .catch(() => undefined);
-      } else {
-        void range(next, 4 * 1024 * 1024);
+    const warm = async (target: MediaItem, limit: number, complete: boolean) => {
+      const res = await fetch(mediaURL(chat.slug, target.rel, libraryKey, version, true), {
+        headers: complete ? undefined : { Range: `bytes=0-${limit - 1}` },
+        signal: controller.signal, cache: "force-cache",
+      });
+      // A remote server may ignore Range; never consume an unbounded response.
+      if (!res.ok || (!complete && res.status !== 206)) { await res.body?.cancel(); return; }
+      const length = Number(res.headers.get("Content-Length"));
+      if (length > limit) { await res.body?.cancel(); return; }
+      const reader = res.body?.getReader();
+      if (!reader) return;
+      let received = 0;
+      try {
+        while (received < limit) {
+          const chunk = await reader.read();
+          if (chunk.done) return;
+          received += chunk.value.byteLength;
+        }
+        // Observe the end of a correctly sized response so the browser can cache it.
+        if (received === limit && length === limit) await reader.read();
+      } finally {
+        await reader.cancel().catch(() => undefined);
       }
+    };
+    if (next?.kind === "video") {
+      const complete = libraryKind === "local" && item.kind === "video" && next.size > 0 && next.size <= 64 * 1024 * 1024;
+      void warm(next, complete ? next.size : 4 * 1024 * 1024, complete).catch(() => undefined);
     }
-    if (prev?.kind === "video") void range(prev, 2 * 1024 * 1024);
+    if (prev?.kind === "video") void warm(prev, 2 * 1024 * 1024, false).catch(() => undefined);
     return () => controller.abort();
-  }, [chat.slug, items, index, item.kind]);
+  }, [chat.slug, libraryKey, version, libraryKind, performanceMode, items, index, item.kind]);
 
   useEffect(() => {
-    active.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-  }, [index]);
+    const bar = strip.current;
+    const button = active.current;
+    if (bar && button) {
+      bar.scrollTo({ left: button.offsetLeft - (bar.clientWidth - button.offsetWidth) / 2, behavior: "smooth" });
+    }
+  }, [item.rel]);
 
   useEffect(() => {
     setZoom(1);
@@ -2179,9 +2544,7 @@ function MediaViewer({
       }
     };
     const seekImage = (direction: number) => {
-      const st = stateRef.current;
-      const next = st.index + direction;
-      if (next >= 0 && next < st.items.length) st.onIndex(next);
+      stateRef.current.onStep(direction < 0 ? -1 : 1);
     };
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -2441,7 +2804,9 @@ function MediaViewer({
       />
       <header className="media-modal-head viewer-head">
         <span className="media-modal-name" title={item.name}>{item.name}</span>
-        <span className="media-modal-count">{index + 1} / {items.length} · {bytes(item.size)}</span>
+        <span className="media-modal-count" title={positionLabel}>{position.toLocaleString()} / {total.toLocaleString()} · {bytes(item.size)}</span>
+        {loading && <span className="viewer-page-status" role="status">正在读取相邻媒体…</span>}
+        {error && <span className="viewer-page-status error" role="alert">{error}</span>}
         <span className="spacer" />
         <button className="btn sm ghost" onClick={() => setShowKeys((v) => !v)}>
           <Keyboard size={12} /> 快捷键
@@ -2481,9 +2846,10 @@ function MediaViewer({
             maxVolume={prefs.maxVolume}
             frameAspect={prefs.videoFrameAspect}
             knownRatio={knownRatio}
-            hasNext={index < items.length - 1}
-            autoNext={items[index + 1]?.kind === "video"}
-            onNext={() => onIndex(index + 1)}
+            hasNext={hasNext}
+            autoNext={hasNext && (!items[index + 1] || items[index + 1].kind === "video")}
+            onNext={() => onStep(1)}
+            onAutoNext={() => onStep(1, true)}
           />
         ) : (
           <div
@@ -2551,18 +2917,19 @@ function MediaViewer({
       </div>
 
       <div className="media-strip viewer-strip" ref={strip}>
-        {items.map((v, i) => (
-          <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => onIndex(i)}>
-            {v.thumb ? <img src={thumbURL(chat.slug, v.thumb)} alt="" loading="lazy" /> : v.kind === "image" ? <img src={mediaURL(chat.slug, v.rel)} alt="" loading="lazy" /> : <Film size={18} />}
-            <span className="strip-index">{i + 1}</span>
+        {items.slice(Math.max(0, index - 5), index + 6).map((v, offset) => {
+          const i = Math.max(0, index - 5) + offset;
+          return <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => onIndex(i)}>
+            {v.thumb || v.kind === "image" ? <GalleryImage src={v.thumb ? thumbURL(chat.slug, v.thumb, libraryKey, version) : mediaURL(chat.slug, v.rel, libraryKey, version, false, true)} alt="" performanceMode={performanceMode} limiter={limiter} /> : <Film size={18} />}
+            <span className="strip-index">{positions[i]}</span>
             {v.kind === "video" && <span className="strip-kind"><Play size={9} fill="currentColor" /></span>}
-          </button>
-        ))}
+          </button>;
+        })}
       </div>
-      <button className="media-nav prev" disabled={index <= 0} aria-label="上一个" onClick={() => onIndex(index - 1)}>
+      <button className="media-nav prev" disabled={!hasPrevious || loading} aria-label="上一个" onClick={() => onStep(-1)}>
         <ChevronLeft size={26} />
       </button>
-      <button className="media-nav next" disabled={index >= items.length - 1} aria-label="下一个" onClick={() => onIndex(index + 1)}>
+      <button className="media-nav next" disabled={!hasNext || loading} aria-label="下一个" onClick={() => onStep(1)}>
         <ChevronRight size={26} />
       </button>
       {immersive && (
@@ -2577,11 +2944,15 @@ function MediaViewer({
 function AudioViewer({
   chat,
   item,
+  libraryKey,
+  version,
   onClose,
   onReveal,
 }: {
   chat: ChatRow;
   item: MediaItem;
+  libraryKey: string;
+  version: string;
   onClose: () => void;
   onReveal: (item: MediaItem) => void;
 }) {
@@ -2606,7 +2977,7 @@ function AudioViewer({
         <div className="audio-art">
           <Music size={44} />
         </div>
-        <audio src={mediaURL(chat.slug, item.rel)} controls autoPlay className="audio-native" />
+        <audio src={mediaURL(chat.slug, item.rel, libraryKey, version)} controls autoPlay className="audio-native" />
       </div>
     </div>
   );
@@ -2642,6 +3013,16 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
+  const [detailLibraryKey, setDetailLibraryKey] = useState("");
+  const [detailMediaLoading, setDetailMediaLoading] = useState(false);
+  const [detailMediaError, setDetailMediaError] = useState("");
+  const [detailMediaStale, setDetailMediaStale] = useState(false);
+  const [detailMediaCancelled, setDetailMediaCancelled] = useState(false);
+  const [detailReload, setDetailReload] = useState(0);
+  const detailRefreshNext = useRef(false);
+  const detailRequest = useRef<AbortController | null>(null);
+  const detailApplySummary = useRef(ctx.applyMediaSummary);
+  detailApplySummary.current = ctx.applyMediaSummary;
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [remotePath, setRemotePath] = useState("");
@@ -2653,6 +3034,50 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [rcloneSub, setRcloneSub] = useState("");
   const [rcloneDrive, setRcloneDrive] = useState("Z");
   const [rcloneBusy, setRcloneBusy] = useState(false);
+
+  const showDetail = (chat: ChatRow) => {
+    setDetailLibraryKey(boot?.libraryKey ?? "");
+    setDetailMediaError("");
+    setDetailMediaStale(false);
+    setDetailMediaCancelled(false);
+    setDetailChat(chat);
+  };
+
+  useEffect(() => {
+    if (detailLibraryKey && detailLibraryKey !== boot?.libraryKey) setDetailChat(null);
+  }, [boot?.libraryKey, detailLibraryKey]);
+
+  useEffect(() => {
+    const slug = detailChat?.slug;
+    if (!slug || !detailLibraryKey || detailLibraryKey !== boot?.libraryKey) return;
+    const controller = new AbortController();
+    detailRequest.current = controller;
+    const force = detailRefreshNext.current;
+    detailRefreshNext.current = false;
+    setDetailMediaLoading(true);
+    setDetailMediaError("");
+    setDetailMediaCancelled(false);
+    call<MediaPage>("chatMedia", { slug, kind: "all", sort: "newest", query: "", page: 1, version: "", refresh: force, libraryKey: detailLibraryKey }, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setDetailChat((current) => current?.slug === slug ? rowWithSummary(current, result.summary) : current);
+        setDetailMediaStale(result.stale);
+        detailApplySummary.current?.(detailLibraryKey, slug, result.summary);
+        setDetailMediaLoading(false);
+        if (detailRequest.current === controller) detailRequest.current = null;
+      })
+      .catch((e: Error) => {
+        if (!controller.signal.aborted) {
+          setDetailMediaError(e.message);
+          setDetailMediaLoading(false);
+          if (detailRequest.current === controller) detailRequest.current = null;
+        }
+      });
+    return () => {
+      controller.abort();
+      if (detailRequest.current === controller) detailRequest.current = null;
+    };
+  }, [detailChat?.slug, detailLibraryKey, boot?.libraryKey, detailReload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3071,11 +3496,11 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   tabIndex={0}
                   aria-selected={c.slug === selected}
                   className={c.slug === selected || sel.has(c.slug) ? "selected" : ""}
-                  onClick={() => setDetailChat(c)}
+                  onClick={() => showDetail(c)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      setDetailChat(c);
+                      showDetail(c);
                     } else if (e.key === " ") {
                       e.preventDefault();
                       toggleSel(c.slug);
@@ -3357,7 +3782,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         document.body
       )}
 
-      {detailChat && createPortal(
+      {detailChat && detailLibraryKey === boot?.libraryKey && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailChat(null); }}>
           <div className="modal chat-detail-modal" role="dialog" aria-modal="true" aria-labelledby="chat-detail-title">
             <div className="chat-detail-head">
@@ -3377,7 +3802,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
               <div className="chat-detail-tile"><span>消息</span><b>{detailChat.messages.toLocaleString()}</b></div>
               <div className="chat-detail-tile">
                 <span>媒体文件</span>
-                <b>{detailChat.media.toLocaleString()}{detailChat.missing > 0 && <em> · 缺 {detailChat.missing}</em>}</b>
+                <b>{detailChat.mediaReady ? detailChat.media.toLocaleString() : "待核对"}{detailChat.missing > 0 && <em> · 缺 {detailChat.missing}</em>}</b>
               </div>
               <div className="chat-detail-tile"><span>最早消息</span><b>{dateTime(detailChat.firstTs)}</b></div>
               <div className="chat-detail-tile"><span>最新消息</span><b>{dateTime(detailChat.lastTs)}</b></div>
@@ -3390,10 +3815,15 @@ export function Library({ ctx }: { ctx: PageCtx }) {
             <div className="chat-detail-media">
               <div className="chat-detail-media-head">
                 <span><HardDrive size={13} /> 媒体占用</span>
-                <b>{(detailChat.totalBytes ?? 0) > 0 ? bytes(detailChat.totalBytes ?? 0) : "—"}</b>
-                <em>共 {detailChat.media.toLocaleString()} 个</em>
+                <b>{detailChat.mediaReady ? bytes(detailChat.totalBytes ?? 0) : "待核对"}</b>
+                <em>{detailChat.mediaReady ? `共 ${detailChat.media.toLocaleString()} 个` : "正在读取统计"}</em>
               </div>
               <MediaTypeGrid row={detailChat} />
+              {(detailMediaLoading || detailMediaStale || detailMediaError || detailMediaCancelled) && <div className="chat-detail-media-status" role="status">
+                {detailMediaLoading ? "正在读取媒体统计…" : detailMediaCancelled ? "已取消读取媒体统计。" : detailMediaError ? `读取媒体统计失败：${detailMediaError}` : "显示已保存的媒体快照，数据可能已变化。"}
+                {detailMediaLoading ? <button className="btn sm ghost" onClick={() => { detailRequest.current?.abort(); detailRequest.current = null; setDetailMediaLoading(false); setDetailMediaCancelled(true); }}>取消读取</button>
+                  : <button className="btn sm ghost" onClick={() => { detailRefreshNext.current = detailMediaStale; setDetailReload((n) => n + 1); }}>{detailMediaStale && !detailMediaCancelled ? "重新核对" : "重试"}</button>}
+              </div>}
             </div>
 
             <div className="chat-detail-actions">

@@ -22,6 +22,7 @@ type HomeStatsDTO struct {
 	DiskFree     int64 `json:"diskFree"`
 	DiskTotal    int64 `json:"diskTotal"`
 	LibraryBytes int64 `json:"libraryBytes"`
+	PendingMedia int   `json:"pendingMedia"`
 }
 
 var (
@@ -58,15 +59,18 @@ func (f *Facade) HomeStats() HomeStatsDTO {
 		out.Missing += c.Missing
 		out.Pages += c.Pages
 		out.Official += c.Official
-		summary := f.workspaceMediaSummary(c.Slug)
-		out.Media += summary.Total
-		out.Images += summary.Images
-		out.Videos += summary.Videos
-		out.Audio += summary.Audio
-		out.Files += summary.Files
-		out.MediaBytes += summary.Bytes
+		if !c.MediaReady {
+			out.PendingMedia++
+			continue
+		}
+		out.Media += c.Media
+		out.Images += c.Images
+		out.Videos += c.Videos
+		out.Audio += c.Audio
+		out.Files += c.Files
+		out.MediaBytes += c.TotalBytes
 	}
 	out.LibraryBytes = out.MediaBytes
-	out.DiskFree, out.DiskTotal = diskFreeSpace(f.a.Settings.LibraryRoot)
+	out.DiskFree, out.DiskTotal = diskFreeSpace(f.libraryRoot())
 	return out
 }

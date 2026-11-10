@@ -57,13 +57,14 @@ type Facade struct {
 	lastTaskPersist time.Time
 
 	mediaMu    sync.Mutex
-	mediaCache map[string]mediaCacheEntry
+	mediaCache map[string]*mediaCatalogEntry
+	mediaSlots chan struct{}
+	mediaJobs  int
 }
 
 // DesktopState is polled by the window; it intentionally excludes Bootstrap
 // (which probes tdl/PATH) so a 500ms poll stays cheap.
 type DesktopState struct {
-	Chats     []ChatDTO         `json:"chats"`
 	Download  *DownloadSnapshot `json:"download,omitempty"`
 	Operation *OperationDTO     `json:"operation,omitempty"`
 	Done      *DoneDTO          `json:"done,omitempty"`
@@ -79,6 +80,7 @@ func OpenFacade() (*Facade, error) {
 		return nil, err
 	}
 	f := &Facade{a: a}
+	a.workspaceChanged = f.invalidateWorkspaceMedia
 	f.loadTasks()
 	return f, nil
 }
@@ -232,12 +234,12 @@ func (f *Facade) State() DesktopState {
 		done := f.done
 		st.Done = &done
 	}
+	login := f.login
 	f.mu.Unlock()
-	if f.login != nil {
-		ls := f.login.snapshot()
+	if login != nil {
+		ls := login.snapshot()
 		st.Login = &ls
 	}
-	st.Chats = f.ListChats()
 	st.Tasks = f.Tasks()
 	return st
 }
@@ -246,44 +248,85 @@ func (f *Facade) Ping() string { return "pong" }
 
 func (f *Facade) ConfigDir() string { return f.a.ConfigDir }
 
+func (f *Facade) libraryRoot() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.a.Settings.LibraryRoot
+}
+
+func (f *Facade) LibraryKey() string {
+	return libraryFingerprint(f.libraryRoot())
+}
+
+func (f *Facade) MediaLibrary(key string) (root string, remote bool, ok bool) {
+	f.mu.Lock()
+	root, lastRemote := f.a.Settings.LibraryRoot, f.a.Settings.LastRemoteRoot
+	f.mu.Unlock()
+	if root == "" || key == "" || key != libraryFingerprint(root) {
+		return "", false, false
+	}
+	remote, _ = platform.NetworkPathKind(root)
+	return root, remote || (lastRemote != "" && strings.EqualFold(filepath.Clean(lastRemote), filepath.Clean(root))), true
+}
+
 func (f *Facade) Bootstrap() BootstrapDTO {
-	list := f.a.listWorkspaces()
-	current := selectedSlug(f.a.selectedWorkspace(list))
+	f.mu.Lock()
+	root, current := f.a.Settings.LibraryRoot, f.a.Settings.LastWorkspaceSlug
+	lastRemote := f.a.Settings.LastRemoteRoot
+	history := append([]string(nil), f.a.Settings.LibraryHistory...)
+	f.mu.Unlock()
+	remote, kind := platform.NetworkPathKind(root)
+	if remote || (lastRemote != "" && strings.EqualFold(filepath.Clean(lastRemote), filepath.Clean(root))) {
+		kind = "remote"
+	}
 	return BootstrapDTO{
 		Version:     version,
-		LibraryRoot: f.a.Settings.LibraryRoot,
+		LibraryRoot: root,
+		LibraryKey:  libraryFingerprint(root),
+		LibraryKind: kind,
 		Tdl:         f.a.resolveTdl(),
 		TdlRunning:  isTdlRunning(),
 		HasSession:  hasTdlSessionData(),
 		FFmpeg:      media.FindFFmpeg(),
-		Chats:       len(list),
 		Current:     current,
 		ConfigPath:  f.a.ConfigPath,
-		History:     append([]string(nil), f.a.Settings.LibraryHistory...),
+		History:     history,
 	}
 }
 
 func (f *Facade) ListChats() []ChatDTO {
-	list := f.a.listWorkspaces()
-	current := f.a.Settings.LastWorkspaceSlug
+	result, _ := f.LibraryChats()
+	return result.Chats
+}
+
+// LibraryChats refreshes workspace metadata independently of fast task polling.
+func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
+	f.mu.Lock()
+	root, current := f.a.Settings.LibraryRoot, f.a.Settings.LastWorkspaceSlug
+	f.mu.Unlock()
+	key := libraryFingerprint(root)
+	if root == "" {
+		return LibraryChatsDTO{LibraryKey: key, Chats: []ChatDTO{}}, nil
+	}
+	a := &App{Settings: Settings{LibraryRoot: root}}
+	list, err := a.readWorkspaces()
+	if err != nil {
+		return LibraryChatsDTO{}, errors.New("档案库暂时不可访问，请重试")
+	}
 	out := make([]ChatDTO, 0, len(list))
 	for _, m := range list {
 		messages := m.MessageCount
-		summary := f.workspaceMediaSummary(m.Slug)
-		mediaCount := summary.Total
+		summary, ready := f.cachedWorkspaceMediaSummary(root, m.Slug)
+		mediaCount := m.MediaCount
+		if ready {
+			mediaCount = summary.Total
+		}
 		firstTS, lastTS := m.FirstTS, m.LastTS
-		if len(m.OfficialExports) > 0 && (messages == 0 || mediaCount == 0) {
+		if len(m.OfficialExports) > 0 && (messages == 0 || (!ready && mediaCount == 0)) {
 			officialMessages, officialMedia := 0, 0
-			var officialTypes [4]int
-			var officialBytes int64
 			for _, ex := range m.OfficialExports {
 				officialMessages += ex.MessageCount
 				officialMedia += ex.MediaFiles
-				officialTypes[0] += ex.Images
-				officialTypes[1] += ex.Videos
-				officialTypes[2] += ex.Audio
-				officialTypes[3] += ex.Files
-				officialBytes += ex.TotalBytes
 				if firstTS == 0 || (ex.FirstTS > 0 && ex.FirstTS < firstTS) {
 					firstTS = ex.FirstTS
 				}
@@ -294,26 +337,24 @@ func (f *Facade) ListChats() []ChatDTO {
 			if messages == 0 {
 				messages = officialMessages
 			}
-			if mediaCount == 0 {
+			if !ready && mediaCount == 0 {
 				mediaCount = officialMedia
-				summary.Images, summary.Videos, summary.Audio, summary.Files = officialTypes[0], officialTypes[1], officialTypes[2], officialTypes[3]
-				summary.Bytes = officialBytes
 			}
 		}
 		dto := ChatDTO{
 			Slug: m.Slug, Name: m.Chat.Name, Type: m.Chat.Type, ID: m.Chat.ID,
-			Messages: messages, Media: mediaCount, Missing: m.MissingCount,
+			Messages: messages, Media: mediaCount, MediaReady: ready, Missing: m.MissingCount,
 			Images: summary.Images, Videos: summary.Videos, Audio: summary.Audio, Files: summary.Files,
 			TotalBytes: summary.Bytes,
 			ImageBytes: summary.ImageBytes, VideoBytes: summary.VideoBytes,
 			AudioBytes: summary.AudioBytes, FileBytes: summary.FileBytes,
 			FirstTS: firstTS, LastTS: lastTS, UpdatedAt: formatMetaTime(m.UpdatedAt),
-			HasSource: fileExists(f.a.sourcePath(m.Slug)),
+			HasSource: fileExists(a.sourcePath(m.Slug)),
 			Official:  len(m.OfficialExports),
-			Dir:       f.a.workspaceDir(m.Slug),
+			Dir:       a.workspaceDir(m.Slug),
 			Current:   m.Slug == current,
 		}
-		if entries, err := os.ReadDir(f.a.workspaceDir(m.Slug)); err == nil {
+		if entries, err := os.ReadDir(a.workspaceDir(m.Slug)); err == nil {
 			for _, e := range entries {
 				n := strings.ToLower(e.Name())
 				if !e.IsDir() && (n == "messages.html" || (strings.HasPrefix(n, "messages") && strings.HasSuffix(n, ".html") && len(n) > len("messages.html"))) {
@@ -325,7 +366,7 @@ func (f *Facade) ListChats() []ChatDTO {
 			for _, ex := range m.OfficialExports {
 				root := filepath.FromSlash(ex.Root)
 				if !filepath.IsAbs(root) {
-					root = filepath.Join(f.a.workspaceDir(m.Slug), root)
+					root = filepath.Join(a.workspaceDir(m.Slug), root)
 				}
 				if pages, err := archive.ListOfficialHTMLPages(root); err == nil {
 					dto.Pages += len(pages)
@@ -334,7 +375,7 @@ func (f *Facade) ListChats() []ChatDTO {
 		}
 		out = append(out, dto)
 	}
-	return out
+	return LibraryChatsDTO{LibraryKey: key, Chats: out}, nil
 }
 
 // StartOneClick runs sync + build for one chat and streams progress events.
@@ -436,7 +477,9 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 }
 
 func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceMeta) {
+	root := f.libraryRoot()
 	defer func() {
+		f.invalidateWorkspaceMedia(root, op.slug)
 		op.cancel()
 		f.mu.Lock()
 		if f.op == op {

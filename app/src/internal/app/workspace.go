@@ -23,10 +23,11 @@ import (
 )
 
 type App struct {
-	ExeDir     string
-	ConfigDir  string
-	ConfigPath string
-	Settings   Settings
+	ExeDir           string
+	ConfigDir        string
+	ConfigPath       string
+	Settings         Settings
+	workspaceChanged func(root, slug string)
 }
 
 func newApp() (*App, error) {
@@ -101,7 +102,7 @@ func (a *App) migrateWorkspaceNames() bool {
 		}
 		meta.Slug = want
 		meta.LastTS = lastTS
-		_ = writeJSON(a.workspaceMetaPath(want), meta)
+		_ = a.writeWorkspaceMeta(want, meta)
 		renamed[entry.Name()] = want
 		if a.Settings.LastWorkspaceSlug == entry.Name() {
 			a.Settings.LastWorkspaceSlug = want
@@ -512,7 +513,7 @@ func (a *App) migrateWorkspaceSlug(oldSlug string, chat Chat) string {
 	m, _ := a.readWorkspaceMeta(want)
 	m.Slug = want
 	m.Chat = chat
-	_ = writeJSON(a.workspaceMetaPath(want), m)
+	_ = a.writeWorkspaceMeta(want, m)
 	if a.Settings.LastWorkspaceSlug == oldSlug {
 		a.Settings.LastWorkspaceSlug = want
 		_ = a.saveSettings()
@@ -617,7 +618,7 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 			meta.LastTS = ts
 		}
 	}
-	if err := writeJSON(a.workspaceMetaPath(slug), meta); err != nil {
+	if err := a.writeWorkspaceMeta(slug, meta); err != nil {
 		return WorkspaceMeta{}, existed, err
 	}
 	a.Settings.LastWorkspaceSlug = slug
@@ -702,15 +703,38 @@ func (a *App) readWorkspaceMeta(slug string) (WorkspaceMeta, error) {
 	return m, err
 }
 
+func (a *App) writeWorkspaceMeta(slug string, meta WorkspaceMeta) error {
+	if err := writeJSON(a.workspaceMetaPath(slug), meta); err != nil {
+		return err
+	}
+	a.notifyWorkspaceChanged(slug)
+	return nil
+}
+
+func (a *App) notifyWorkspaceChanged(slug string) {
+	if a.workspaceChanged != nil {
+		a.workspaceChanged(a.Settings.LibraryRoot, slug)
+	}
+}
+
 func (a *App) listWorkspaces() []WorkspaceMeta {
+	list, _ := a.readWorkspaces()
+	return list
+}
+
+func (a *App) readWorkspaces() ([]WorkspaceMeta, error) {
 	var out []WorkspaceMeta
-	entries, _ := os.ReadDir(a.chatsDir())
+	entries, err := os.ReadDir(a.chatsDir())
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		m, err := a.readWorkspaceMeta(e.Name())
 		if err == nil {
+			m.Slug = e.Name()
 			out = append(out, m)
 		}
 	}
@@ -720,7 +744,7 @@ func (a *App) listWorkspaces() []WorkspaceMeta {
 		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
-	return out
+	return out, nil
 }
 
 func (a *App) buildArchiveForWorkspace(slug string) (*Archive, error) {
@@ -906,7 +930,7 @@ func (a *App) buildWorkspaceModeWithProgressCtx(ctx context.Context, slug string
 	meta.FirstTS = first
 	meta.LastTS = last
 	meta.SourceVersion = version
-	_ = writeJSON(a.workspaceMetaPath(slug), meta)
+	_ = a.writeWorkspaceMeta(slug, meta)
 	if err := a.writeWorkspaceRedirect(slug); err != nil {
 		return nil, err
 	}
@@ -1070,6 +1094,7 @@ func (a *App) deleteWorkspace(slug string) error {
 	if err := os.RemoveAll(root); err != nil {
 		return err
 	}
+	a.notifyWorkspaceChanged(slug)
 	if a.Settings.LastWorkspaceSlug == slug {
 		a.Settings.LastWorkspaceSlug = ""
 		_ = a.saveSettings()
@@ -1240,7 +1265,7 @@ func (a *App) normalizeWorkspaceSlugs() bool {
 			continue
 		}
 		m.Slug = want
-		_ = writeJSON(a.workspaceMetaPath(want), m)
+		_ = a.writeWorkspaceMeta(want, m)
 		if a.Settings.LastWorkspaceSlug == e.Name() {
 			a.Settings.LastWorkspaceSlug = want
 		}

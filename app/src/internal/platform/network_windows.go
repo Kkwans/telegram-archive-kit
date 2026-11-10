@@ -24,10 +24,13 @@ func NetworkPathKind(path string) (bool, string) {
 		ptr, err := syscall.UTF16PtrFromString(root)
 		if err == nil {
 			t, _, _ := procGetDriveTypeW.Call(uintptr(unsafe.Pointer(ptr)))
-			if int(t) == driveRemote {
+			switch int(t) {
+			case driveRemote:
 				return true, "mapped"
+			case 2, 3, 5, 6: // removable, fixed, optical, RAM
+				return false, "local"
 			}
 		}
 	}
-	return false, "local"
+	return false, "unknown"
 }

@@ -26,7 +26,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, MediaSummary, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
 import { OnlineChatsPage } from "./OnlineChats";
@@ -35,6 +35,17 @@ import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialo
 
 type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
+
+function withMediaSummary(chat: ChatRow, summary: MediaSummary): ChatRow {
+  if (chat.mediaReady && chat.media === summary.total && chat.totalBytes === summary.bytes &&
+      chat.images === summary.images && chat.videos === summary.videos && chat.audio === summary.audio && chat.files === summary.files &&
+      chat.imageBytes === summary.imageBytes && chat.videoBytes === summary.videoBytes && chat.audioBytes === summary.audioBytes && chat.fileBytes === summary.fileBytes) return chat;
+  return {
+    ...chat, mediaReady: true, media: summary.total, totalBytes: summary.bytes,
+    images: summary.images, videos: summary.videos, audio: summary.audio, files: summary.files,
+    imageBytes: summary.imageBytes, videoBytes: summary.videoBytes, audioBytes: summary.audioBytes, fileBytes: summary.fileBytes,
+  };
+}
 
 const NAV = [
   { key: "home", label: "首页", desc: "档案总览与快速同步", icon: House },
@@ -149,6 +160,9 @@ export default function App() {
   const lastDialog = useRef(0);
   const seenTasks = useRef(new Map<string, string>());
   const tasksReady = useRef(false);
+  const libraryLoad = useRef<AbortController | null>(null);
+  const activeLibraryKey = useRef("");
+  const summariesDuringLoad = useRef(new Map<string, MediaSummary>());
   const pickerWaiters = useRef(new Map<string, { resolve: (paths: string[]) => void; reject: (e: Error) => void }>());
 
   const dismissToast = useCallback((id: number) => {
@@ -239,9 +253,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [palette]);
 
-  const consume = (st: DesktopState) => {
-    setChats(st.chats ?? []);
-    setSelected((prev) => prev || st.chats?.find((c) => c.current)?.slug || st.chats?.[0]?.slug || "");
+  const consume = useCallback((st: DesktopState) => {
     setDl(st.download ?? null);
     setOp(st.operation ?? null);
     setDone(st.done ?? null);
@@ -267,7 +279,7 @@ export default function App() {
       }
       call("ackDialog", { seq: st.dialog.seq }).catch(() => undefined);
     }
-  };
+  }, [toast]);
 
   const requestPick = (method: string, purpose: string, title: string) =>
     new Promise<string[]>((resolve, reject) => {
@@ -281,15 +293,70 @@ export default function App() {
   const pickFolder = (purpose: string, title: string) =>
     requestPick("pickFolder", purpose, title).then((paths) => paths[0] ?? "");
 
-  const refresh = () => {
-    call<DesktopState>("state")
-      .then(consume)
-      .catch(() => undefined);
-    call<Bootstrap>("bootstrap").then(setBoot).catch(() => undefined);
-  };
+  const refresh = useCallback(() => {
+    libraryLoad.current?.abort();
+    const controller = new AbortController();
+    libraryLoad.current = controller;
+    summariesDuringLoad.current.clear();
+    const { signal } = controller;
+    const bootstrap = call<Bootstrap>("bootstrap", undefined, signal).then((next) => {
+      if (signal.aborted) return null;
+      const key = next.libraryKey || "";
+      const sameLibrary = activeLibraryKey.current === key;
+      activeLibraryKey.current = key;
+      setBoot(next);
+      if (!sameLibrary) {
+        setChats([]);
+        setSelected("");
+      }
+      return { next, key, sameLibrary };
+    });
+    void Promise.allSettled([
+      bootstrap,
+      call<{ libraryKey: string; chats: ChatRow[] }>("listChats", undefined, signal),
+    ]).then(([bootResult, list]) => {
+      if (signal.aborted || bootResult.status !== "fulfilled" || !bootResult.value) return;
+      const { next, key, sameLibrary } = bootResult.value;
+      if (list.status === "fulfilled" && list.value.libraryKey === key) {
+        const rows = list.value.chats.map((row) => {
+          const summary = sameLibrary ? summariesDuringLoad.current.get(row.slug) : undefined;
+          return summary ? withMediaSummary(row, summary) : row;
+        });
+        setBoot({ ...next, chats: rows.length });
+        setChats(rows);
+        setSelected((prev) => (sameLibrary && rows.some((row) => row.slug === prev) ? prev : rows.find((row) => row.current)?.slug || rows[0]?.slug || ""));
+      }
+    }).finally(() => {
+      if (libraryLoad.current === controller) {
+        libraryLoad.current = null;
+        summariesDuringLoad.current.clear();
+      }
+    });
+  }, []);
+
+  const applyMediaSummary = useCallback((libraryKey: string, slug: string, summary: MediaSummary) => {
+    if (libraryKey !== activeLibraryKey.current) return;
+    if (libraryLoad.current) summariesDuringLoad.current.set(slug, summary);
+    setChats((rows) => {
+      const row = rows.find((item) => item.slug === slug);
+      if (!row) return rows;
+      const updated = withMediaSummary(row, summary);
+      return updated === row ? rows : rows.map((item) => item === row ? updated : item);
+    });
+  }, []);
 
   useEffect(() => {
-    call<Bootstrap>("bootstrap").then(setBoot).catch((e: Error) => toast(e.message, true));
+    refresh();
+    const timer = window.setInterval(() => {
+      if (!libraryLoad.current && !document.hidden) refresh();
+    }, 60_000);
+    return () => {
+      window.clearInterval(timer);
+      libraryLoad.current?.abort();
+    };
+  }, [refresh]);
+
+  useEffect(() => {
     call<{ videoSeekSeconds: number; videoLongPressRate: number; videoLongPressDelayMs: number; videoMaxVolume: number; videoVolumeStep: number; videoFrameAspect: string; speedWindowSeconds: number; viewerBackdrop: string }>("getSettings")
       .then((s) =>
         setPrefs({
@@ -304,11 +371,12 @@ export default function App() {
         })
       )
       .catch(() => undefined);
-    let alive = true;
+    const controller = new AbortController();
+    let timer = 0;
     const tick = async () => {
       try {
-        const st = await call<DesktopState>("state");
-        if (!alive) return;
+        const st = await call<DesktopState>("state", undefined, controller.signal);
+        if (controller.signal.aborted) return;
         consume(st);
         if (st.download) {
           const now = Date.now();
@@ -320,15 +388,16 @@ export default function App() {
         }
       } catch {
         /* transient during shutdown */
+      } finally {
+        if (!controller.signal.aborted) timer = window.setTimeout(tick, 600);
       }
     };
-    tick();
-    const id = window.setInterval(tick, 600);
+    void tick();
     return () => {
-      alive = false;
-      window.clearInterval(id);
+      controller.abort();
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [consume]);
 
   useEffect(() => {
     let disposed = false;
@@ -421,6 +490,7 @@ export default function App() {
       running,
       history,
       refresh,
+      applyMediaSummary,
       toast,
       go,
       openOnline,
@@ -434,7 +504,7 @@ export default function App() {
       applyPrefs: setPrefs,
       setToastSeconds,
     }),
-    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, toast, setToastSeconds]
+    [boot, chats, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, refresh, applyMediaSummary, toast, setToastSeconds]
   );
 
   useEffect(() => {
@@ -466,7 +536,7 @@ export default function App() {
       }
     });
     if (completed) refresh();
-  }, [tasks]);
+  }, [tasks, refresh, toast]);
 
   interface Command {
     id: string;

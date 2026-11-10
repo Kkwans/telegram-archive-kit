@@ -1,6 +1,8 @@
 export interface Bootstrap {
   version: string;
   libraryRoot: string;
+  libraryKey?: string;
+  libraryKind?: "local" | "remote" | "unknown";
   tdl: string;
   tdlRunning: boolean;
   hasSession: boolean;
@@ -33,6 +35,7 @@ export interface ChatRow {
   id?: string;
   messages: number;
   media: number;
+  mediaReady?: boolean;
   images?: number;
   videos?: number;
   audio?: number;
@@ -188,8 +191,33 @@ export interface MediaItem {
   modTime: number;
   rel: string;
   thumb?: string;
+  thumbSize?: number;
+  thumbModTime?: number;
   width?: number;
   height?: number;
+}
+
+export interface MediaSummary {
+  total: number;
+  images: number;
+  videos: number;
+  audio: number;
+  files: number;
+  bytes: number;
+  imageBytes: number;
+  videoBytes: number;
+  audioBytes: number;
+  fileBytes: number;
+}
+
+export interface MediaPage {
+  items: MediaItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  version: string;
+  summary: MediaSummary;
+  stale: boolean;
 }
 
 export interface PendingInput {
@@ -231,6 +259,7 @@ export interface HomeStats {
   audio: number;
   files: number;
   mediaBytes: number;
+  pendingMedia?: number;
   diskFree: number;
   diskTotal: number;
   libraryBytes: number;

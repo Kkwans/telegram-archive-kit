@@ -111,7 +111,7 @@ func (dst *App) copyChatFromLibrary(srcRoot, srcSlug string) (WorkspaceMeta, err
 		if target.Chat.Type == "" {
 			target.Chat.Type = srcMeta.Chat.Type
 		}
-		_ = writeJSON(dst.workspaceMetaPath(target.Slug), target)
+		_ = dst.writeWorkspaceMeta(target.Slug, target)
 	}
 	targetSlug := target.Slug
 
@@ -167,7 +167,7 @@ func (dst *App) copyChatFromLibrary(srcRoot, srcSlug string) (WorkspaceMeta, err
 	} else {
 		m, _ := dst.readWorkspaceMeta(targetSlug)
 		m.UpdatedAt = time.Now()
-		_ = writeJSON(dst.workspaceMetaPath(targetSlug), m)
+		_ = dst.writeWorkspaceMeta(targetSlug, m)
 		_ = dst.buildLibrary()
 	}
 	return dst.readWorkspaceMeta(targetSlug)

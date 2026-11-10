@@ -26,17 +26,20 @@ var (
 // atom sits after mdat. Chromium otherwise has to fetch the whole file before
 // it can even render the first frame, which makes a local 100 MB video feel
 // like a network stream. The cache is copied (not re-encoded) and capped.
-func (f *Facade) PlayableMediaPath(slug, rel string) (string, error) {
-	abs, _, err := f.mediaRelAbs(slug, rel)
+func (f *Facade) PlayableMediaPath(ctx context.Context, root, slug, rel string, remux bool) (string, error) {
+	workspace, err := checkedWorkspaceDir(root, slug)
 	if err != nil {
 		return "", err
 	}
-	ext := strings.ToLower(filepath.Ext(abs))
-	if !playbackFormat[ext] || hasFaststart(abs) {
-		return abs, nil
+	abs, _, err := checkedWorkspaceFile(workspace, rel, nil)
+	if err != nil {
+		return "", err
 	}
-	exe := media.FindFFmpeg()
-	if exe == "" {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	ext := strings.ToLower(filepath.Ext(abs))
+	if !remux || !playbackFormat[ext] {
 		return abs, nil
 	}
 	st, err := os.Stat(abs)
@@ -49,32 +52,57 @@ func (f *Facade) PlayableMediaPath(slug, rel string) (string, error) {
 	if fileExists(dst) {
 		return dst, nil
 	}
-	// Remuxing one clip must not block a different clip that the viewer is
-	// prefetching at the same time. Per-file locks also collapse duplicate work.
-	lockValue, _ := playbackLocks.LoadOrStore(dst, &sync.Mutex{})
-	lock := lockValue.(*sync.Mutex)
-	lock.Lock()
-	defer lock.Unlock()
+	if hasFaststart(abs) {
+		return abs, nil
+	}
+	exe := media.FindFFmpeg()
+	if exe == "" {
+		return abs, nil
+	}
+	for {
+		done := make(chan struct{})
+		if previous, busy := playbackLocks.LoadOrStore(dst, done); busy {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-previous.(chan struct{}):
+			}
+			if fileExists(dst) {
+				return dst, nil
+			}
+			continue
+		}
+		defer func() {
+			playbackLocks.Delete(dst)
+			close(done)
+		}()
+		break
+	}
 	if fileExists(dst) {
 		return dst, nil
 	}
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return abs, nil
 	}
-	tmp := dst + ".tmp" + ext
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	file, err := os.CreateTemp(cacheDir, ".playback-*"+ext)
+	if err != nil {
+		return abs, nil
+	}
+	tmp := file.Name()
+	defer os.Remove(tmp)
+	if err := file.Close(); err != nil {
+		return abs, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	cmd := hideWindow(exec.CommandContext(ctx, exe,
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-i", abs, "-map", "0", "-c", "copy", "-movflags", "+faststart", tmp,
 	))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = out
-		_ = os.Remove(tmp)
+	if err := cmd.Run(); err != nil {
 		return abs, nil
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
 		return abs, nil
 	}
 	prunePlaybackCache(cacheDir, playbackMax)

@@ -132,7 +132,7 @@ func (a *App) registerOfficialExport(slug, root, mode string) (OfficialExportMet
 		wm.Chat.Name = meta.Name
 	}
 	wm.UpdatedAt = time.Now()
-	_ = writeJSON(a.workspaceMetaPath(slug), wm)
+	_ = a.writeWorkspaceMeta(slug, wm)
 	return meta, nil
 }
 

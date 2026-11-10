@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -40,6 +41,9 @@ type Bridge struct {
 	previewProgress   OnlineExportProgress
 	previewCancel     context.CancelFunc
 	previewGeneration uint64
+	remoteMediaSlots  chan struct{}
+	thumbFlights      sync.Map
+	remoteCacheSweeps sync.Map
 
 	fsWindow fsWindowState
 }
@@ -100,10 +104,11 @@ type stateReply struct {
 
 func NewBridge(f *takapp.Facade) *Bridge {
 	return &Bridge{
-		facade:  f,
-		profile: NewProfileService(f.ConfigDir()),
-		online:  NewOnlineService(f.ConfigDir()),
-		mounts:  make(map[string]*rcloneMount),
+		facade:           f,
+		profile:          NewProfileService(f.ConfigDir()),
+		online:           NewOnlineService(f.ConfigDir()),
+		mounts:           make(map[string]*rcloneMount),
+		remoteMediaSlots: make(chan struct{}, 6),
 	}
 }
 
@@ -199,7 +204,7 @@ func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(apiReply{Error: "请求格式错误"})
 		return
 	}
-	result, err := b.dispatch(req.Method, req.Params)
+	result, err := b.dispatch(r.Context(), req.Method, req.Params)
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(apiReply{Error: err.Error()})
 		return
@@ -251,9 +256,15 @@ type apiParams struct {
 	Y                   int                 `json:"y"`
 	Seq                 int64               `json:"seq"`
 	Purpose             string              `json:"purpose"`
+	Query               string              `json:"query"`
+	Sort                string              `json:"sort"`
+	Page                int                 `json:"page"`
+	Version             string              `json:"version"`
+	Refresh             bool                `json:"refresh"`
+	LibraryKey          string              `json:"libraryKey"`
 }
 
-func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
+func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p apiParams
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
@@ -267,9 +278,12 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "bootstrap":
 		return b.facade.Bootstrap(), nil
 	case "listChats":
-		return b.facade.ListChats(), nil
+		return b.facade.LibraryChats()
 	case "chatMedia":
-		return b.facade.ChatMedia(p.Slug)
+		return b.facade.ChatMedia(ctx, takapp.MediaQuery{
+			Slug: p.Slug, Kind: p.Kind, Sort: p.Sort, Query: p.Query, Page: p.Page,
+			Version: p.Version, Refresh: p.Refresh, LibraryKey: p.LibraryKey,
+		})
 	case "startImportJSON":
 		id, err := b.facade.StartImportJSON(p.Paths)
 		if err != nil {
@@ -327,9 +341,9 @@ func (b *Bridge) dispatch(method string, raw json.RawMessage) (any, error) {
 	case "deleteTask":
 		return nil, b.facade.DeleteTask(p.ID)
 	case "revealMedia":
-		return nil, b.facade.RevealMedia(p.Slug, p.Path)
+		return nil, b.facade.RevealMedia(p.Slug, p.Path, p.LibraryKey)
 	case "openMedia":
-		return nil, b.facade.OpenMedia(p.Slug, p.Path)
+		return nil, b.facade.OpenMedia(p.Slug, p.Path, p.LibraryKey)
 	case "state":
 		return b.stateReply(), nil
 	case "ackPending":
@@ -768,15 +782,51 @@ func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	slug := r.URL.Query().Get("slug")
-	name := r.URL.Query().Get("f")
-	path, err := b.facade.PlayableMediaPath(slug, name)
+	query := r.URL.Query()
+	root, remote, ok := b.facade.MediaLibrary(query.Get("k"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+	slug, name, version := query.Get("slug"), query.Get("f"), query.Get("v")
+	preview := query.Get("preview") == "1"
+	var cachePath string
+	var size, modTime int64
+	if remote && preview && version != "" {
+		if n, mtime, ok := b.facade.CachedMediaThumbnail(root, slug, name, version); ok && n > 0 && n <= 8<<20 {
+			cachePath = remoteThumbnailPath(b.facade.ConfigDir(), root, slug, name, n, mtime)
+			size, modTime = n, mtime
+			if cached, err := os.Stat(cachePath); err == nil && cached.Size() == size {
+				serveMediaFile(w, r, cachePath, name, true)
+				return
+			}
+		}
+	}
+	if remote {
+		select {
+		case b.remoteMediaSlots <- struct{}{}:
+			defer func() { <-b.remoteMediaSlots }()
+		case <-ctx.Done():
+			return
+		}
+	}
+	path, err := b.facade.PlayableMediaPath(ctx, root, slug, name, !remote && !preview && query.Get("prefetch") != "1")
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	if cached := b.cachedRemoteThumb(path, slug, name); cached != "" {
-		path = cached
+	if cachePath != "" {
+		if cached := b.cacheRemoteThumbnail(ctx, path, cachePath, size, modTime); cached != "" {
+			path = cached
+		}
+	}
+	serveMediaFile(w, r, path, name, version != "")
+}
+
+func serveMediaFile(w http.ResponseWriter, r *http.Request, path, name string, versioned bool) {
+	if r.Context().Err() != nil {
+		return
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -785,11 +835,24 @@ func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	st, err := f.Stat()
-	if err != nil {
+	if err != nil || !st.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
 	}
-	// Archived media is immutable and re-reading is the dominant viewer cost.
-	w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
-	http.ServeContent(w, r, name, st.ModTime(), f)
+	if versioned {
+		w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+	}
+	http.ServeContent(w, r, name, st.ModTime(), mediaReader{r.Context(), f})
+}
+
+type mediaReader struct {
+	ctx context.Context
+	io.ReadSeeker
+}
+
+func (r mediaReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.ReadSeeker.Read(p)
 }

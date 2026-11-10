@@ -4,6 +4,8 @@ package app
 type BootstrapDTO struct {
 	Version     string   `json:"version"`
 	LibraryRoot string   `json:"libraryRoot"`
+	LibraryKey  string   `json:"libraryKey"`
+	LibraryKind string   `json:"libraryKind"`
 	Tdl         string   `json:"tdl"`
 	TdlRunning  bool     `json:"tdlRunning"`
 	HasSession  bool     `json:"hasSession"`
@@ -22,6 +24,7 @@ type ChatDTO struct {
 	ID         string `json:"id,omitempty"`
 	Messages   int    `json:"messages"`
 	Media      int    `json:"media"`
+	MediaReady bool   `json:"mediaReady"`
 	Images     int    `json:"images,omitempty"`
 	Videos     int    `json:"videos,omitempty"`
 	Audio      int    `json:"audio,omitempty"`
@@ -40,6 +43,11 @@ type ChatDTO struct {
 	Official   int    `json:"official"`
 	Dir        string `json:"dir"`
 	Current    bool   `json:"current"`
+}
+
+type LibraryChatsDTO struct {
+	LibraryKey string    `json:"libraryKey"`
+	Chats      []ChatDTO `json:"chats"`
 }
 
 // OperationDTO carries non-download stages (checking / building / verifying).

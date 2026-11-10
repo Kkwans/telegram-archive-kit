@@ -325,7 +325,7 @@ func (f *Facade) importOfficial(folder, slug, mode string, onMeta func(archive.O
 	if wm.Slug == "" {
 		wm.Slug = slug
 	}
-	_ = writeJSON(f.a.workspaceMetaPath(slug), wm)
+	_ = f.a.writeWorkspaceMeta(slug, wm)
 
 	// Official-only workspaces can now build thumbnails and pages from their
 	// messages.html. Do the full build here so an import immediately shows covers
@@ -383,7 +383,7 @@ func (f *Facade) BindChatIdentity(slug, id, name, chatType string) error {
 		meta.Chat.Type = chatType
 	}
 	meta.UpdatedAt = time.Now()
-	return writeJSON(f.a.workspaceMetaPath(slug), meta)
+	return f.a.writeWorkspaceMeta(slug, meta)
 }
 
 func (f *Facade) DeleteChat(slug string) error {
