@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -42,11 +42,11 @@ function avatarStyle(chat: OnlineChat): CSSProperties {
   };
 }
 
-function shortWhen(seconds?: number): string {
+function shortWhen(seconds: number | undefined, today: string): string {
   if (!seconds) return "";
   const d = new Date(seconds * 1000);
   const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
+  const sameDay = d.toDateString() === today;
   const pad = (n: number) => String(n).padStart(2, "0");
   if (sameDay) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const yesterday = new Date(now);
@@ -72,6 +72,97 @@ const FILTERS = [
   { key: "local", label: "本地已有" },
 ] as const;
 
+const OnlineChatRow = memo(function OnlineChatRow({
+  chat: c,
+  selected,
+  today,
+  onSelect,
+}: {
+  chat: OnlineChat;
+  selected: boolean;
+  today: string;
+  onSelect: (peer: string) => void;
+}) {
+  const meta = typeMeta(c.type);
+  return (
+    <button
+      role="option"
+      aria-selected={selected}
+      className={`online-row ${selected ? "on" : ""}`}
+      onClick={() => onSelect(c.peer)}
+    >
+      {c.avatar ? (
+        <img className="online-avatar" src={c.avatar} alt="" loading="lazy" />
+      ) : (
+        <span className="online-avatar" style={avatarStyle(c)}>{initials(c.name)}</span>
+      )}
+      <span className="online-row-main">
+        <span className="online-row-top">
+          <b>{c.name}</b>
+          {c.pinned && <Pin size={11} className="online-pin" />}
+          <span className={`online-type ${meta.tone}`}>{meta.label}</span>
+          {c.archived && <span className="online-type archived">归档夹</span>}
+        </span>
+        <span className="online-row-sub">
+          {c.username && <span className="online-username">@{c.username}</span>}
+          <span className="online-preview-text">{c.lastMessage || "暂无消息"}</span>
+        </span>
+      </span>
+      <span className="online-row-side">
+        <span className="online-time">{shortWhen(c.lastDate, today)}</span>
+        {!!c.unread && <span className="online-unread">{c.unread > 99 ? "99+" : c.unread}</span>}
+        {c.archivedLocally && <CheckCircle2 size={12} className="online-local-check" />}
+      </span>
+    </button>
+  );
+});
+
+const OnlineChatList = memo(function OnlineChatList({
+  chats,
+  selectedPeer,
+  loading,
+  hasData,
+  today,
+  onSelect,
+}: {
+  chats: OnlineChat[];
+  selectedPeer: string;
+  loading: boolean;
+  hasData: boolean;
+  today: string;
+  onSelect: (peer: string) => void;
+}) {
+  return (
+    <div className="online-list" role="listbox" aria-label="在线聊天列表">
+      {loading && !hasData ? (
+        Array.from({ length: 9 }).map((_, i) => (
+          <div key={i} className="online-row skeleton">
+            <span className="online-avatar skeleton-block" />
+            <span className="online-row-main"><i className="skeleton-line w-160" /><i className="skeleton-line w-220" /></span>
+          </div>
+        ))
+      ) : chats.length === 0 ? (
+        <div className="online-list-empty">
+          <Search size={22} />
+          <b>没有匹配的会话</b>
+          <span>换一个关键词或筛选条件。</span>
+        </div>
+      ) : (
+        chats.map((chat) => (
+          <OnlineChatRow
+            key={chat.peer}
+            chat={chat}
+            selected={chat.peer === selectedPeer}
+            today={today}
+            onSelect={onSelect}
+          />
+        ))
+      )}
+      {loading && hasData && <div className="online-loading-more"><Loader2 size={14} className="spin" /> 正在刷新…</div>}
+    </div>
+  );
+});
+
 export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [data, setData] = useState<OnlineChats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,13 +175,24 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [previewTarget, setPreviewTarget] = useState<OnlineUpdateTarget | null>(null);
   const request = useRef(0);
 
-  const load = async (announce = false) => {
+  const load = async (announce = false, useCache = false) => {
     const seq = ++request.current;
+    let liveApplied = false;
     setLoading(true);
     setError("");
+    if (useCache) {
+      // Show the snapshot as soon as it arrives, without delaying the live request.
+      void call<OnlineChats | null>("onlineChatsCached")
+        .then((cached) => {
+          if (seq !== request.current || liveApplied || !cached?.chats?.length) return;
+          setData(cached);
+        })
+        .catch(() => undefined);
+    }
     try {
       const res = await call<OnlineChats>("onlineChats", { timeout: 35 });
       if (seq !== request.current) return;
+      liveApplied = true;
       setData(res);
       if (res.error) setError(res.error);
       if (announce) ctx.toast(`已刷新 ${res.chats.length} 个在线会话`);
@@ -104,26 +206,21 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
 
   useEffect(() => {
     let cancelled = false;
-    const boot = async () => {
-      try {
-        const cached = await call<OnlineChats | null>("onlineChatsCached");
-        if (!cancelled && cached?.chats?.length) {
-          setData(cached);
-          setLoading(false);
-        }
-      } catch {
-        // A missing cache is normal on the first visit.
-      }
-      if (!cancelled) void load();
+    // Deferring one microtask also avoids duplicating the request in StrictMode's
+    // development-only mount/cleanup cycle.
+    void Promise.resolve().then(() => { if (!cancelled) void load(false, true); });
+    return () => {
+      cancelled = true;
+      request.current++;
     };
-    void boot();
-    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const avatarSeed = data?.fetchedAt;
   useEffect(() => {
-    if (!data || !ctx.boot?.hasSession) return;
+    // Avatar downloads and live dialog retrieval share a backend lock. Waiting
+    // until the refresh settles prevents cached avatars from delaying it.
+    if (!data || loading || !ctx.boot?.hasSession) return;
     const peers = data.chats.slice(0, 16).filter((c) => c.hasPhoto && !c.avatar).map((c) => c.peer);
     if (peers.length === 0) return;
     let cancelled = false;
@@ -138,7 +235,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
       .catch(() => undefined);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [avatarSeed]);
+  }, [avatarSeed, loading, ctx.boot?.hasSession]);
 
   const chats = data?.chats ?? [];
 
@@ -204,6 +301,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
 
   const selected = visible.find((c) => c.peer === selectedPeer) || chats.find((c) => c.peer === selectedPeer) || null;
   const canExport = !!data?.chats.length;
+  const today = new Date().toDateString();
   const summary = [
     { label: "全部会话", value: counts.all },
     { label: "私聊", value: counts.private },
@@ -325,60 +423,14 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
           </div>
 
           <div className="online-layout">
-            <div className="online-list" role="listbox" aria-label="在线聊天列表">
-              {loading && !data ? (
-                Array.from({ length: 9 }).map((_, i) => (
-                  <div key={i} className="online-row skeleton">
-                    <span className="online-avatar skeleton-block" />
-                    <span className="online-row-main"><i className="skeleton-line w-160" /><i className="skeleton-line w-220" /></span>
-                  </div>
-                ))
-              ) : visible.length === 0 ? (
-                <div className="online-list-empty">
-                  <Search size={22} />
-                  <b>没有匹配的会话</b>
-                  <span>换一个关键词或筛选条件。</span>
-                </div>
-              ) : (
-                visible.map((c) => {
-                  const meta = typeMeta(c.type);
-                  const on = c.peer === selectedPeer;
-                  return (
-                    <button
-                      key={c.peer}
-                      role="option"
-                      aria-selected={on}
-                      className={`online-row ${on ? "on" : ""}`}
-                      onClick={() => setSelectedPeer(c.peer)}
-                    >
-                      {c.avatar ? (
-                        <img className="online-avatar" src={c.avatar} alt="" loading="lazy" />
-                      ) : (
-                        <span className="online-avatar" style={avatarStyle(c)}>{initials(c.name)}</span>
-                      )}
-                      <span className="online-row-main">
-                        <span className="online-row-top">
-                          <b>{c.name}</b>
-                          {c.pinned && <Pin size={11} className="online-pin" />}
-                          <span className={`online-type ${meta.tone}`}>{meta.label}</span>
-                          {c.archived && <span className="online-type archived">归档夹</span>}
-                        </span>
-                        <span className="online-row-sub">
-                          {c.username && <span className="online-username">@{c.username}</span>}
-                          <span className="online-preview-text">{c.lastMessage || "暂无消息"}</span>
-                        </span>
-                      </span>
-                      <span className="online-row-side">
-                        <span className="online-time">{shortWhen(c.lastDate)}</span>
-                        {!!c.unread && <span className="online-unread">{c.unread > 99 ? "99+" : c.unread}</span>}
-                        {c.archivedLocally && <CheckCircle2 size={12} className="online-local-check" />}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-              {loading && data && <div className="online-loading-more"><Loader2 size={14} className="spin" /> 正在刷新…</div>}
-            </div>
+            <OnlineChatList
+              chats={visible}
+              selectedPeer={selectedPeer}
+              loading={loading}
+              hasData={!!data}
+              today={today}
+              onSelect={setSelectedPeer}
+            />
 
             <aside className="online-detail" aria-label="在线聊天详情">
               {!selected ? (
