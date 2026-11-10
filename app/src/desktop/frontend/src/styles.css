@@ -1870,6 +1870,7 @@ html[data-theme="dark"] .palette {
 }
 .viewer-stage.image { padding: 10px 26px 8px; overflow: hidden; }
 .viewer-stage.video { cursor: var(--cursor-close); }
+.tak-player-fullscreen { display: grid; place-items: center; height: 100%; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 /* While panning, the pointer can fall outside the moving media for a frame;
    the whole stage must keep the grab cursor instead of the close cursor. */
 .viewer-stage.dragging { cursor: grabbing; }

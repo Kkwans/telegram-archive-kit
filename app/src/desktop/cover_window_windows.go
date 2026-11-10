@@ -610,7 +610,7 @@ func showFsCover(dataURL string) bool {
 // hideFsCover removes the cover. A non-zero fadeMs cross-fades the native
 // window into the page-owned cover, which is what makes the exit hand-off
 // invisible: both surfaces show the same blurred frame at the same geometry.
-func hideFsCover(fadeMs int) {
+func hideFsCover(fadeMs int, afterHide func()) {
 	coverAnimGen.Add(1)
 	gen := coverFade.Add(1)
 	var hwnd uintptr
@@ -618,14 +618,17 @@ func hideFsCover(fadeMs int) {
 		hwnd = coverHWND
 	})
 	if hwnd == 0 {
+		application.InvokeSync(afterHide)
 		return
 	}
+	finish := func() {
+		if coverHWND == hwnd && coverFade.Load() == gen {
+			hideCoverWindow(hwnd)
+			afterHide()
+		}
+	}
 	if fadeMs <= 0 {
-		application.InvokeSync(func() {
-			if coverHWND == hwnd {
-				hideCoverWindow(hwnd)
-			}
-		})
+		application.InvokeSync(finish)
 		return
 	}
 	go func() {
@@ -644,15 +647,7 @@ func hideFsCover(fadeMs int) {
 			application.InvokeSync(paintCover)
 			time.Sleep(16 * time.Millisecond)
 		}
-		if coverFade.Load() != gen {
-			return
-		}
-		application.InvokeSync(func() {
-			if coverHWND != hwnd {
-				return
-			}
-			hideCoverWindow(hwnd)
-		})
+		application.InvokeSync(finish)
 	}()
 }
 

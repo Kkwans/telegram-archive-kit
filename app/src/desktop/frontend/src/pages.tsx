@@ -1399,7 +1399,9 @@ const ArtVideo = forwardRef<VideoApi, {
   autoNext: boolean;
   onNext: () => void;
   onAutoNext: () => void;
-}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, onNext, onAutoNext }, ref) {
+  fullscreen: boolean;
+  onFullscreen: () => void;
+}>(function ArtVideo({ src, poster, maxVolume, frameAspect, knownRatio, hasNext, autoNext, onNext, onAutoNext, fullscreen, onFullscreen }, ref) {
   const wrap = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const fitRef = useRef<() => void>(() => undefined);
@@ -1408,6 +1410,9 @@ const ArtVideo = forwardRef<VideoApi, {
   const autoNextRef = useRef(autoNext);
   const onNextRef = useRef(onNext);
   const onAutoNextRef = useRef(onAutoNext);
+  const fullscreenButtonRef = useRef<HTMLButtonElement | null>(null);
+  const onFullscreenRef = useRef(onFullscreen);
+  onFullscreenRef.current = onFullscreen;
   autoNextRef.current = autoNext;
   onNextRef.current = onNext;
   onAutoNextRef.current = onAutoNext;
@@ -1604,9 +1609,7 @@ const ArtVideo = forwardRef<VideoApi, {
       playbackRate: false,
       aspectRatio: true,
       screenshot: false,
-      // The player control uses ArtPlayer's own HTML fullscreen, which is a
-      // separate feature from the top-bar window-level fullscreen.
-      fullscreen: true,
+      fullscreen: false,
       fullscreenWeb: false,
       hotkey: false,
       miniProgressBar: true,
@@ -1850,10 +1853,15 @@ const ArtVideo = forwardRef<VideoApi, {
     if (volumeControl && volumeControl.parentElement !== player.template.$controlsRight) {
       player.template.$controlsRight.insertBefore(volumeControl, settingControl);
     }
-    // Keep ArtPlayer's native HTML-fullscreen control in the bottom-right
-    // corner, to the right of the settings gear.
-    const fsControl = player.template.$controlsRight.querySelector(".art-control-fullscreen");
-    if (fsControl) player.template.$controlsRight.appendChild(fsControl);
+    const fullscreenButton = document.createElement("button");
+    fullscreenButton.type = "button";
+    fullscreenButton.className = "tak-player-fullscreen";
+    fullscreenButton.onclick = (event) => {
+      event.stopPropagation();
+      onFullscreenRef.current();
+    };
+    fullscreenButtonRef.current = fullscreenButton;
+    player.controls.add({ name: "fullscreen", position: "right", index: 100, html: fullscreenButton });
     const timeAbove = document.createElement("div");
     timeAbove.className = "tak-time-above";
     const clock = (value: number) => {
@@ -1930,10 +1938,20 @@ const ArtVideo = forwardRef<VideoApi, {
       window.clearTimeout(switchTimer.current);
       player.destroy(false);
       playerRef.current = null;
+      fullscreenButtonRef.current = null;
       switchSourceRef.current = null;
       nextButtonRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const button = fullscreenButtonRef.current;
+    const player = playerRef.current;
+    if (!button || !player) return;
+    button.title = fullscreen ? "退出全屏" : "全屏";
+    button.setAttribute("aria-label", button.title);
+    button.replaceChildren((fullscreen ? player.icons.fullscreenOff : player.icons.fullscreenOn).cloneNode(true));
+  }, [fullscreen]);
 
   return (
     <>
@@ -2173,14 +2191,6 @@ function MediaViewer({
   immersiveRef.current = immersive;
   const [windowFs, setWindowFs] = useState(false);
   const windowFsRef = useRef(false);
-  const htmlFsReleasedAt = useRef(0);
-  useEffect(() => {
-    const onChange = () => {
-      if (!document.fullscreenElement) htmlFsReleasedAt.current = performance.now();
-    };
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
   const fsBusy = useRef(false);
   const [fsGhost, setFsGhost] = useState<FsGhost | null>(null);
   const [fsShowGhost, setFsShowGhost] = useState(false);
@@ -2602,20 +2612,11 @@ function MediaViewer({
           void actionsRef.current.transitionFullscreen(false);
           return;
         }
-        if (document.fullscreenElement) {
-          // Escape in the player's HTML fullscreen backs out one layer only.
-          void document.exitFullscreen().catch(() => undefined);
-          return;
-        }
-        // The browser may already have left HTML fullscreen before this
-        // keydown arrives; don't also close the viewer in that same gesture.
-        if (performance.now() - htmlFsReleasedAt.current < 300) return;
         if (immersiveRef.current) setImmersive(false);
         else actionsRef.current.closeViewer();
         return;
       }
       if (e.key === "Enter") {
-        if (document.fullscreenElement) return;
         e.preventDefault();
         void actionsRef.current.transitionFullscreen(!windowFsRef.current);
         return;
@@ -2887,6 +2888,8 @@ function MediaViewer({
             autoNext={hasNext && (!items[index + 1] || items[index + 1].kind === "video")}
             onNext={() => onStep(1)}
             onAutoNext={() => onStep(1, true)}
+            fullscreen={windowFs}
+            onFullscreen={toggleFullscreen}
           />
         ) : (
           <div

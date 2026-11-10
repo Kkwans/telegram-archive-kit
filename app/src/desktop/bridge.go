@@ -54,10 +54,6 @@ type Bridge struct {
 // several frames on this WebView2 build.
 type fsWindowState struct {
 	Active    bool
-	X, Y      int
-	Width     int
-	Height    int
-	Maximised bool
 	AlwaysTop bool
 }
 
@@ -469,7 +465,11 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		return map[string]bool{"fullscreen": b.setScreenFullscreen(p.Fullscreen, p.Cover)}, nil
 	case "hideFullscreenCover":
-		hideFsCover(p.Fade)
+		hideFsCover(p.Fade, func() {
+			if b.fsWindow.Active && b.window != nil {
+				raiseActiveFullscreen(uintptr(b.window.NativeWindow()))
+			}
+		})
 		return nil, nil
 	case "showFullscreenCover":
 		if p.Sharp != "" && len(p.From) >= 4 {
@@ -479,7 +479,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 	case "animateFullscreenCover":
 		return map[string]bool{"animated": animateFsCover(p.From, p.To, p.Radius, p.Duration)}, nil
 	case "windowFullscreenState":
-		return map[string]bool{"fullscreen": b.fsWindow.Active}, nil
+		return map[string]bool{"fullscreen": application.InvokeSyncWithResult(func() bool { return b.fsWindow.Active })}, nil
 	case "onlineChats":
 		return b.OnlineChats(p.Timeout)
 	case "onlineChatsCached":
@@ -677,46 +677,41 @@ func (b *Bridge) owner() uintptr {
 	return 0
 }
 
-// setScreenFullscreen covers the primary monitor with a normal borderless
-// window instead of toggling WS_POPUP fullscreen. The latter exposes several
-// frames of the old WebView2 surface (white/unpainted) before Chromium commits
-// the enlarged frame. A regular SetWindowPos resize keeps the child and page
-// geometry in the same WM_SIZE turn.
+// Keep the transition cover visible while Wails switches the native window
+// style and WebView2 resizes.
 func (b *Bridge) setScreenFullscreen(on bool, cover string) bool {
+	return application.InvokeSyncWithResult(func() bool {
+		return b.applyScreenFullscreen(on, cover)
+	})
+}
+
+func (b *Bridge) applyScreenFullscreen(on bool, cover string) bool {
+	hwnd := uintptr(b.window.NativeWindow())
+	if hwnd == 0 {
+		return false
+	}
 	if on {
 		if b.fsWindow.Active {
 			return true
 		}
-		x, y := b.window.Position()
-		w, h := b.window.Size()
-		b.fsWindow = fsWindowState{
-			Active: true, X: x, Y: y, Width: w, Height: h,
-			Maximised: b.window.IsMaximised(),
-		}
-		screen := application.Get().Screen.GetPrimary()
-		if screen == nil {
-			b.fsWindow.Active = false
-			return false
-		}
-		if b.fsWindow.Maximised {
-			// A maximized window ignores move/resize; reset to normal first.
-			b.window.UnMaximise()
-		}
+		alwaysOnTop := windowIsTopmost(hwnd)
 		r1, r2 := applyDarkWindowFrame(b.window.NativeWindow())
 		if r1 != 0 && r2 != 0 {
 			log.Printf("dark window frame failed: hr20=%#x hr19=%#x", r1, r2)
 		}
-		b.window.SetAlwaysOnTop(true)
-		raiseFsCover()
-		// The cover must be above the (now topmost) main window, and it must be
-		// visible before SetWindowPos grows the window: WebView2 presents the old
-		// surface for a few frames and the exposed strip would otherwise show the
-		// Mica base colour.
 		if cover != "" {
 			showFsCover(cover)
 		}
-		b.window.SetPosition(screen.Bounds.X, screen.Bounds.Y)
-		b.window.SetSize(screen.Bounds.Width, screen.Bounds.Height)
+		b.window.Fullscreen()
+		if !b.window.IsFullscreen() {
+			return false
+		}
+		b.fsWindow = fsWindowState{Active: true, AlwaysTop: alwaysOnTop}
+		b.window.SetAlwaysOnTop(true)
+		markFullscreen(hwnd, true)
+		b.window.Focus()
+		raiseActiveFullscreen(hwnd)
+		raiseFsCover()
 		return true
 	}
 	if !b.fsWindow.Active {
@@ -727,12 +722,9 @@ func (b *Bridge) setScreenFullscreen(on bool, cover string) bool {
 	// has settled at the restored size.
 	state := b.fsWindow
 	b.fsWindow.Active = false
+	b.window.UnFullscreen()
+	markFullscreen(hwnd, false)
 	b.window.SetAlwaysOnTop(state.AlwaysTop)
-	b.window.SetPosition(state.X, state.Y)
-	b.window.SetSize(state.Width, state.Height)
-	if state.Maximised {
-		b.window.Maximise()
-	}
 	return true
 }
 

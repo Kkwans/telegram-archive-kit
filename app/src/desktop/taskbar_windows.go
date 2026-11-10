@@ -88,6 +88,17 @@ func (t *taskbarCom) setState(hwnd uintptr, state uint32) {
 	t.call(10, hwnd, uintptr(state))
 }
 
+// markFullscreen runs on Wails' UI thread, which also owns the COM object.
+func markFullscreen(hwnd uintptr, enabled bool) {
+	if t := taskbarInstance(); t != nil {
+		var fullscreen uintptr
+		if enabled {
+			fullscreen = 1
+		}
+		t.call(8, hwnd, fullscreen) // ITaskbarList2::MarkFullscreenWindow
+	}
+}
+
 func (t *taskbarCom) setProgress(hwnd uintptr, completed, total uint64) {
 	t.call(9, hwnd, uintptr(completed), uintptr(total))
 }

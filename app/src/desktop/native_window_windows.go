@@ -9,7 +9,23 @@ import (
 var (
 	dwmapi                = windows.NewLazySystemDLL("dwmapi.dll")
 	dwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+	getWindowLong         = windows.NewLazySystemDLL("user32.dll").NewProc("GetWindowLongW")
+	getForegroundWindow   = windows.NewLazySystemDLL("user32.dll").NewProc("GetForegroundWindow")
 )
+
+func windowIsTopmost(hwnd uintptr) bool {
+	const wsExTopmost = 0x00000008
+	style, _, _ := getWindowLong.Call(hwnd, ^uintptr(19)) // GWL_EXSTYLE = -20
+	return style&wsExTopmost != 0
+}
+
+func raiseActiveFullscreen(hwnd uintptr) {
+	if foreground, _, _ := getForegroundWindow.Call(); foreground != hwnd || hwnd == 0 {
+		return
+	}
+	markFullscreen(hwnd, true)
+	procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoActivate|swpNoMove|swpNoSize)
+}
 
 // applyDarkWindowFrame switches the native frame to dark mode so the Mica
 // backdrop uses its dark base colour. During a window resize the WebView2
