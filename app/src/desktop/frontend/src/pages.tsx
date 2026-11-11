@@ -2063,6 +2063,10 @@ const ArtVideo = forwardRef<VideoApi, {
 type ViewerRect = { left: number; top: number; width: number; height: number };
 type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number; handoff?: boolean };
 
+function isViewerMediaTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(".art-video-wrap, .art-video-pending, .image-stage img") !== null;
+}
+
 function mediaBox(modal: HTMLElement | null, isVideo: boolean): ViewerRect | null {
   const video = isVideo ? modal?.querySelector<HTMLVideoElement>(".art-video-wrap.is-ready video") : null;
   const el = isVideo
@@ -2207,7 +2211,7 @@ function MediaViewer({
   const hold = useRef<{ key: string; timer: number; long: boolean; direction: number } | null>(null);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const dragMoved = useRef(false);
-  const stagePress = useRef<{ target: HTMLElement; dragged: boolean } | null>(null);
+  const stagePress = useRef<{ onMedia: boolean; dragged: boolean } | null>(null);
   const wheelAccum = useRef(0);
   const imageZoomedAt = useRef(0);
   const [zoom, setZoom] = useState(1);
@@ -2448,6 +2452,34 @@ function MediaViewer({
     }
   };
 
+  const resizeWhileVideoLoads = async (enter: boolean, hideChrome: boolean) => {
+    let covered = false;
+    try {
+      // There is no decoded frame to zoom. Preserve what is actually visible
+      // (the poster or spinner) instead of handing a poster URL to the native
+      // image decoder or briefly showing a cover with only the background.
+      await nextPaint();
+      const cover = await call<string>("captureViewerBackdrop", undefined, AbortSignal.timeout(200));
+      if (cover) {
+        const result = await call<{ shown: boolean }>("showFullscreenCover", { cover });
+        covered = result.shown;
+      }
+    } catch {
+      // Fullscreen remains available when the window capture is unavailable.
+    }
+    windowFsRef.current = enter;
+    await applyWindowFullscreen(enter);
+    setWindowFs(enter);
+    if (hideChrome) setImmersive(enter);
+    await nextPaint();
+    if (enter && fsReturn.current) {
+      fsReturn.current.screenX = window.screenX;
+      fsReturn.current.screenY = window.screenY;
+    }
+    if (covered) await hideFullscreenCover(fullscreenFadeMs);
+    finishFullscreenTransition();
+  };
+
   const transitionFullscreen = async (enter: boolean, hideChrome = false) => {
     if (fsBusy.current || loading || enter === windowFsRef.current) return;
     fsBusy.current = true;
@@ -2460,6 +2492,7 @@ function MediaViewer({
     const modalEl = modal.current;
     const measured = modalEl ? mediaBox(modalEl, isVideo) : null;
     const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, src, poster) : "";
+    const waitingForVideo = isVideo && !snapshot.startsWith("data:image/");
     const ratio = measured ? measured.width / measured.height : 16 / 9;
     const radius = isVideo ? 10 : 12;
     const full = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
@@ -2472,9 +2505,15 @@ function MediaViewer({
         windowY: window.screenY,
         screenX: window.screenX,
         screenY: window.screenY,
-        rect: measured,
+        rect: waitingForVideo ? null : measured,
         rel: item.rel,
       };
+    }
+    if (waitingForVideo) {
+      await resizeWhileVideoLoads(enter, hideChrome);
+      return;
+    }
+    if (enter) {
       windowFsRef.current = true;
       const startScreen = screenRect(measured);
       let native = false;
@@ -2833,7 +2872,7 @@ function MediaViewer({
   };
 
   const onStagePointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
-    stagePress.current = { target: e.target as HTMLElement, dragged: false };
+    stagePress.current = { onMedia: isViewerMediaTarget(e.target), dragged: false };
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -2871,11 +2910,9 @@ function MediaViewer({
   const onBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const press = stagePress.current;
     stagePress.current = null;
-    if (press?.dragged) return;
-    // Pointer capture retargets the click to the stage, so the original
-    // pointer-down target decides whether this was a real backdrop click.
-    const origin = (press?.target ?? e.target) as HTMLElement;
-    if (origin.closest?.(".art-video-player, .image-stage img")) return;
+    // The click can land on the stage after pointer capture or after a loading
+    // indicator unmounts. Remember where the press started in both cases.
+    if (press?.dragged || press?.onMedia || isViewerMediaTarget(e.target)) return;
     if (immersiveRef.current) {
       setImmersive(false);
       return;
