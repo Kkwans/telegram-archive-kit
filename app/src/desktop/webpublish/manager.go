@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type Config struct {
 	Scope            Scope  `json:"scope"`
 	Adapter          string `json:"adapter"`
+	LANIPv6          bool   `json:"lanIPv6"`
 	Tailscale        bool   `json:"tailscale"`
 	Port             int    `json:"port"`
 	Auto             bool   `json:"auto"`
@@ -38,6 +40,8 @@ type Adapter struct {
 	Name string       `json:"name"`
 	IP   string       `json:"ip"`
 	LAN  netip.Prefix `json:"-"`
+	IPv6 string       `json:"ipv6,omitempty"`
+	LAN6 netip.Prefix `json:"-"`
 }
 
 type Network struct {
@@ -48,26 +52,29 @@ type Network struct {
 }
 
 type Endpoint struct {
-	Kind  string `json:"kind"`
-	URL   string `json:"url,omitempty"`
-	Error string `json:"error,omitempty"`
+	Kind        string `json:"kind"`
+	URL         string `json:"url,omitempty"`
+	Error       string `json:"error,omitempty"`
+	PortBlocked bool   `json:"portBlocked,omitempty"`
 }
 
 type Status struct {
-	Config       Config     `json:"config"`
-	Library      string     `json:"library"`
-	Requested    bool       `json:"requested"`
-	Phase        string     `json:"phase"`
-	Message      string     `json:"message,omitempty"`
-	ChatError    string     `json:"chatError,omitempty"`
-	LANError     string     `json:"lanError,omitempty"`
-	TailError    string     `json:"tailError,omitempty"`
-	Published    int        `json:"published"`
-	CatalogReady bool       `json:"catalogReady"`
-	NetworkReady bool       `json:"networkReady"`
-	Chats        []Chat     `json:"chats"`
-	Adapters     []Adapter  `json:"adapters"`
-	Endpoints    []Endpoint `json:"endpoints"`
+	Config        Config     `json:"config"`
+	Library       string     `json:"library"`
+	Requested     bool       `json:"requested"`
+	PortLocked    bool       `json:"portLocked"`
+	ControlLocked bool       `json:"controlLocked"`
+	Phase         string     `json:"phase"`
+	Message       string     `json:"message,omitempty"`
+	ChatError     string     `json:"chatError,omitempty"`
+	LANError      string     `json:"lanError,omitempty"`
+	TailError     string     `json:"tailError,omitempty"`
+	Published     int        `json:"published"`
+	CatalogReady  bool       `json:"catalogReady"`
+	NetworkReady  bool       `json:"networkReady"`
+	Chats         []Chat     `json:"chats"`
+	Adapters      []Adapter  `json:"adapters"`
+	Endpoints     []Endpoint `json:"endpoints"`
 }
 
 type listener struct {
@@ -113,7 +120,7 @@ func NewManager(dir string, current func() string, discover func(context.Context
 }
 
 func readConfig(path string) savedConfig {
-	defaults := savedConfig{Config: Config{Port: 8780, RestartLimit: 3, Scope: Scope{All: true}}}
+	defaults := savedConfig{Config: Config{Port: 8780, RestartLimit: 3, Scope: Scope{All: true}, Adapter: autoLAN, LANIPv6: true}}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return defaults
@@ -121,6 +128,7 @@ func readConfig(path string) savedConfig {
 	saved := defaults
 	// Old files without an explicit scope must not publish more on sign-in.
 	saved.Scope = Scope{}
+	saved.Adapter, saved.LANIPv6 = "", false
 	if json.Unmarshal(data, &saved) != nil || saved.Port < 1 || saved.Port > 65535 {
 		return defaults
 	}
@@ -160,7 +168,7 @@ func (m *Manager) Status(refresh bool) Status {
 	if m.saved.Library != "" && !sameRoot(root, m.saved.Library) && !m.requested {
 		cfg.Scope = Scope{All: true}
 	}
-	out := Status{Config: cfg, Library: root, Requested: m.requested, Phase: phase, Message: m.message,
+	out := Status{Config: cfg, Library: root, Requested: m.requested, PortLocked: len(m.listeners) != 0, Phase: phase, Message: m.message,
 		LANError: m.network.LANError, TailError: m.network.TailError, Published: m.published,
 		CatalogReady: root == "" || sameRoot(root, m.loadedRoot), NetworkReady: m.networkReady,
 		Adapters: append([]Adapter{}, m.network.Adapters...), Endpoints: append([]Endpoint{}, m.endpoints...), Chats: []Chat{}}
@@ -203,8 +211,7 @@ func (m *Manager) HasAddress(address string) bool {
 	return false
 }
 
-// Save applies scope and network changes immediately. The port stays fixed
-// while running so the remaining published addresses keep working.
+// Save applies scope and network changes immediately. A live address keeps its port.
 func (m *Manager) Save(cfg Config, start bool) error {
 	return m.save(cfg, start, false)
 }
@@ -235,12 +242,12 @@ func (m *Manager) save(cfg Config, start, prepare bool) error {
 		cfg.Scope.Chats = nil
 	}
 	m.mu.Lock()
-	previous, running, closed := m.saved, m.requested, m.closed
+	previous, running, closed, listening := m.saved, m.requested, m.closed, len(m.listeners) != 0
 	m.mu.Unlock()
 	if closed {
 		return errors.New("网页部署已关闭")
 	}
-	if running && (!sameRoot(previous.Library, root) || previous.Port != cfg.Port) {
+	if running && (!sameRoot(previous.Library, root) || (listening && previous.Port != cfg.Port)) {
 		return errors.New("请先停止部署，再更换档案库或端口")
 	}
 	if running && cfg.Adapter == "" && !cfg.Tailscale {
@@ -373,6 +380,7 @@ func (m *Manager) refresh() {
 	m.mu.Unlock()
 	// Reconcile addresses before reading the library, which can be on a NAS.
 	network := m.discover(m.ctx)
+	m.commands.Lock()
 	m.mu.Lock()
 	m.network = network
 	m.networkReady = true
@@ -380,6 +388,7 @@ func (m *Manager) refresh() {
 		m.reconcile()
 	}
 	m.mu.Unlock()
+	m.commands.Unlock()
 	var catalog Catalog
 	var err error
 	if root == "" {
@@ -388,6 +397,8 @@ func (m *Manager) refresh() {
 		catalog, err = readCatalog(m.ctx, root, previous)
 	}
 	current := m.current()
+	m.commands.Lock()
+	defer m.commands.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || current != root {
@@ -436,23 +447,36 @@ type binding struct {
 	kind string
 	ip   netip.Addr
 	from netip.Prefix
+	port int
+}
+
+const autoLAN = "auto"
+
+func lanBindings(adapters []Adapter, selected string, ipv6 bool, port int) []binding {
+	var result []binding
+	for _, adapter := range adapters {
+		if selected != autoLAN && !strings.EqualFold(strings.Trim(adapter.ID, "{}"), strings.Trim(selected, "{}")) {
+			continue
+		}
+		if ip, err := netip.ParseAddr(adapter.IP); err == nil && adapter.LAN.Contains(ip) {
+			result = append(result, binding{"lan", ip, adapter.LAN, port})
+		}
+		if ipv6 {
+			if ip, err := netip.ParseAddr(adapter.IPv6); err == nil && adapter.LAN6.Contains(ip) {
+				result = append(result, binding{"lan", ip, adapter.LAN6, port})
+			}
+		}
+	}
+	return result
 }
 
 func (m *Manager) reconcile() {
 	var desired []binding
 	var endpoints []Endpoint
 	if m.saved.Adapter != "" {
-		found := false
-		for _, adapter := range m.network.Adapters {
-			ip, err := netip.ParseAddr(adapter.IP)
-			if adapter.ID == m.saved.Adapter && err == nil && adapter.LAN.Contains(ip) {
-				desired = append(desired, binding{"lan", ip, adapter.LAN})
-				found = true
-				break
-			}
-		}
-		if !found {
-			endpoints = append(endpoints, Endpoint{Kind: "lan", Error: "所选专用网络暂不可用"})
+		desired = lanBindings(m.network.Adapters, m.saved.Adapter, m.saved.LANIPv6, m.saved.Port)
+		if len(desired) == 0 {
+			endpoints = append(endpoints, Endpoint{Kind: "lan", Error: "当前网卡没有可用于部署的局域网地址"})
 		}
 	}
 	if m.saved.Tailscale {
@@ -462,7 +486,7 @@ func (m *Manager) reconcile() {
 				prefix = tailV4
 			}
 			if prefix.Contains(ip) {
-				desired = append(desired, binding{"tailscale", ip, prefix})
+				desired = append(desired, binding{"tailscale", ip, prefix, m.saved.Port})
 			}
 		}
 		if len(m.network.TailIPs) == 0 {
@@ -489,10 +513,12 @@ func (m *Manager) reconcile() {
 			endpoints = append(endpoints, bound.endpoint)
 			continue
 		}
-		addr := net.JoinHostPort(key, strconv.Itoa(m.saved.Port))
+		addr := net.JoinHostPort(key, strconv.Itoa(b.port))
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			endpoints = append(endpoints, Endpoint{Kind: b.kind, Error: "无法监听端口 " + strconv.Itoa(m.saved.Port) + "，请检查占用或更换端口"})
+			// Winsock reports both WSAEADDRINUSE and WSAEACCES for occupied or reserved ports.
+			blocked := errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048)) || errors.Is(err, syscall.Errno(10013))
+			endpoints = append(endpoints, Endpoint{Kind: b.kind, Error: "暂时无法使用 " + key + " 提供访问", PortBlocked: blocked})
 			continue
 		}
 		server := &http.Server{Handler: restrict(m.site, addr, b.from), ReadHeaderTimeout: 5 * time.Second,

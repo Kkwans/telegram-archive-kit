@@ -32,12 +32,19 @@ func (c *Controller) Status(refresh bool) Status {
 	status := c.idle.Status(refresh)
 	if c.pending() {
 		status.Requested, status.Phase = true, "waiting"
+		status.ControlLocked = true
 		status.Message = "部署进程未连接。若自动恢复未能启动服务，可停止后重新启动。"
 		if failure, err := os.ReadFile(failureMarker(c.dir)); err == nil && workerRequested(c.dir, string(failure)) {
 			status.Message = "已达到故障重启上限。停止后可重新启动部署。"
 		}
 	}
 	return status
+}
+
+func (c *Controller) Refresh() {
+	if _, err := callWorker(c.dir, controlRequest{Action: "refresh"}); errors.Is(err, errWorkerOffline) {
+		c.idle.signal()
+	}
 }
 
 func (c *Controller) pending() bool {

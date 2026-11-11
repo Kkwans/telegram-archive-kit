@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Copy, Database, ExternalLink, ListChecks, LoaderCircle, Monitor, Play, Plus, QrCode, RefreshCw, Search, Settings2, Shield, Square, Wifi, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Copy, Database, ExternalLink, ListChecks, LoaderCircle, Monitor, Play, Plus, QrCode, RefreshCw, Search, Settings2, Shield, Square, Wifi, X } from "lucide-react";
 import type { PageCtx } from "./pages";
 import { Select } from "./Select";
 import { call } from "./rpc";
 
 type Selection = { slug: string; id: string };
 type Chat = Selection & { name: string; messages: number; ready: boolean };
-type PublishConfig = { scope: { all: boolean; chats: Selection[] | null }; adapter: string; tailscale: boolean; port: number; auto: boolean; keepOnExit: boolean; restartOnFailure: boolean; restartLimit: number };
-type Endpoint = { kind: "lan" | "tailscale"; url?: string; error?: string };
+type PublishConfig = { scope: { all: boolean; chats: Selection[] | null }; adapter: string; lanIPv6: boolean; tailscale: boolean; port: number; auto: boolean; keepOnExit: boolean; restartOnFailure: boolean; restartLimit: number };
+type Endpoint = { kind: "lan" | "tailscale"; url?: string; error?: string; portBlocked?: boolean };
+type PortOwner = { pid: number; name: string; path?: string; started?: string; addresses: string[]; canEnd: boolean; reason?: string };
+type PortCheck = { port: number; owners?: PortOwner[]; error?: string };
 type PublishStatus = {
   config: PublishConfig;
   library: string;
@@ -20,14 +22,57 @@ type PublishStatus = {
   published: number;
   catalogReady: boolean;
   networkReady: boolean;
+  portLocked: boolean;
+  controlLocked: boolean;
   chats: Chat[];
-  adapters: { id: string; name: string; ip: string }[];
+  adapters: { id: string; name: string; ip?: string; ipv6?: string }[];
   endpoints: Endpoint[];
 };
 
 const phaseText = { stopped: "未部署", starting: "正在启动", waiting: "等待连接", running: "部署运行中" };
 const networkName = { lan: "局域网", tailscale: "Tailscale" };
 const PAGE_SIZE = 60;
+
+function adapterKey(id: string) {
+  return id.replace(/^\{|\}$/g, "").toLowerCase();
+}
+
+function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose }: {
+  check?: PortCheck;
+  port: number;
+  blocked: boolean;
+  ending: boolean;
+  onCheck: () => void;
+  onEnd: (owner: PortOwner) => void;
+  onClose?: () => void;
+}) {
+  const result = check?.port === port ? check : undefined;
+  return <section className="publish-port-result" aria-label={`端口 ${port} 检查结果`}>
+    <div className="publish-port-summary">
+      <div>
+        <b>{blocked ? <><AlertCircle size={15} /> 无法监听端口 {port}</> : `TCP 端口 ${port}`}</b>
+        <span role="status">{!result ? "正在读取 Windows 监听列表…" : result.error || (
+          result.owners?.length ? `${result.owners.length} 个程序正在监听此端口` : blocked
+            ? "未发现监听程序。若仍无法部署，请换一个端口。"
+            : "当前没有程序监听此端口。"
+        )}</span>
+      </div>
+      <div className="publish-port-actions">
+        <button className="btn sm ghost" disabled={!result || ending} onClick={onCheck}><RefreshCw size={13} /> 重新检查</button>
+        {onClose && <button className="btn sm ghost" disabled={ending} onClick={onClose} aria-label="关闭端口检查" title="关闭端口检查"><X size={14} /></button>}
+      </div>
+    </div>
+    {!!result?.owners?.length && <ul className="publish-port-owners">
+      {result.owners.map((owner) => <li key={owner.pid}>
+        <div className="publish-port-owner">
+          <b title={owner.path}>{owner.name} <small>PID {owner.pid}</small></b>
+          <small title={owner.addresses.join(" · ")}>{owner.addresses.join(" · ")}</small>
+        </div>
+        {owner.canEnd ? <button className="btn sm ghost publish-end-process" disabled={ending} onClick={() => onEnd(owner)}>解除占用</button> : <small className="publish-owner-reason">{owner.reason}</small>}
+      </li>)}
+    </ul>}
+  </section>;
+}
 
 function PublicationSwitch({ label, hint, checked, disabled, onChange, className = "" }: {
   label: string;
@@ -60,9 +105,19 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
   const [loadError, setLoadError] = useState("");
   const [qr, setQR] = useState<{ url: string; src: string }>();
   const [view, setView] = useState<"console" | "settings">("console");
+  const [manualPort, setManualPort] = useState<number>();
+  const [check, setCheck] = useState<PortCheck>();
+  const [checkRevision, setCheckRevision] = useState(0);
+  const [confirmOwner, setConfirmOwner] = useState<{ port: number; owner: PortOwner }>();
+  const [ending, setEnding] = useState(false);
+  const confirmDialog = useRef<HTMLDialogElement>(null);
   const qrDialog = useRef<HTMLDialogElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const sequence = useRef(0);
+  const blockedPort = status?.endpoints.some((endpoint) => endpoint.portBlocked) ? status.config.port : undefined;
+  const diagnosticPort = view === "console" ? blockedPort : (
+    manualPort === draft?.port || blockedPort === draft?.port ? draft?.port : undefined
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -84,6 +139,8 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
     setDraft(undefined);
     setStatus(undefined);
     setQR(undefined);
+    setManualPort(undefined);
+    setConfirmOwner(undefined);
     void poll();
     return () => {
       controller.abort();
@@ -96,7 +153,43 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
     if (qr && dialog && !dialog.open) dialog.showModal();
   }, [qr]);
 
+  useEffect(() => {
+    if (confirmOwner && !confirmDialog.current?.open) confirmDialog.current?.showModal();
+  }, [confirmOwner]);
+
+  useEffect(() => {
+    setCheck(undefined);
+    if (diagnosticPort === undefined) return;
+    const controller = new AbortController();
+    call<PortOwner[]>("webPublishCheckPort", { port: diagnosticPort }, controller.signal).then(
+      (owners) => { if (!controller.signal.aborted) setCheck({ port: diagnosticPort, owners }); },
+      (error: Error) => { if (!controller.signal.aborted) setCheck({ port: diagnosticPort, error: error.message }); },
+    );
+    return () => controller.abort();
+  }, [diagnosticPort, checkRevision]);
+
+  function requestPortCheck(port: number) {
+    if (view === "settings" && port !== blockedPort) setManualPort(port);
+    setCheckRevision((revision) => revision + 1);
+  }
+
+  async function endOwner(target: NonNullable<typeof confirmOwner>) {
+    const { port, owner } = target;
+    setConfirmOwner(undefined);
+    setEnding(true);
+    try {
+      await call("webPublishEndPortOwner", { port, pid: owner.pid, started: owner.started });
+      ctx.toast(`已结束 ${owner.name}（PID ${owner.pid}）`, "success");
+    } catch (error) {
+      ctx.toast((error as Error).message, "error");
+    } finally {
+      setCheckRevision((revision) => revision + 1);
+      setEnding(false);
+    }
+  }
+
   function navigate(next: typeof view) {
+    setManualPort(undefined);
     setView(next);
     requestAnimationFrame(() => {
       title.current?.scrollIntoView({ block: "start" });
@@ -171,7 +264,14 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
   const validPort = Number.isInteger(draft.port) && draft.port >= 1 && draft.port <= 65535;
   const validLimit = !draft.restartOnFailure || (Number.isInteger(draft.restartLimit) && draft.restartLimit >= 1 && draft.restartLimit <= 10);
   const canStart = Boolean(status.library && chosen && validPort && validLimit && networkConfigured);
-  const adapters = [{ value: "", label: "关闭局域网访问" }, ...status.adapters.map((adapter) => ({ value: adapter.id, label: `${adapter.name} · ${adapter.ip}` }))];
+  const settingsLocked = busy || status.controlLocked;
+  const restartLocked = settingsLocked || status.requested;
+  const matchingAdapters = status.adapters.filter((adapter) => draft.adapter === "auto" || adapterKey(adapter.id) === adapterKey(draft.adapter));
+  const endpoints = status.endpoints.filter((endpoint) => !endpoint.portBlocked);
+  const adapters = [{ value: "auto", label: "自动选择已连接网卡" }, ...status.adapters.map((adapter) => ({
+    value: adapterKey(adapter.id) === adapterKey(draft.adapter) ? draft.adapter : adapter.id,
+    label: `${adapter.name} · ${adapter.ip || adapter.ipv6}`,
+  })), { value: "", label: "关闭局域网访问" }];
   if (draft.adapter && !adapters.some((adapter) => adapter.value === draft.adapter)) adapters.push({ value: draft.adapter, label: "已选网卡暂不可用" });
 
   return (
@@ -196,15 +296,15 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
             <span title={status.library}><Database size={13} />{status.library || "尚未打开档案库"}</span>
           </div>
           <div className="publish-state-group">
-            <span className={`publish-state ${status.phase}`} role="status"><span className={`publish-dot ${status.phase}`} />{phaseText[status.phase]}</span>
+            <span className={`publish-state ${status.phase}`} role="status"><span className={`publish-dot ${status.phase}`} />{status.phase === "waiting" && blockedPort !== undefined ? "端口待处理" : phaseText[status.phase]}</span>
             {status.phase === "running" && <span className="publish-note">已发布 {status.published.toLocaleString()} 个聊天</span>}
           </div>
         </div>
         {status.message && <div className="publish-notice" role="status">{status.message}</div>}
-        {status.endpoints.length > 0 ? (
+        {endpoints.length > 0 ? (
           <div className="publish-endpoints">
-            {status.endpoints.map((endpoint, index) => {
-              const label = endpoint.kind === "tailscale" && endpoint.url ? `Tailscale ${endpoint.url.includes("[") ? "IPv6" : "IPv4"}` : networkName[endpoint.kind];
+            {endpoints.map((endpoint, index) => {
+              const label = endpoint.url ? `${networkName[endpoint.kind]} ${endpoint.url.includes("[") ? "IPv6" : "IPv4"}` : networkName[endpoint.kind];
               return (
               <div className="publish-endpoint" key={endpoint.url || `${endpoint.kind}-${index}`}>
                 <span className="publish-endpoint-label">{endpoint.kind === "lan" ? <Wifi size={15} /> : <Shield size={15} />}{label}</span>
@@ -220,10 +320,11 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               );
             })}
           </div>
-        ) : (!status.requested || !status.message) && <div className="publish-address-empty">
+        ) : blockedPort === undefined && (!status.requested || !status.message) && <div className="publish-address-empty">
           <p className="publish-note">{status.requested ? "正在准备访问地址…" : networkConfigured ? "启动部署后，可从其他设备打开地址或扫码。" : "先选择局域网网卡或开启 Tailscale 访问。"}</p>
           {!status.requested && !networkConfigured && <button type="button" className="btn sm ghost" onClick={() => navigate("settings")}>配置访问网络</button>}
         </div>}
+        {blockedPort !== undefined && <PortDiagnostics port={blockedPort} check={check} blocked ending={ending} onCheck={() => requestPortCheck(blockedPort)} onEnd={(owner) => setConfirmOwner({ port: blockedPort, owner })} />}
       </section>
 
         <section className="panel publish-scope">
@@ -231,8 +332,8 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           <div className="publish-body">
             <div className="publish-scope-controls">
               <div className="publish-scope-options" role="radiogroup" aria-label="发布范围">
-                <label><input className="publish-control-input" type="radio" name="publish-scope" checked={draft.scope.all} onChange={() => update({ scope: { ...draft.scope, all: true } })} /><span>整个档案库</span></label>
-                <label><input className="publish-control-input" type="radio" name="publish-scope" checked={!draft.scope.all} onChange={() => update({ scope: { all: false, chats: draft.scope.chats ?? [] } })} /><span>指定聊天</span></label>
+                <label><input className="publish-control-input" type="radio" name="publish-scope" checked={draft.scope.all} disabled={settingsLocked} onChange={() => update({ scope: { ...draft.scope, all: true } })} /><span>整个档案库</span></label>
+                <label><input className="publish-control-input" type="radio" name="publish-scope" checked={!draft.scope.all} disabled={settingsLocked} onChange={() => update({ scope: { all: false, chats: draft.scope.chats ?? [] } })} /><span>指定聊天</span></label>
               </div>
               {!draft.scope.all && status.catalogReady && !status.chatError && status.chats.length > 0 && <label className="publish-search"><Search size={14} /><input aria-label="搜索可发布的聊天" placeholder="搜索聊天" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_SIZE); }} /></label>}
             </div>
@@ -243,7 +344,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
                 {filtered.slice(0, limit).map((chat) => {
                   const pressed = selected.get(chat.slug) === chat.id;
                   return <li key={chat.slug}>
-                    {chat.ready ? <button type="button" className="publish-chat publish-chat-button" aria-label={chat.name} aria-pressed={pressed} onClick={() => toggle(chat)}>
+                    {chat.ready ? <button type="button" className="publish-chat publish-chat-button" aria-label={chat.name} aria-pressed={pressed} disabled={settingsLocked} onClick={() => toggle(chat)}>
                       <ChatIdentity chat={chat} />
                       <span className="publish-chat-indicator" aria-hidden="true">{pressed ? "已选" : <Plus size={16} />}</span>
                     </button> : <div className="publish-chat">
@@ -265,49 +366,58 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
             <header className="panel-head"><h3><Wifi size={15} /> 访问网络</h3></header>
             <div className="publish-body">
               <div className="publish-network-fields">
-                <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={!status.networkReady} /></div>
-                <label className="field"><span>端口</span><input type="number" aria-label="部署端口" min={1} max={65535} value={draft.port || ""} disabled={status.requested} onChange={(event) => update({ port: Number(event.target.value) })} /></label>
+                <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={settingsLocked} /></div>
+                <label className="field"><span>网页访问端口</span><input type="number" min={1} max={65535} value={draft.port || ""} disabled={settingsLocked || status.portLocked} aria-describedby="publish-port-hint" onChange={(event) => { setManualPort(undefined); update({ port: Number(event.target.value) }); }} /></label>
               </div>
-              <PublicationSwitch className="publish-tail" label="允许 Tailscale 访问" hint={status.tailError || "使用本机 Tailscale 地址"} checked={draft.tailscale} onChange={(tailscale) => update({ tailscale })} />
+              <div className="publish-port-help">
+                <small id="publish-port-hint">{!validPort ? "请输入 1 到 65535 之间的端口。" : status.portLocked ? "访问地址使用此端口。停止部署后可修改。" : "浏览器访问地址末尾的端口号，默认 8780。"}</small>
+                {diagnosticPort === undefined && <button className="btn sm ghost" disabled={!validPort || ending} onClick={() => requestPortCheck(draft.port)}>检查占用</button>}
+              </div>
+              {diagnosticPort !== undefined && <PortDiagnostics port={diagnosticPort} check={check} blocked={diagnosticPort === blockedPort} ending={ending} onCheck={() => requestPortCheck(diagnosticPort)} onEnd={(owner) => setConfirmOwner({ port: diagnosticPort, owner })} onClose={diagnosticPort !== blockedPort ? () => setManualPort(undefined) : undefined} />}
+              <div className="publish-network-switches">
+                <PublicationSwitch label="允许局域网 IPv6" hint={!draft.adapter ? "启用局域网后可设置" : status.networkReady && matchingAdapters.length > 0 && !matchingAdapters.some((adapter) => adapter.ipv6) ? "当前网卡暂时没有可用的 IPv6 地址" : "为同一局域网的设备提供 IPv6 访问地址"} checked={draft.lanIPv6} disabled={settingsLocked || !draft.adapter} onChange={(lanIPv6) => update({ lanIPv6 })} />
+                <PublicationSwitch label="允许 Tailscale 访问" hint={(draft.tailscale && status.tailError) || "使用本机 Tailscale 地址"} checked={draft.tailscale} disabled={settingsLocked} onChange={(tailscale) => update({ tailscale })} />
+              </div>
               {!status.networkReady && <p className="publish-note publish-loading" role="status"><LoaderCircle size={14} className="spin" /> 正在检测访问网络…</p>}
-              {status.lanError && <div className="publish-help">
-                <span className="publish-note">{status.lanError}</span>
-                <button className="btn sm ghost" onClick={() => void call("webPublishNetworkSettings").catch((e) => ctx.toast(e.message, "error"))}>打开网络设置</button>
-              </div>}
-              {!validPort && <p className="publish-note" role="status">端口须在 1 到 65535 之间</p>}
-              <div className="publish-network-foot">
-                <small>可信网络内免口令访问</small>
-                <details className="publish-network-help"><summary>连接排查</summary>
-                  {draft.tailscale && <p className="publish-note">确认访问设备已连接到同一 tailnet，并检查 Tailscale 访问规则是否允许此端口。</p>}
-                  <button className="btn sm ghost" onClick={() => void call("webPublishFirewall").catch((e) => ctx.toast(e.message, "error"))}><Shield size={13} /> Windows 防火墙</button>
-                </details>
-              </div>
+              {draft.adapter && status.networkReady && matchingAdapters.length === 0 && <p className="publish-note" role="status">{draft.adapter === "auto" ? status.lanError || "连接 Wi-Fi 或网线后，部署会自动获取局域网地址。" : "所选网卡当前不可用，可切换到自动选择。"}</p>}
+              <small>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</small>
             </div>
           </section>
           <section className="publish-background">
             <header className="panel-head"><h3><Monitor size={15} /> 后台运行</h3></header>
             <div className="publish-body publish-lifecycle">
-              <PublicationSwitch label="退出客户端后继续部署" hint="从托盘退出后，网页仍可访问" checked={draft.keepOnExit} onChange={(keepOnExit) => update({ keepOnExit })} />
-              <PublicationSwitch label="登录 Windows 后自动部署" hint="恢复上次开启的部署" checked={draft.auto} onChange={(auto) => update({ auto })} />
+              <PublicationSwitch label="退出客户端后继续部署" hint="从托盘退出后，网页仍可访问" checked={draft.keepOnExit} disabled={settingsLocked} onChange={(keepOnExit) => update({ keepOnExit })} />
+              <PublicationSwitch label="登录 Windows 后自动部署" hint="恢复上次开启的部署" checked={draft.auto} disabled={settingsLocked} onChange={(auto) => update({ auto })} />
               <div className="publish-recovery">
-                <PublicationSwitch label="故障时自动重启" hint={status.requested ? "停止部署后可更改重启设置" : "后台进程异常退出时尝试恢复"} checked={draft.restartOnFailure} disabled={status.requested} onChange={(restartOnFailure) => update({ restartOnFailure })} />
-                {draft.restartOnFailure && <label className="publish-limit"><span>上限</span><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={status.requested} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></label>}
+                <PublicationSwitch label="故障时自动重启" hint={status.requested ? "停止部署后可更改重启设置" : "后台进程异常退出时尝试恢复"} checked={draft.restartOnFailure} disabled={restartLocked} onChange={(restartOnFailure) => update({ restartOnFailure })} />
+                {draft.restartOnFailure && <label className="publish-limit"><span>上限</span><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={restartLocked} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></label>}
                 {!validLimit && <p className="publish-note" role="status">重启上限须在 1 到 10 次之间</p>}
               </div>
             </div>
           </section>
       </div>
       )}
+      {status.controlLocked && view === "settings" && <p className="publish-settings-lock" role="status">{status.message || "后台部署进程正在恢复，连接后即可修改设置。"}</p>}
       {(dirty || busy) && <div className="publish-footer">
         <span aria-live="polite">{busy ? <><LoaderCircle size={13} className="spin" /> 正在应用…</> : "有未应用的设置"}</span>
         <button className="btn ghost" disabled={busy || !dirty} onClick={() => setDraft(status.config)}><RefreshCw size={13} /> 恢复设置</button>
-        <button className="btn primary" disabled={busy || !dirty || !validPort || !validLimit || (status.requested && !draft.adapter && !draft.tailscale)} onClick={() => void save("webPublishSave")}>{status.requested ? "应用设置" : "保存设置"}</button>
+        <button className="btn primary" disabled={settingsLocked || !dirty || !validPort || !validLimit || (status.requested && !networkConfigured)} onClick={() => void save("webPublishSave")}>{status.requested ? "应用设置" : "保存设置"}</button>
       </div>}
 
       {qr && <dialog className="publish-qr" ref={qrDialog} onClose={() => setQR(undefined)} aria-label="扫码打开档案网页">
         <header><h2>扫码打开档案网页</h2><button className="btn sm ghost" aria-label="关闭二维码" onClick={() => qrDialog.current?.close()}><X size={16} /></button></header>
         <img src={qr.src} alt="档案网页访问地址二维码" width={220} height={220} />
         <code>{qr.url}</code>
+      </dialog>}
+      {confirmOwner && <dialog className="publish-confirm" ref={confirmDialog} onClose={() => setConfirmOwner(undefined)} aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-message">
+        <div className="confirm-head"><span className="confirm-icon danger"><AlertCircle size={18} /></span><div>
+          <h2 id="publish-confirm-title">结束 {confirmOwner.owner.name}？</h2>
+          <p id="publish-confirm-message" className="confirm-message">此程序（PID {confirmOwner.owner.pid}）正在监听 TCP 端口 {confirmOwner.port}。结束程序会中断它的连接，未保存的工作可能丢失。</p>
+        </div></div>
+        <div className="modal-actions">
+          <button className="btn ghost" autoFocus onClick={() => confirmDialog.current?.close()}>取消</button>
+          <button className="btn danger" onClick={() => void endOwner(confirmOwner)}>结束程序</button>
+        </div>
       </dialog>}
     </div>
   );

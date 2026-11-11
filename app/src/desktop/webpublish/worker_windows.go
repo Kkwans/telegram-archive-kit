@@ -118,6 +118,8 @@ func RunWorker(dir, token string) error {
 			var actionErr error
 			switch req.Action {
 			case "status":
+			case "refresh":
+				manager.signal()
 			case "save":
 				if !sameRoot(req.Library, saved.Library) || !manager.Requested() {
 					actionErr = errors.New("请先停止当前档案库的部署")

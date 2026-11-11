@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -27,7 +29,7 @@ func DiscoverWindows(ctx context.Context) Network {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		out.Adapters, out.LANError = privateAdapters(ctx)
+		out.Adapters, out.LANError = localAdapters()
 	}()
 	go func() {
 		defer wg.Done()
@@ -45,61 +47,70 @@ func hiddenOutput(ctx context.Context, exe string, args ...string) ([]byte, erro
 	return cmd.Output()
 }
 
-const privateNetworksScript = `$ErrorActionPreference='Stop'
-[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
-$profiles=@(Get-NetConnectionProfile | Where-Object NetworkCategory -eq Private)
-$adapters=@(Get-NetAdapter -IncludeHidden)
-$result=@(foreach($p in $profiles){
-  $a=$adapters | Where-Object { $_.ifIndex -eq $p.InterfaceIndex } | Select-Object -First 1
-  if(!$a -or !$a.InterfaceGuid -or $a.Status -ne 'Up'){continue}
-  foreach($ip in @(Get-NetIPAddress -InterfaceIndex $p.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)){
-    if($ip.AddressState -eq 'Preferred' -and !$ip.SkipAsSource){
-      [pscustomobject]@{id=$a.InterfaceGuid.ToString();name=$p.InterfaceAlias;ip=$ip.IPAddress;bits=$ip.PrefixLength}
-    }
-  }
-})
-ConvertTo-Json -InputObject $result -Compress`
+func localAdapters() ([]Adapter, string) {
+	var size uint32 = 15 << 10
+	var buf []byte
+	for range 4 {
+		if size == 0 || size > 1<<20 {
+			return nil, "无法读取本机网卡"
+		}
+		buf = make([]byte, size)
+		err := windows.GetAdaptersAddresses(windows.AF_UNSPEC, windows.GAA_FLAG_SKIP_ANYCAST|windows.GAA_FLAG_SKIP_MULTICAST|windows.GAA_FLAG_SKIP_DNS_SERVER, 0, (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])), &size)
+		switch err {
+		case nil:
+			return readLocalAdapters(buf)
+		case windows.ERROR_BUFFER_OVERFLOW:
+		default:
+			return nil, "无法读取本机网卡"
+		}
+	}
+	return nil, "无法读取本机网卡"
+}
 
-func privateAdapters(ctx context.Context) ([]Adapter, string) {
-	ps := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	b, err := hiddenOutput(ctx, ps, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", privateNetworksScript)
-	if err != nil {
-		return nil, "无法读取 Windows 网络配置，请重新检测"
-	}
-	var rows []struct {
-		ID, Name, IP string
-		Bits         int
-	}
-	if json.Unmarshal(b, &rows) != nil {
-		return nil, "无法识别 Windows 网络配置"
-	}
+func readLocalAdapters(buf []byte) ([]Adapter, string) {
 	result := []Adapter{}
-	for _, row := range rows {
-		ip, err := netip.ParseAddr(row.IP)
-		if err != nil || !ip.Is4() || !ip.IsPrivate() || row.Bits < 8 || row.Bits > 32 || row.ID == "" {
+	for a := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); a != nil; a = a.Next {
+		if a.OperStatus != windows.IfOperStatusUp || (a.IfType != windows.IF_TYPE_ETHERNET_CSMACD && a.IfType != windows.IF_TYPE_IEEE80211) {
 			continue
 		}
-		result = append(result, Adapter{ID: row.ID, Name: row.Name, IP: ip.String(), LAN: netip.PrefixFrom(ip, row.Bits).Masked()})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Name == result[j].Name {
-			return result[i].IP < result[j].IP
+		// HardwareInterface is the first bit in MIB_IF_ROW2. A VPN and
+		// other virtual interfaces do not participate in automatic LAN access.
+		row := windows.MibIfRow2{InterfaceLuid: a.Luid}
+		if windows.GetIfEntry2Ex(windows.MibIfEntryNormalWithoutStatistics, &row) != nil || row.InterfaceAndOperStatusFlags&1 == 0 {
+			continue
 		}
-		return result[i].Name < result[j].Name
-	})
-	// One address per adapter makes a DHCP change retain its selection.
-	seen := map[string]bool{}
-	unique := result[:0]
-	for _, adapter := range result {
-		if !seen[adapter.ID] {
-			seen[adapter.ID] = true
-			unique = append(unique, adapter)
+		adapter := Adapter{ID: strings.Trim(windows.BytePtrToString(a.AdapterName), "{}"), Name: windows.UTF16PtrToString(a.FriendlyName)}
+		var life4, life6 uint32
+		for u := a.FirstUnicastAddress; u != nil; u = u.Next {
+			if u.DadState != windows.IpDadStatePreferred {
+				continue
+			}
+			ip, ok := netip.AddrFromSlice(u.Address.IP())
+			if !ok {
+				continue
+			}
+			ip = ip.Unmap()
+			bits := int(u.OnLinkPrefixLength)
+			prefix := netip.PrefixFrom(ip, bits).Masked()
+			if ip.Is4() && ip.IsPrivate() && bits >= 8 && prefix.IsValid() && (adapter.IP == "" || u.PreferredLifetime > life4) {
+				adapter.IP, adapter.LAN, life4 = ip.String(), prefix, u.PreferredLifetime
+			}
+			// Link-local IPv6 requires a zone identifier, which cannot be
+			// shared as a usable browser URL across different devices.
+			if ip.Is6() && ip.IsGlobalUnicast() && !tailV6.Contains(ip) && bits >= 48 && bits < 128 && prefix.IsValid() && (adapter.IPv6 == "" || u.PreferredLifetime > life6) {
+				adapter.IPv6, adapter.LAN6, life6 = ip.String(), prefix, u.PreferredLifetime
+			}
+		}
+		if adapter.ID != "" && (adapter.IP != "" || adapter.IPv6 != "") {
+			result = append(result, adapter)
 		}
 	}
-	if len(unique) == 0 {
-		return nil, "没有可用的 Windows 专用网络 IPv4 地址"
+	runtime.KeepAlive(buf)
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	if len(result) == 0 {
+		return nil, "没有找到已连接且可用于部署的 Wi-Fi 或以太网网卡"
 	}
-	return unique, ""
+	return result, ""
 }
 
 func tailscaleAddresses(ctx context.Context) ([]netip.Addr, string) {

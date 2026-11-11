@@ -57,10 +57,23 @@ func (b *Bridge) publicationRPC(method string, raw json.RawMessage) (any, error)
 			return nil, err
 		}
 		return "data:image/png;base64," + base64.StdEncoding.EncodeToString(code.PNG()), nil
-	case "webPublishFirewall":
-		return nil, platform.Open("windowsdefender:")
-	case "webPublishNetworkSettings":
-		return nil, platform.Open("ms-settings:network-status")
+	case "webPublishCheckPort", "webPublishEndPortOwner":
+		var p struct {
+			Port    int
+			PID     uint32
+			Started string
+		}
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, errors.New("端口检查参数无效")
+		}
+		if method == "webPublishEndPortOwner" {
+			if err := webpublish.EndPortOwner(p.Port, p.PID, p.Started); err != nil {
+				return nil, err
+			}
+			b.publication.Refresh()
+			return nil, nil
+		}
+		return webpublish.CheckPort(p.Port)
 	default:
 		return nil, errors.New("不支持的网页部署操作")
 	}
