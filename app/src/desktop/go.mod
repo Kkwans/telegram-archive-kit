@@ -8,6 +8,7 @@ require (
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
+	rsc.io/qr v0.2.0
 	telegramarchivekit v0.0.0-00010101000000-000000000000
 )
 
@@ -51,7 +52,6 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )
 
 replace telegramarchivekit => ../

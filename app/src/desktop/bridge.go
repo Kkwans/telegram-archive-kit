@@ -17,6 +17,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"telegramarchivekit/desktop/webpublish"
 	takapp "telegramarchivekit/internal/app"
 )
 
@@ -24,10 +25,11 @@ import (
 // same-origin HTTP endpoint inside the WebView2 window: no port, no CORS, no
 // generated bindings and no WebView message channel to keep alive.
 type Bridge struct {
-	facade  *takapp.Facade
-	window  *application.WebviewWindow
-	profile *ProfileService
-	online  *OnlineService
+	facade      *takapp.Facade
+	window      *application.WebviewWindow
+	profile     *ProfileService
+	online      *OnlineService
+	publication *webpublish.Manager
 
 	mu      sync.Mutex
 	mountMu sync.Mutex
@@ -262,6 +264,9 @@ type apiParams struct {
 }
 
 func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+	if strings.HasPrefix(method, "webPublish") {
+		return b.publicationRPC(method, raw)
+	}
 	var p apiParams
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &p)
@@ -409,6 +414,9 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 	case "exportChat":
 		return nil, b.facade.ExportChat(p.Slug, p.Dst)
 	case "switchLibrary":
+		if b.publication != nil {
+			return nil, b.publication.SwitchLibrary(func() error { return b.facade.SwitchLibrary(p.Root) })
+		}
 		return nil, b.facade.SwitchLibrary(p.Root)
 	case "mergeLibrary":
 		ok, total, err := b.facade.MergeLibrary(p.Root)
@@ -763,6 +771,9 @@ func (b *Bridge) closeWindow() {
 }
 
 func (b *Bridge) quit() {
+	if b.publication != nil {
+		b.publication.Close()
+	}
 	b.stopAllRcloneMounts()
 	b.facade.Shutdown()
 	if b.window != nil {

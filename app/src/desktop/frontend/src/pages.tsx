@@ -3231,6 +3231,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
+  const [pendingPublishSwitch, setPendingPublishSwitch] = useState("");
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
   const [detailLibraryKey, setDetailLibraryKey] = useState("");
   const [detailMediaLoading, setDetailMediaLoading] = useState(false);
@@ -3460,9 +3461,18 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     }
   };
 
-  const switchTo = async (root: string) => {
+  const switchTo = async (root: string, stopPublication = false) => {
     setBusy("switch");
     try {
+      if (stopPublication) {
+        await call("webPublishStop");
+      } else {
+        const publication = await call<{ requested: boolean }>("webPublishStatus");
+        if (publication.requested) {
+          setPendingPublishSwitch(root);
+          return;
+        }
+      }
       await call("switchLibrary", { root });
       toast("已切换档案库");
       refresh();
@@ -4153,6 +4163,14 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         document.body
       )}
 
+      <ConfirmDialog
+        open={Boolean(pendingPublishSwitch)}
+        title="停止网页部署并切换档案库？"
+        message="当前网页地址会关闭，正在浏览的设备将断开。"
+        confirmLabel="停止并切换"
+        onConfirm={() => { const root = pendingPublishSwitch; setPendingPublishSwitch(""); void switchTo(root, true); }}
+        onCancel={() => setPendingPublishSwitch("")}
+      />
       <ConfirmDialog
         open={pendingDelete.length > 0}
         title={pendingDelete.length === 1 ? `删除本地归档「${pendingDelete[0]?.name}」？` : `删除选中的 ${pendingDelete.length} 个本地归档？`}

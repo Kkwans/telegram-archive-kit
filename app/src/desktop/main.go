@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	static "telegramarchivekit/assets"
+	"telegramarchivekit/desktop/webpublish"
 	takapp "telegramarchivekit/internal/app"
 	"telegramarchivekit/internal/model"
 )
@@ -49,6 +51,9 @@ func main() {
 	}
 	defer facade.ReleaseLibraryLock()
 	bridge := NewBridge(facade)
+	bridge.publication = webpublish.NewManager(facade.ConfigDir(), facade.PublicationRoot, webpublish.DiscoverWindows, webpublish.SetWindowsStartup)
+	defer bridge.publication.Close()
+	restorePublication := slices.Contains(os.Args[1:], restoreWebPublicationArg)
 	bridge.QueueArgs(os.Args[1:])
 
 	windowsOpts := application.WindowsOptions{
@@ -74,6 +79,10 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: instanceID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if slices.Contains(data.Args, restoreWebPublicationArg) {
+					bridge.publication.Restore()
+					return
+				}
 				bridge.QueueArgs(data.Args)
 				bridge.showWindow()
 			},
@@ -90,6 +99,7 @@ func main() {
 		MinHeight:      680,
 		Frameless:      true,
 		EnableFileDrop: true,
+		Hidden:         restorePublication,
 		// Mica only works with a translucent background on Windows 11 22621+.
 		// The frontend detects data-mica="off" and falls back to a solid surface.
 		BackgroundType:   application.BackgroundTypeTranslucent,
@@ -100,8 +110,10 @@ func main() {
 			NonClientRegionSupport: true,
 		},
 	})
-	win.Show()
 	bridge.Attach(win)
+	if !restorePublication {
+		win.Show()
+	}
 
 	win.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
 		files := e.Context().DroppedFiles()
@@ -123,6 +135,14 @@ func main() {
 			bridge.QueueNotice("打开归档库失败：" + err.Error())
 		}
 	})
+	menu.Add("网页部署").OnClick(func(*application.Context) { bridge.showWebPublication() })
+	menu.Add("停止网页部署").OnClick(func(*application.Context) {
+		if bridge.publication.Requested() {
+			if err := bridge.publication.Stop(); err != nil {
+				bridge.QueueNotice(err.Error())
+			}
+		}
+	})
 	menu.Add("打开日志目录").OnClick(func(*application.Context) {
 		if err := facade.RevealLogs(); err != nil {
 			bridge.QueueNotice("打开日志目录失败：" + err.Error())
@@ -139,6 +159,9 @@ func main() {
 	tray.SetMenu(menu)
 	tray.OnClick(func() { bridge.showWindow() })
 	tray.Show()
+	if restorePublication {
+		bridge.publication.Restore()
+	}
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

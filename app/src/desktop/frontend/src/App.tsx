@@ -7,6 +7,7 @@ import {
   FileJson,
   FolderInput,
   FolderOpen,
+  Globe,
   House,
   Info,
   Settings2,
@@ -32,6 +33,7 @@ import { TasksPage } from "./TaskCenter";
 import { OnlineChatsPage } from "./OnlineChats";
 import { Select } from "./Select";
 import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
+import { WebPublication } from "./WebPublication";
 
 type Theme = "light" | "dark";
 const initialTheme = (): Theme => (localStorage.getItem("tak-theme") === "dark" ? "dark" : "light");
@@ -52,6 +54,7 @@ const NAV = [
   { key: "online", label: "在线聊天", desc: "Telegram 实时会话与归档", icon: MessagesSquare },
   { key: "tasks", label: "任务中心", desc: "下载、导入与重建记录", icon: ListTodo },
   { key: "library", label: "档案管理", desc: "导入、批量管理与库切换", icon: Database },
+  { key: "publish", label: "网页部署", desc: "在局域网或 Tailscale 浏览档案", icon: Globe },
   { key: "account", label: "账号管理", desc: "登录、资料与授权状态", icon: UserRound },
   { key: "diagnostics", label: "诊断工具", desc: "环境检查与日志浏览", icon: Stethoscope },
   { key: "settings", label: "系统设置", desc: "下载、网络与播放器参数", icon: Settings },
@@ -497,6 +500,11 @@ export default function App() {
     setAppTip(null);
     setPage(next);
   }, [page, selected]);
+  useEffect(() => {
+    const open = () => go("publish");
+    window.addEventListener("tak:show-web-publication", open);
+    return () => window.removeEventListener("tak:show-web-publication", open);
+  }, [go]);
   useLayoutEffect(() => {
     const saved = galleryReturn.current;
     if (!saved || page === "settings") return;
@@ -607,6 +615,7 @@ export default function App() {
       { id: "nav-online", label: "前往：在线聊天", hint: "Telegram 实时会话", section: "页面", run: () => go("online") },
       { id: "nav-tasks", label: "前往：任务中心", hint: "下载与任务", section: "页面", run: () => go("tasks") },
       { id: "nav-library", label: "前往：档案管理", hint: "导入与管理", section: "页面", run: () => go("library") },
+      { id: "nav-publish", label: "前往：网页部署", hint: "局域网与 Tailscale", section: "页面", run: () => go("publish") },
       { id: "nav-account", label: "前往：账号管理", hint: "登录与授权", section: "页面", run: () => go("account") },
       { id: "nav-settings", label: "前往：系统设置", hint: "参数", section: "页面", run: () => go("settings") },
       { id: "nav-diagnostics", label: "前往：诊断工具", hint: "环境与日志", section: "页面", run: () => go("diagnostics") },
@@ -942,6 +951,7 @@ export default function App() {
               <Activity mode={page === "chats" ? "visible" : "hidden"}><Chats ctx={ctx} /></Activity>
             )}
             {page === "library" && <Library ctx={ctx} />}
+            {page === "publish" && <WebPublication ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
             {page === "tasks" && (
               <TasksPage
