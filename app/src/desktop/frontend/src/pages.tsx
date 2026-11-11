@@ -87,7 +87,7 @@ import type {
   ViewerPrefs,
 } from "./types";
 import { bytes, dateTime, duration, rate, rateParts } from "./format";
-import { loadBackdropImage, viewerBackdrop } from "./viewerBackdrop";
+import { cropViewerImage, loadBackdropImage, viewerBackdrop } from "./viewerBackdrop";
 
 export interface PageCtx {
   boot: Bootstrap | null;
@@ -2062,9 +2062,18 @@ const ArtVideo = forwardRef<VideoApi, {
 
 type ViewerRect = { left: number; top: number; width: number; height: number };
 type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number; handoff?: boolean };
+type LoadingSurface = "poster" | "spinner";
 
 function isViewerMediaTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(".art-video-wrap, .art-video-pending, .image-stage img") !== null;
+}
+
+function loadingVideoBox(modal: HTMLElement | null): { rect: ViewerRect; surface: LoadingSurface } | undefined {
+  const poster = modal?.querySelector(".art-video-loading");
+  const el = poster || modal?.querySelector(".art-video-pending");
+  const rect = el?.getBoundingClientRect();
+  if (!rect || rect.width < 8 || rect.height < 8) return;
+  return { rect, surface: poster ? "poster" : "spinner" };
 }
 
 function mediaBox(modal: HTMLElement | null, isVideo: boolean): ViewerRect | null {
@@ -2239,7 +2248,7 @@ function MediaViewer({
   const [fsShowGhost, setFsShowGhost] = useState(false);
   const [fsGhostLive, setFsGhostLive] = useState(false);
   const [fsFade, setFsFade] = useState(false);
-  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null; rel: string } | null>(null);
+  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null; rel: string; loadingSurface?: LoadingSurface } | null>(null);
 
   useEffect(() => {
     setImageReady(false);
@@ -2453,20 +2462,7 @@ function MediaViewer({
   };
 
   const resizeWhileVideoLoads = async (enter: boolean, hideChrome: boolean) => {
-    let covered = false;
-    try {
-      // There is no decoded frame to zoom. Preserve what is actually visible
-      // (the poster or spinner) instead of handing a poster URL to the native
-      // image decoder or briefly showing a cover with only the background.
-      await nextPaint();
-      const cover = await call<string>("captureViewerBackdrop", undefined, AbortSignal.timeout(200));
-      if (cover) {
-        const result = await call<{ shown: boolean }>("showFullscreenCover", { cover });
-        covered = result.shown;
-      }
-    } catch {
-      // Fullscreen remains available when the window capture is unavailable.
-    }
+    if (enter && fsReturn.current) fsReturn.current.rect = null;
     windowFsRef.current = enter;
     await applyWindowFullscreen(enter);
     setWindowFs(enter);
@@ -2476,7 +2472,6 @@ function MediaViewer({
       fsReturn.current.screenX = window.screenX;
       fsReturn.current.screenY = window.screenY;
     }
-    if (covered) await hideFullscreenCover(fullscreenFadeMs);
     finishFullscreenTransition();
   };
 
@@ -2490,14 +2485,55 @@ function MediaViewer({
     const imageEl = modal.current?.querySelector<HTMLImageElement>(".image-stage img");
     if (imageEl) imageEl.style.transform = "";
     const modalEl = modal.current;
-    const measured = modalEl ? mediaBox(modalEl, isVideo) : null;
-    const snapshot = modalEl ? viewerFrameSource(modalEl, isVideo, src, poster) : "";
-    const waitingForVideo = isVideo && !snapshot.startsWith("data:image/");
+    let measured = mediaBox(modalEl, isVideo);
+    let snapshot = viewerFrameSource(modalEl, isVideo, src, poster);
+    let waitingForVideo = isVideo && !snapshot.startsWith("data:image/");
+    let loadingSurface: LoadingSurface | undefined;
+    if (waitingForVideo) {
+      // Animate only what the player is displaying. The header and playlist
+      // must stay out of the native bitmap so they are never resized as pixels.
+      await nextPaint();
+      const loading = loadingVideoBox(modal.current);
+      snapshot = "";
+      measured = loading?.rect ?? null;
+      loadingSurface = loading?.surface;
+      if (loading) {
+        const viewport = { width: window.innerWidth, height: window.innerHeight };
+        try {
+          const windowImage = await call<string>("captureViewerBackdrop", undefined, AbortSignal.timeout(200));
+          const firstFrame = viewerFrameSource(modal.current, true, src, poster);
+          if (firstFrame.startsWith("data:image/")) {
+            snapshot = firstFrame;
+            measured = mediaBox(modal.current, true);
+            waitingForVideo = false;
+            loadingSurface = undefined;
+          } else if (windowImage && loadingVideoBox(modal.current)?.surface === loading.surface) {
+            snapshot = await cropViewerImage(windowImage, loading.rect, viewport);
+          }
+        } catch {
+          // Switching fullscreen is still possible without an animated still.
+        }
+      }
+    }
     const ratio = measured ? measured.width / measured.height : 16 / 9;
-    const radius = isVideo ? 10 : 12;
+    const radius = loadingSurface === "spinner" ? 6 : isVideo ? 10 : 12;
     const full = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
     const screenRect = (rect: ViewerRect | null | undefined): number[] | null =>
       rect ? [Math.round(window.screenX + rect.left), Math.round(window.screenY + rect.top), Math.round(rect.width), Math.round(rect.height)] : null;
+    const targetMediaBox = () => {
+      if (loadingSurface) {
+        const current = loadingVideoBox(modal.current);
+        if (current?.surface === loadingSurface) return current.rect;
+        if (loadingSurface === "spinner" && measured) {
+          const area = modal.current?.querySelector(".viewer-stage")?.getBoundingClientRect();
+          if (!area) return null;
+          // Metadata can arrive mid-transition. Keep a spinner-sized still
+          // centered in the new stage instead of stretching it into a poster.
+          return { ...measured, left: area.left + (area.width - measured.width) / 2, top: area.top + (area.height - measured.height) / 2 };
+        }
+      }
+      return (isVideo ? null : imageTargetRect()) || mediaBox(modal.current, isVideo);
+    };
 
     if (enter) {
       fsReturn.current = {
@@ -2505,11 +2541,12 @@ function MediaViewer({
         windowY: window.screenY,
         screenX: window.screenX,
         screenY: window.screenY,
-        rect: waitingForVideo ? null : measured,
+        rect: measured,
         rel: item.rel,
+        loadingSurface,
       };
     }
-    if (waitingForVideo) {
+    if (waitingForVideo && !snapshot) {
       await resizeWhileVideoLoads(enter, hideChrome);
       return;
     }
@@ -2537,7 +2574,7 @@ function MediaViewer({
         setWindowFs(true);
         if (hideChrome) setImmersive(true);
         await nextPaint();
-        const target = (isVideo ? mediaBox(modal.current, isVideo) : imageTargetRect()) || mediaBox(modal.current, isVideo) || fitViewerRect(ratio);
+        const target = targetMediaBox() || fitViewerRect(ratio);
         const endScreen = screenRect(target) || startScreen;
         try {
           await call("animateFullscreenCover", { from: startScreen, to: endScreen, radius, duration: fullscreenZoomMs });
@@ -2547,6 +2584,10 @@ function MediaViewer({
         const staged = stageFullscreenHandoff(snapshot, target, radius);
         await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenZoomMs + 8));
         await finishNativeHandoff(staged, 0);
+        return;
+      }
+      if (waitingForVideo) {
+        await resizeWhileVideoLoads(true, hideChrome);
         return;
       }
       // Fallback: the same backdrop under a page-owned scaling image.
@@ -2595,7 +2636,7 @@ function MediaViewer({
     } else {
       const ret = fsReturn.current;
       const currentScreen = screenRect(measured);
-      const savedTarget = ret?.rel === item.rel && ret.rect ? [
+      const savedTarget = ret?.rel === item.rel && ret.loadingSurface === loadingSurface && ret.rect ? [
         Math.round(ret.windowX + ret.rect.left),
         Math.round(ret.windowY + ret.rect.top),
         Math.round(ret.rect.width),
@@ -2621,7 +2662,7 @@ function MediaViewer({
         setWindowFs(false);
         if (hideChrome) setImmersive(false);
         await nextPaint();
-        const target = (isVideo ? mediaBox(modal.current, true) : imageTargetRect()) || mediaBox(modal.current, isVideo);
+        const target = targetMediaBox();
         const restored = screenRect(target);
         if (!savedTarget && currentScreen && restored) {
           try {
@@ -2637,6 +2678,10 @@ function MediaViewer({
         // Reveal the restored desktop around the window, while the still in
         // WebView2 keeps the media itself in place.
         await finishNativeHandoff(staged, 55);
+        return;
+      }
+      if (waitingForVideo) {
+        await resizeWhileVideoLoads(false, hideChrome);
         return;
       }
       // Fallback: animate the page ghost, then restore the window underneath.

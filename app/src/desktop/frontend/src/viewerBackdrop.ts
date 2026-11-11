@@ -4,6 +4,23 @@ export function loadBackdropImage(src: string): Promise<HTMLImageElement> {
   return img.decode().then(() => img);
 }
 
+export async function cropViewerImage(
+  src: string,
+  rect: { left: number; top: number; width: number; height: number },
+  viewport: { width: number; height: number },
+): Promise<string> {
+  const image = await loadBackdropImage(src);
+  const sx = image.naturalWidth / viewport.width;
+  const sy = image.naturalHeight / viewport.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(rect.width * sx));
+  canvas.height = Math.max(1, Math.round(rect.height * sy));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.drawImage(image, rect.left * sx, rect.top * sy, rect.width * sx, rect.height * sy, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
 // Bake one opaque texture for both WebView2 and the native resize cover.
 // The moving sharp frame is separate, so neither renderer can pick up the
 // current video frame as the backdrop or resample the page during the zoom.
