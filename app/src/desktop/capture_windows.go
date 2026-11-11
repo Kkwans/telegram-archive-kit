@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"image/png"
-	"math"
 	"syscall"
 	"unsafe"
 
@@ -20,6 +20,10 @@ var procPrintWindow = syscall.NewLazyDLL("user32.dll").NewProc("PrintWindow")
 // frontend hides the dialog before calling it, so the captured frame contains
 // the page that will appear blurred behind the panel.
 func (b *Bridge) CaptureWindow() (string, error) {
+	return b.captureWindow(1600, 1200, false)
+}
+
+func (b *Bridge) captureWindow(maxWidth, maxHeight int, compact bool) (string, error) {
 	if b.window == nil {
 		return "", errors.New("窗口尚未就绪")
 	}
@@ -57,36 +61,29 @@ func (b *Bridge) CaptureWindow() (string, error) {
 		return "", fmt.Errorf("窗口截图失败：%v", callErr)
 	}
 	raw := unsafe.Slice((*byte)(bits), width*height*4)
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		src := raw[y*width*4 : (y+1)*width*4]
+	// Scale directly from the captured bitmap. The blurred viewer background
+	// does not need a full-sized RGBA copy or a lossless image over the bridge.
+	scale := min(1, float64(maxWidth)/float64(width), float64(maxHeight)/float64(height))
+	w, h := max(1, int(float64(width)*scale)), max(1, int(float64(height)*scale))
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		row := (y * height / h) * width * 4
 		dst := img.Pix[y*img.Stride:]
-		for x := 0; x < width; x++ {
-			dst[x*4+0] = src[x*4+2]
-			dst[x*4+1] = src[x*4+1]
-			dst[x*4+2] = src[x*4+0]
+		for x := 0; x < w; x++ {
+			p := row + (x*width/w)*4
+			dst[x*4+0] = raw[p+2]
+			dst[x*4+1] = raw[p+1]
+			dst[x*4+2] = raw[p]
 			dst[x*4+3] = 255
 		}
 	}
-	// The glass layer is blurred, so a smaller snapshot is visually identical
-	// but much faster to encode and transfer on 2K/4K windows.
-	const maxWidth, maxHeight = 1600, 1200
-	if width > maxWidth || height > maxHeight {
-		scale := math.Min(float64(maxWidth)/float64(width), float64(maxHeight)/float64(height))
-		scaledWidth := max(1, int(float64(width)*scale))
-		scaledHeight := max(1, int(float64(height)*scale))
-		scaled := image.NewRGBA(image.Rect(0, 0, scaledWidth, scaledHeight))
-		for y := 0; y < scaledHeight; y++ {
-			sourceY := y * height / scaledHeight
-			destination := scaled.Pix[y*scaled.Stride:]
-			for x := 0; x < scaledWidth; x++ {
-				source := img.PixOffset(x*width/scaledWidth, sourceY)
-				copy(destination[x*4:x*4+4], img.Pix[source:source+4])
-			}
-		}
-		img = scaled
-	}
 	var buf bytes.Buffer
+	if compact {
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 72}); err != nil {
+			return "", err
+		}
+		return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	}
 	if err := png.Encode(&buf, img); err != nil {
 		return "", err
 	}

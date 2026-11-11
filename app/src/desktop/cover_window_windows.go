@@ -690,10 +690,10 @@ func showFsCover(owner uintptr, dataURL string) bool {
 	})
 }
 
-// hideFsCover removes the cover. A non-zero fadeMs cross-fades the native
-// window into the page-owned cover, which is what makes the exit hand-off
-// invisible: both surfaces show the same blurred frame at the same geometry.
-func hideFsCover(fadeMs int, afterHide func()) {
+// hideFsCover signals when the cover is hidden or superseded. This allows the
+// WebView to keep its still frame until the native layer actually withdraws.
+func hideFsCover(fadeMs int, afterHide func()) <-chan struct{} {
+	done := make(chan struct{})
 	coverAnimGen.Add(1)
 	gen := coverFade.Add(1)
 	var hwnd uintptr
@@ -702,7 +702,8 @@ func hideFsCover(fadeMs int, afterHide func()) {
 	})
 	if hwnd == 0 {
 		application.InvokeSync(afterHide)
-		return
+		close(done)
+		return done
 	}
 	finish := func() {
 		if coverHWND == hwnd && coverFade.Load() == gen {
@@ -712,9 +713,11 @@ func hideFsCover(fadeMs int, afterHide func()) {
 	}
 	if fadeMs <= 0 {
 		application.InvokeSync(finish)
-		return
+		close(done)
+		return done
 	}
 	go func() {
+		defer close(done)
 		duration := time.Duration(fadeMs) * time.Millisecond
 		started := time.Now()
 		for {
@@ -736,6 +739,7 @@ func hideFsCover(fadeMs int, afterHide func()) {
 		}
 		application.InvokeSync(finish)
 	}()
+	return done
 }
 
 type coverError string
