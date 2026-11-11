@@ -113,12 +113,14 @@ func NewManager(dir string, current func() string, discover func(context.Context
 }
 
 func readConfig(path string) savedConfig {
-	defaults := savedConfig{Config: Config{Port: 8780, RestartLimit: 3}}
+	defaults := savedConfig{Config: Config{Port: 8780, RestartLimit: 3, Scope: Scope{All: true}}}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return defaults
 	}
 	saved := defaults
+	// Old files without an explicit scope must not publish more on sign-in.
+	saved.Scope = Scope{}
 	if json.Unmarshal(data, &saved) != nil || saved.Port < 1 || saved.Port > 65535 {
 		return defaults
 	}
@@ -156,7 +158,7 @@ func (m *Manager) Status(refresh bool) Status {
 	}
 	cfg := m.saved.Config
 	if m.saved.Library != "" && !sameRoot(root, m.saved.Library) && !m.requested {
-		cfg.Scope = Scope{}
+		cfg.Scope = Scope{All: true}
 	}
 	out := Status{Config: cfg, Library: root, Requested: m.requested, Phase: phase, Message: m.message,
 		LANError: m.network.LANError, TailError: m.network.TailError, Published: m.published,
