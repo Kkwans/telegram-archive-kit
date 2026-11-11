@@ -177,6 +177,15 @@ func (a *App) writeSearchIndex(slug string, arc *Archive) error {
 	if arc == nil {
 		return nil
 	}
+	out, err := SearchIndexScript(arc)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(a.dataDir(slug), "search-index.js"), out, 0644)
+}
+
+// SearchIndexScript is shared by the offline builder and the web deployment.
+func SearchIndexScript(arc *Archive) ([]byte, error) {
 	type srow struct {
 		ID, From, Text string
 		TS             int64
@@ -205,15 +214,24 @@ func (a *App) writeSearchIndex(slug string, arc *Archive) error {
 	}
 	b, err := json.Marshal(rows)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	out := append([]byte("window.__TAK_SEARCH__ = "), b...)
 	out = append(out, []byte(";\n")...)
-	return os.WriteFile(filepath.Join(a.dataDir(slug), "search-index.js"), out, 0644)
+	return out, nil
 }
 
 // Cross-page date navigation index, restricted to real visible messages.
 func (a *App) writeDateIndex(slug string, arc *Archive) error {
+	out, err := DateIndexScript(arc)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(a.dataDir(slug), "date-index.js"), out, 0644)
+}
+
+// DateIndexScript preserves the same page and anchor semantics on both sites.
+func DateIndexScript(arc *Archive) ([]byte, error) {
 	type dateRow struct {
 		Date    string `json:"date"`
 		Page    int    `json:"page"`
@@ -262,7 +280,7 @@ func (a *App) writeDateIndex(slug string, arc *Archive) error {
 	}
 	b, err := json.Marshal(result)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(filepath.Join(a.dataDir(slug), "date-index.js"), append(append([]byte("window.__TAK_DATES__ = "), b...), []byte(";\n")...), 0644)
+	return append(append([]byte("window.__TAK_DATES__ = "), b...), []byte(";\n")...), nil
 }
