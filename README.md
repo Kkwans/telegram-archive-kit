@@ -8,7 +8,7 @@ Windows 桌面客户端 + 终端版。以 [tdl](https://github.com/iyear/tdl) �
 把「媒体下载 → 增量归档 → 网页生成 → 日常浏览」串成一条完整的本地流水线，全程数据留在你自己的硬盘上。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.0-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-环境要求)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
@@ -119,7 +119,7 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 | 操作系统 | Windows 10 / 11（x64） |
 | 运行时依赖 | 无（tdl、FFmpeg 均按需自动安装，也可手动放置） |
 | 运行库 | 桌面端使用系统 WebView2（Win11 自带；Win10 如缺失请安装 Microsoft Edge WebView2 Runtime） |
-| 网络 | 登录与下载时需要；浏览网页完全离线 |
+| 网络 | 登录与下载需要网络；离线网页可直接打开，也可部署给局域网或 Tailscale 设备 |
 | 磁盘 | 取决于聊天媒体总量，建议预留空间并使用 NTFS 磁盘 |
 
 ## 🚀 快速开始
@@ -134,6 +134,12 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 > 💡 已有官方 ChatExport HTML 导出？先执行「继承 Telegram 官方 ChatExport」，再导入当前的 `result.json`，旧媒体可以直接复用。详见 [使用指南](docs/USAGE.md)。
 >
 > 💡 升级版本：解压新版本到**新目录**，指向原档案库，执行「聊天管理 → 只重新生成网页」即可，无需重新下载任何媒体。
+
+## 网页部署
+
+在桌面端打开「网页部署」，选择已生成网页的聊天或整个档案库，再选择 Windows 专用局域网网卡、Tailscale，或同时开启两者。点击「启动部署」后，可以复制地址、在本机打开或让手机扫码。Tailscale 设备需要连接到允许访问该主机的 tailnet。
+
+部署供可信网络内的设备直接浏览。指定聊天会随归档更新，整库还会自动纳入新生成的聊天网页。关闭窗口后部署继续在托盘运行；可选「登录 Windows 后自动恢复」。手动停止会关闭访问地址。
 
 ## 🌐 在线聊天与增量归档
 

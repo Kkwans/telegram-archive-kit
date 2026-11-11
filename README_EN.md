@@ -8,7 +8,7 @@ Windows desktop client + console edition. Powered by [tdl](https://github.com/iy
 it connects media download → incremental archiving → static web generation → everyday browsing. All chats and media stay on your own disk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.0-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-requirements)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
@@ -123,7 +123,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 
 ## ⬇️ Download & install
 
-1. Open [Releases](https://github.com/Kkwans/telegram-archive-kit/releases/latest) and download `TelegramArchiveKit_v3.5.0_windows-x64.zip`.
+1. Open [Releases](https://github.com/Kkwans/telegram-archive-kit/releases/latest) and download the Windows x64 ZIP.
 2. Extract it to any folder (do not run it from inside the ZIP).
 3. Double-click `TelegramArchiveKit.exe` for the desktop client, or run `TelegramArchiveKit-Console.exe` for the console edition. Both share the same library.
 4. On first launch, choose the archive library location. **Never delete this directory when upgrading.**
@@ -140,6 +140,12 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 > 💡 Already have an official ChatExport HTML export? Run "Inherit official ChatExport" first, then merge the current `result.json` — existing media is reused.
 >
 > 💡 Upgrading: extract the new version into a **new folder**, point it at the existing library, and run "Rebuild web pages". No media is re-downloaded.
+
+## Web deployment
+
+Open **Web deployment** in the desktop client, choose specific chats or the entire library, then select a Windows private LAN adapter, Tailscale, or both. Start the deployment and copy an address, open it in a browser, or scan its QR code. Tailscale devices need a tailnet policy that allows them to reach this host.
+
+Devices on the selected trusted network can browse the published archive without a password. Published chats update after an archive build. The entire-library scope also publishes newly built chats. Closing the window keeps the deployment in the tray, and automatic recovery at Windows sign-in is optional.
 
 ## 🌐 Online chat & incremental archiving
 
