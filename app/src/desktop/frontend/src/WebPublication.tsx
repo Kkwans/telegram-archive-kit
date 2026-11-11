@@ -42,12 +42,12 @@ function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose
   port: number;
   blocked: boolean;
   ending: boolean;
-  onCheck: () => void;
+  onCheck?: () => void;
   onEnd: (owner: PortOwner) => void;
   onClose?: () => void;
 }) {
   const result = check?.port === port ? check : undefined;
-  return <section className="publish-port-result" aria-label={`端口 ${port} 检查结果`}>
+  return <section id="publish-port-result" className="publish-port-result" aria-label={`端口 ${port} 检查结果`}>
     <div className="publish-port-summary">
       <div>
         <b>{blocked ? <><AlertCircle size={15} /> 无法监听端口 {port}</> : `TCP 端口 ${port}`}</b>
@@ -57,10 +57,10 @@ function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose
             : "当前没有程序监听此端口。"
         )}</span>
       </div>
-      <div className="publish-port-actions">
-        <button className="btn sm ghost" disabled={!result || ending} onClick={onCheck}><RefreshCw size={13} /> 重新检查</button>
+      {(onCheck || onClose) && <div className="publish-port-actions">
+        {onCheck && <button className="btn sm ghost" disabled={!result || ending} onClick={onCheck}><RefreshCw size={13} /> 重新检查</button>}
         {onClose && <button className="btn sm ghost" disabled={ending} onClick={onClose} aria-label="关闭端口检查" title="关闭端口检查"><X size={14} /></button>}
-      </div>
+      </div>}
     </div>
     {!!result?.owners?.length && <ul className="publish-port-owners">
       {result.owners.map((owner) => <li key={owner.pid}>
@@ -111,6 +111,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
   const [confirmOwner, setConfirmOwner] = useState<{ port: number; owner: PortOwner }>();
   const [ending, setEnding] = useState(false);
   const confirmDialog = useRef<HTMLDialogElement>(null);
+  const portCheckButton = useRef<HTMLButtonElement>(null);
   const qrDialog = useRef<HTMLDialogElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const sequence = useRef(0);
@@ -275,7 +276,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
   if (draft.adapter && !adapters.some((adapter) => adapter.value === draft.adapter)) adapters.push({ value: draft.adapter, label: "已选网卡暂不可用" });
 
   return (
-    <div className="publish-page">
+    <div className={view === "settings" ? "publish-page publish-page-settings" : "publish-page"}>
       <header className="publish-heading">
         <div><h1 ref={title} tabIndex={-1}>{view === "console" ? "网页部署" : "部署设置"}</h1><p>{view === "console" ? "在局域网或 Tailscale 上浏览档案网页" : "管理访问网络和后台运行"}</p></div>
         <div className="publish-heading-action">
@@ -361,19 +362,22 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           </div>
         </section>
       </> : (
-      <div className="panel publish-settings-panel">
-          <section className="publish-network">
+      <div className="publish-settings-panel">
+          <section className="panel publish-network">
             <header className="panel-head"><h3><Wifi size={15} /> 访问网络</h3></header>
             <div className="publish-body">
               <div className="publish-network-fields">
                 <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={settingsLocked} /></div>
-                <label className="field"><span>网页访问端口</span><input type="number" min={1} max={65535} value={draft.port || ""} disabled={settingsLocked || status.portLocked} aria-describedby="publish-port-hint" onChange={(event) => { setManualPort(undefined); update({ port: Number(event.target.value) }); }} /></label>
+                <div className="field">
+                  <label htmlFor="publish-port">网页访问端口</label>
+                  <div className="publish-port-control">
+                    <input id="publish-port" type="number" min={1} max={65535} value={draft.port || ""} disabled={settingsLocked || status.portLocked} aria-invalid={!validPort} aria-describedby={!validPort || status.portLocked ? "publish-port-hint" : undefined} onChange={(event) => { setManualPort(undefined); update({ port: Number(event.target.value) }); }} />
+                    <button type="button" className="btn ghost" ref={portCheckButton} disabled={!validPort || ending} aria-controls={diagnosticPort === undefined ? undefined : "publish-port-result"} onClick={() => requestPortCheck(draft.port)}>检查占用</button>
+                  </div>
+                  {(!validPort || status.portLocked) && <small id="publish-port-hint">{!validPort ? "端口范围为 1–65535。" : "停止部署后可修改端口。"}</small>}
+                </div>
               </div>
-              <div className="publish-port-help">
-                <small id="publish-port-hint">{!validPort ? "请输入 1 到 65535 之间的端口。" : status.portLocked ? "访问地址使用此端口。停止部署后可修改。" : "浏览器访问地址末尾的端口号，默认 8780。"}</small>
-                {diagnosticPort === undefined && <button className="btn sm ghost" disabled={!validPort || ending} onClick={() => requestPortCheck(draft.port)}>检查占用</button>}
-              </div>
-              {diagnosticPort !== undefined && <PortDiagnostics port={diagnosticPort} check={check} blocked={diagnosticPort === blockedPort} ending={ending} onCheck={() => requestPortCheck(diagnosticPort)} onEnd={(owner) => setConfirmOwner({ port: diagnosticPort, owner })} onClose={diagnosticPort !== blockedPort ? () => setManualPort(undefined) : undefined} />}
+              {diagnosticPort !== undefined && <PortDiagnostics port={diagnosticPort} check={check} blocked={diagnosticPort === blockedPort} ending={ending} onEnd={(owner) => setConfirmOwner({ port: diagnosticPort, owner })} onClose={diagnosticPort !== blockedPort ? () => { setManualPort(undefined); portCheckButton.current?.focus(); } : undefined} />}
               <div className="publish-network-switches">
                 <PublicationSwitch label="允许局域网 IPv6" hint={!draft.adapter ? "启用局域网后可设置" : status.networkReady && matchingAdapters.length > 0 && !matchingAdapters.some((adapter) => adapter.ipv6) ? "当前网卡暂时没有可用的 IPv6 地址" : "为同一局域网的设备提供 IPv6 访问地址"} checked={draft.lanIPv6} disabled={settingsLocked || !draft.adapter} onChange={(lanIPv6) => update({ lanIPv6 })} />
                 <PublicationSwitch label="允许 Tailscale 访问" hint={(draft.tailscale && status.tailError) || "使用本机 Tailscale 地址"} checked={draft.tailscale} disabled={settingsLocked} onChange={(tailscale) => update({ tailscale })} />
@@ -383,7 +387,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               <small>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</small>
             </div>
           </section>
-          <section className="publish-background">
+          <section className="panel publish-background">
             <header className="panel-head"><h3><Monitor size={15} /> 后台运行</h3></header>
             <div className="publish-body publish-lifecycle">
               <PublicationSwitch label="退出客户端后继续部署" hint="从托盘退出后，网页仍可访问" checked={draft.keepOnExit} disabled={settingsLocked} onChange={(keepOnExit) => update({ keepOnExit })} />
@@ -409,15 +413,22 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
         <img src={qr.src} alt="档案网页访问地址二维码" width={220} height={220} />
         <code>{qr.url}</code>
       </dialog>}
-      {confirmOwner && <dialog className="publish-confirm" ref={confirmDialog} onClose={() => setConfirmOwner(undefined)} aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-message">
-        <div className="confirm-head"><span className="confirm-icon danger"><AlertCircle size={18} /></span><div>
-          <h2 id="publish-confirm-title">结束 {confirmOwner.owner.name}？</h2>
-          <p id="publish-confirm-message" className="confirm-message">此程序（PID {confirmOwner.owner.pid}）正在监听 TCP 端口 {confirmOwner.port}。结束程序会中断它的连接，未保存的工作可能丢失。</p>
-        </div></div>
-        <div className="modal-actions">
+      {confirmOwner && <dialog className="publish-confirm" role="alertdialog" ref={confirmDialog} onClose={() => setConfirmOwner(undefined)} aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-target publish-confirm-message">
+        <header>
+          <AlertCircle size={18} aria-hidden="true" />
+          <h2 id="publish-confirm-title">结束程序以释放端口？</h2>
+        </header>
+        <div className="publish-confirm-body">
+          <div id="publish-confirm-target" className="publish-confirm-target">
+            <strong>{confirmOwner.owner.name}</strong>
+            <span>PID {confirmOwner.owner.pid} · TCP 端口 {confirmOwner.port}</span>
+          </div>
+          <p id="publish-confirm-message">结束程序会中断连接，未保存的工作可能丢失。</p>
+        </div>
+        <footer className="modal-actions">
           <button className="btn ghost" autoFocus onClick={() => confirmDialog.current?.close()}>取消</button>
           <button className="btn danger" onClick={() => void endOwner(confirmOwner)}>结束程序</button>
-        </div>
+        </footer>
       </dialog>}
     </div>
   );
