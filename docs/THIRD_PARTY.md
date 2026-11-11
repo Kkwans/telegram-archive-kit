@@ -35,6 +35,33 @@
 - **Microsoft Edge WebView2**：由 Windows 系统提供的运行时（Win11 自带；Win10 需单独安装），TAK 不打包其二进制。
 - **Windows Pseudo Console（ConPTY）**：Windows 10 1809+ 系统 API，用于在应用内承载 tdl 的交互式登录；通过 Go 标准库 `syscall` 直接调用，无第三方代码。
 
+### go-winio v0.6.2
+
+网页部署通过 Windows 命名管道在桌面客户端与发布进程之间通信。该组件采用 MIT 许可证。
+
+`	ext
+The MIT License (MIT)
+
+Copyright (c) 2015 Microsoft
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+``n
 ## 架构参考（仅参考，未使用代码）
 
 - <https://github.com/rand0451/Telegram-Chat-Export-Viewer>
