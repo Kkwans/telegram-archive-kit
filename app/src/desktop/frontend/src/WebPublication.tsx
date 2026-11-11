@@ -126,8 +126,8 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
   }
 
   if (!status || !draft) {
-    return <><div className="page-head"><div><h1>网页部署</h1><p>让其他设备浏览你的档案网页</p></div></div>
-      <section className="panel publish-empty" role="status">{loadError || "正在读取档案库和访问网络…"}</section></>;
+    return <div className="publish-page"><header className="publish-heading"><div><h1>网页部署</h1><p>在局域网或 Tailscale 上浏览档案网页</p></div></header>
+      <section className="panel publish-empty" role="status">{loadError || "正在读取档案库和访问网络…"}</section></div>;
   }
 
   const chosen = status.chats.filter((chat) => chat.ready && (draft.scope.all || selected.get(chat.slug) === chat.id)).length;
@@ -155,7 +155,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           <div className="publish-status-title">
             <div className="publish-status-line">
               <strong><span className={`publish-dot ${status.phase}`} />{phaseText[status.phase]}</strong>
-              <span className="publish-count">{status.requested ? status.published : chosen} 个{status.requested ? "已发布聊天" : "待发布聊天"}</span>
+              {status.catalogReady && (status.phase !== "starting" || status.published > 0) && <span className="publish-count">{status.requested ? status.published : chosen} 个{status.requested ? "已发布聊天" : "待发布聊天"}</span>}
             </div>
             <span title={status.library}>{status.library || "尚未打开档案库"}</span>
           </div>
@@ -183,18 +183,20 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
         )}
       </section>
 
-      <div className="publish-grid">
-        <section className="panel publish-scope">
-          <header className="panel-head"><h3><ListChecks size={15} /> 发布范围</h3><span className="meta">已选 {chosen.toLocaleString()} 个聊天</span></header>
+      <div className="panel publish-config">
+        <section className="publish-scope">
+          <header className="panel-head"><h3><ListChecks size={15} /> 发布范围</h3><span className="meta">{status.catalogReady ? `已选 ${chosen.toLocaleString()} 个聊天` : "读取中"}</span></header>
           <div className="publish-body">
-            <div className="publish-scope-options" role="radiogroup" aria-label="发布范围">
-              <label><input type="radio" name="publish-scope" checked={!draft.scope.all} onChange={() => update({ scope: { all: false, chats: draft.scope.chats ?? [] } })} /><b>指定聊天</b></label>
-              <label><input type="radio" name="publish-scope" checked={draft.scope.all} onChange={() => update({ scope: { ...draft.scope, all: true } })} /><b>整个档案库</b></label>
+            <div className="publish-scope-controls">
+              <div className="publish-scope-options" role="radiogroup" aria-label="发布范围">
+                <label><input type="radio" name="publish-scope" checked={!draft.scope.all} onChange={() => update({ scope: { all: false, chats: draft.scope.chats ?? [] } })} /><b>指定聊天</b></label>
+                <label><input type="radio" name="publish-scope" checked={draft.scope.all} onChange={() => update({ scope: { ...draft.scope, all: true } })} /><b>整个档案库</b></label>
+              </div>
+              {status.catalogReady && !status.chatError && status.chats.length > 0 && <label className="publish-search"><Search size={14} /><input aria-label="搜索可发布的聊天" placeholder="搜索聊天" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_SIZE); }} /></label>}
             </div>
             <p className="publish-note">{draft.scope.all ? "新生成的聊天网页也会自动发布。" : "已勾选的聊天会随归档更新。"}</p>
-            {!status.catalogReady ? <p className="publish-note" role="status">正在读取可发布聊天…</p> : status.chatError ? <p className="publish-note" role="status">{status.chatError}</p> : <>
-              <label className="publish-search"><Search size={14} /><input aria-label="搜索可发布的聊天" placeholder="搜索聊天" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_SIZE); }} /></label>
-              <ul className="publish-chat-list" aria-label="聊天">
+            {!status.catalogReady ? <p className="publish-note publish-loading" role="status"><LoaderCircle size={14} className="spin" /> 正在读取可发布聊天…</p> : status.chatError ? <p className="publish-note" role="status">{status.chatError}</p> : <>
+              {filtered.length > 0 && <ul className="publish-chat-list" aria-label="聊天">
                 {filtered.slice(0, limit).map((chat) => <li key={chat.slug}>
                   <label className="publish-chat">
                     <input type="checkbox" checked={chat.ready && (draft.scope.all || selected.get(chat.slug) === chat.id)} disabled={!chat.ready || draft.scope.all} onChange={() => toggle(chat)} />
@@ -202,7 +204,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
                   </label>
                   {!chat.ready && <button className="btn sm ghost" onClick={() => { ctx.setSelected(chat.slug); ctx.go("chats"); }}>前往重建</button>}
                 </li>)}
-              </ul>
+              </ul>}
               {filtered.length === 0 && <p className="publish-note">{query ? "没有匹配的聊天" : "当前档案库还没有聊天"}</p>}
               {filtered.length > limit && <button className="btn sm ghost" onClick={() => setLimit((n) => n + PAGE_SIZE)}>显示更多</button>}
               {status.chats.length > eligible && <p className="publish-note">{eligible} 个聊天已生成网页</p>}
@@ -210,18 +212,19 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           </div>
         </section>
 
-        <div className="publish-settings">
-          <section className="panel">
+          <section className="publish-network">
             <header className="panel-head"><h3><Wifi size={15} /> 访问网络</h3></header>
             <div className="publish-body">
-              <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={!status.networkReady} /></div>
-              {!status.networkReady && <p className="publish-note" role="status">正在检测访问网络…</p>}
+              <div className="publish-network-fields">
+                <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={!status.networkReady} /></div>
+                <label className="field"><span>端口</span><input type="number" aria-label="部署端口" min={1} max={65535} value={draft.port || ""} disabled={status.requested} onChange={(event) => update({ port: Number(event.target.value) })} /></label>
+                <label className="publish-check publish-tail"><input type="checkbox" checked={draft.tailscale} onChange={(event) => update({ tailscale: event.target.checked })} /><span><b>允许 Tailscale 访问</b><small>{status.tailError || "使用本机 Tailscale 地址"}</small></span></label>
+              </div>
+              {!status.networkReady && <p className="publish-note publish-loading" role="status"><LoaderCircle size={14} className="spin" /> 正在检测访问网络…</p>}
               {status.lanError && <div className="publish-help">
-                <p className="publish-note">{status.lanError}。请在 Windows 中检查可信 Wi-Fi 或以太网的网络类型。</p>
+                <span className="publish-note">{status.lanError}</span>
                 <button className="btn sm ghost" onClick={() => void call("webPublishNetworkSettings").catch((e) => ctx.toast(e.message, "error"))}>打开网络设置</button>
               </div>}
-              <label className="publish-check"><input type="checkbox" checked={draft.tailscale} onChange={(event) => update({ tailscale: event.target.checked })} /><span><b>允许 Tailscale 访问</b><small>{status.tailError || "使用本机 Tailscale 地址"}</small></span></label>
-              <label className="field"><span>端口</span><input type="number" aria-label="部署端口" min={1} max={65535} value={draft.port || ""} disabled={status.requested} onChange={(event) => update({ port: Number(event.target.value) })} /></label>
               {!validPort && <p className="publish-note" role="status">端口须在 1 到 65535 之间</p>}
               <p className="publish-note">能连接到地址的设备可以直接浏览已发布聊天，无需口令。</p>
               <div className="publish-help">
@@ -230,17 +233,18 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               </div>
             </div>
           </section>
-          <section className="panel">
+          <section>
             <header className="panel-head"><h3><Monitor size={15} /> 后台运行</h3></header>
             <div className="publish-body publish-lifecycle">
               <label className="publish-check"><input type="checkbox" checked={draft.keepOnExit} onChange={(event) => update({ keepOnExit: event.target.checked })} /><span><b>退出客户端后继续部署</b><small>从托盘退出后，网页仍可访问</small></span></label>
               <label className="publish-check"><input type="checkbox" checked={draft.auto} onChange={(event) => update({ auto: event.target.checked })} /><span><b>登录 Windows 后自动部署</b><small>恢复上次开启的部署</small></span></label>
-              <label className="publish-check"><input type="checkbox" checked={draft.restartOnFailure} disabled={status.requested} onChange={(event) => update({ restartOnFailure: event.target.checked })} /><span><b>故障时自动重启</b><small>{status.requested ? "停止部署后可更改重启设置" : "后台进程异常退出时尝试恢复"}</small></span></label>
-              {draft.restartOnFailure && <label className="publish-limit"><span>重启上限</span><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={status.requested} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></label>}
-              {!validLimit && <p className="publish-note" role="status">重启上限须在 1 到 10 次之间</p>}
+              <div className="publish-recovery">
+                <label className="publish-check"><input type="checkbox" checked={draft.restartOnFailure} disabled={status.requested} onChange={(event) => update({ restartOnFailure: event.target.checked })} /><span><b>故障时自动重启</b><small>{status.requested ? "停止部署后可更改重启设置" : "后台进程异常退出时尝试恢复"}</small></span></label>
+                {draft.restartOnFailure && <label className="publish-limit"><span>上限</span><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={status.requested} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></label>}
+                {!validLimit && <p className="publish-note" role="status">重启上限须在 1 到 10 次之间</p>}
+              </div>
             </div>
           </section>
-        </div>
       </div>
       {(dirty || busy) && <div className="publish-footer">
         <span aria-live="polite">{busy ? <><LoaderCircle size={13} className="spin" /> 正在应用…</> : "有未应用的设置"}</span>
