@@ -145,7 +145,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 
 Open **Web deployment** in the desktop client, choose specific chats or the entire library, then select a Windows private LAN adapter, Tailscale, or both. Start the deployment and copy an address, open it in a browser, or scan its QR code. Tailscale devices need a tailnet policy that allows them to reach this host.
 
-Devices on the selected trusted network can browse the published archive without a password. Published chats update after an archive build. The entire-library scope also publishes newly built chats. Closing the window keeps the deployment in the tray, and automatic recovery at Windows sign-in is optional.
+Devices on the selected trusted network can browse the published archive without a password. Published chats update after an archive build. The entire-library scope also publishes newly built chats. Closing the window keeps the deployment in the tray. The background settings let you keep serving after quitting the client, resume deployment at Windows sign-in, and retry after a worker failure. The restart limit is 1 to 10 attempts, five seconds apart. Stopping the deployment clears the saved intent to resume at sign-in.
 
 ## 🌐 Online chat & incremental archiving
 

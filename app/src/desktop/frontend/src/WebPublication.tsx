@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, ExternalLink, Globe, ListChecks, LoaderCircle, Monitor, Play, QrCode, RefreshCw, Search, Shield, Square, Wifi, X } from "lucide-react";
+import { Copy, ExternalLink, ListChecks, LoaderCircle, Monitor, Play, QrCode, RefreshCw, Search, Shield, Square, Wifi, X } from "lucide-react";
 import type { PageCtx } from "./pages";
 import { Select } from "./Select";
 import { call } from "./rpc";
 
 type Selection = { slug: string; id: string };
 type Chat = Selection & { name: string; messages: number; ready: boolean };
-type PublishConfig = { scope: { all: boolean; chats: Selection[] | null }; adapter: string; tailscale: boolean; port: number; auto: boolean };
+type PublishConfig = { scope: { all: boolean; chats: Selection[] | null }; adapter: string; tailscale: boolean; port: number; auto: boolean; keepOnExit: boolean; restartOnFailure: boolean; restartLimit: number };
 type Endpoint = { kind: "lan" | "tailscale"; url?: string; error?: string };
 type PublishStatus = {
   config: PublishConfig;
@@ -134,29 +134,31 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
   const eligible = status.chats.filter((chat) => chat.ready).length;
   const dirty = JSON.stringify(status.config) !== JSON.stringify(draft);
   const validPort = Number.isInteger(draft.port) && draft.port >= 1 && draft.port <= 65535;
-  const canStart = Boolean(status.library && chosen && validPort && (draft.adapter || draft.tailscale));
+  const validLimit = !draft.restartOnFailure || (Number.isInteger(draft.restartLimit) && draft.restartLimit >= 1 && draft.restartLimit <= 10);
+  const canStart = Boolean(status.library && chosen && validPort && validLimit && (draft.adapter || draft.tailscale));
   const adapters = [{ value: "", label: "关闭局域网访问" }, ...status.adapters.map((adapter) => ({ value: adapter.id, label: `${adapter.name} · ${adapter.ip}` }))];
   if (draft.adapter && !adapters.some((adapter) => adapter.value === draft.adapter)) adapters.push({ value: draft.adapter, label: "已选网卡暂不可用" });
 
   return (
     <div className="publish-page">
-      <div className="page-head">
-        <div><h1>网页部署</h1><p>在局域网或 Tailscale 上浏览已生成的档案网页</p></div>
-        <div className="actions">
+      <header className="publish-heading">
+        <div><h1>网页部署</h1><p>在局域网或 Tailscale 上浏览档案网页</p></div>
+        <div className="publish-heading-action">
           {status.requested
             ? <button type="button" className="btn ghost" disabled={busy} onClick={() => void save("webPublishStop")}><Square size={14} /> 停止部署</button>
             : <button type="button" className="btn primary" disabled={busy || !canStart} onClick={() => void save("webPublishStart")}><Play size={14} /> 启动部署</button>}
         </div>
-      </div>
+      </header>
 
       <section className="panel publish-status" aria-label="部署状态">
         <div className="publish-status-head">
-          <div className="publish-icon"><Globe size={21} /></div>
           <div className="publish-status-title">
-            <strong><span className={`publish-dot ${status.phase}`} />{phaseText[status.phase]}</strong>
+            <div className="publish-status-line">
+              <strong><span className={`publish-dot ${status.phase}`} />{phaseText[status.phase]}</strong>
+              <span className="publish-count">{status.requested ? status.published : chosen} 个{status.requested ? "已发布聊天" : "待发布聊天"}</span>
+            </div>
             <span title={status.library}>{status.library || "尚未打开档案库"}</span>
           </div>
-          <div className="publish-count"><b>{status.requested ? status.published : chosen}</b><span>{status.requested ? "已发布聊天" : "待发布聊天"}</span></div>
         </div>
         {status.message && <div className="publish-notice" role="status">{status.message}</div>}
         {status.endpoints.length > 0 && (
@@ -167,11 +169,11 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               <div className="publish-endpoint" key={endpoint.url || `${endpoint.kind}-${index}`}>
                 <span className="publish-endpoint-label">{endpoint.kind === "lan" ? <Wifi size={15} /> : <Shield size={15} />}{label}</span>
                 {endpoint.url ? <>
-                  <code>{endpoint.url}</code>
+                  <button type="button" className="publish-address" title={`在浏览器打开 ${endpoint.url}`} onClick={() => void act(endpoint, "open")}><code>{endpoint.url}</code></button>
                   <div className="publish-endpoint-actions">
-                    <button className="btn sm ghost" aria-label={`复制 ${label} 地址`} onClick={() => void act(endpoint, "copy")}><Copy size={13} /> 复制</button>
-                    <button className="btn sm ghost" aria-label={`打开 ${label} 地址`} onClick={() => void act(endpoint, "open")}><ExternalLink size={13} /> 打开</button>
-                    <button className="btn sm ghost" aria-label={`${label} 二维码`} onClick={() => void act(endpoint, "qr")}><QrCode size={13} /> 二维码</button>
+                    <button className="btn sm ghost" aria-label={`复制 ${label} 地址`} title="复制地址" onClick={() => void act(endpoint, "copy")}><Copy size={15} /></button>
+                    <button className="btn sm ghost" aria-label={`打开 ${label} 地址`} title="浏览器打开" onClick={() => void act(endpoint, "open")}><ExternalLink size={15} /></button>
+                    <button className="btn sm ghost" aria-label={`${label} 二维码`} title="显示二维码" onClick={() => void act(endpoint, "qr")}><QrCode size={15} /></button>
                   </div>
                 </> : <span className="publish-endpoint-error">{endpoint.error}</span>}
               </div>
@@ -186,9 +188,10 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           <header className="panel-head"><h3><ListChecks size={15} /> 发布范围</h3><span className="meta">已选 {chosen.toLocaleString()} 个聊天</span></header>
           <div className="publish-body">
             <div className="publish-scope-options" role="radiogroup" aria-label="发布范围">
-              <label><input type="radio" name="publish-scope" checked={!draft.scope.all} onChange={() => update({ scope: { all: false, chats: draft.scope.chats ?? [] } })} /><span><b>指定聊天</b><small>自动更新已选聊天</small></span></label>
-              <label><input type="radio" name="publish-scope" checked={draft.scope.all} onChange={() => update({ scope: { ...draft.scope, all: true } })} /><span><b>整个档案库</b><small>新生成的聊天网页也会自动发布</small></span></label>
+              <label><input type="radio" name="publish-scope" checked={!draft.scope.all} onChange={() => update({ scope: { all: false, chats: draft.scope.chats ?? [] } })} /><b>指定聊天</b></label>
+              <label><input type="radio" name="publish-scope" checked={draft.scope.all} onChange={() => update({ scope: { ...draft.scope, all: true } })} /><b>整个档案库</b></label>
             </div>
+            <p className="publish-note">{draft.scope.all ? "新生成的聊天网页也会自动发布。" : "已勾选的聊天会随归档更新。"}</p>
             {!status.catalogReady ? <p className="publish-note" role="status">正在读取可发布聊天…</p> : status.chatError ? <p className="publish-note" role="status">{status.chatError}</p> : <>
               <label className="publish-search"><Search size={14} /><input aria-label="搜索可发布的聊天" placeholder="搜索聊天" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_SIZE); }} /></label>
               <ul className="publish-chat-list" aria-label="聊天">
@@ -229,17 +232,21 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           </section>
           <section className="panel">
             <header className="panel-head"><h3><Monitor size={15} /> 后台运行</h3></header>
-            <div className="publish-body">
-              <label className="publish-check"><input type="checkbox" checked={draft.auto} onChange={(event) => update({ auto: event.target.checked })} /><span><b>登录 Windows 后自动恢复</b><small>恢复上次开启的部署，关闭窗口后在托盘继续运行</small></span></label>
+            <div className="publish-body publish-lifecycle">
+              <label className="publish-check"><input type="checkbox" checked={draft.keepOnExit} onChange={(event) => update({ keepOnExit: event.target.checked })} /><span><b>退出客户端后继续部署</b><small>从托盘退出后，网页仍可访问</small></span></label>
+              <label className="publish-check"><input type="checkbox" checked={draft.auto} onChange={(event) => update({ auto: event.target.checked })} /><span><b>登录 Windows 后自动部署</b><small>恢复上次开启的部署</small></span></label>
+              <label className="publish-check"><input type="checkbox" checked={draft.restartOnFailure} disabled={status.requested} onChange={(event) => update({ restartOnFailure: event.target.checked })} /><span><b>故障时自动重启</b><small>{status.requested ? "停止部署后可更改重启设置" : "后台进程异常退出时尝试恢复"}</small></span></label>
+              {draft.restartOnFailure && <label className="publish-limit"><span>重启上限</span><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={status.requested} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></label>}
+              {!validLimit && <p className="publish-note" role="status">重启上限须在 1 到 10 次之间</p>}
             </div>
           </section>
         </div>
       </div>
-      <div className="publish-footer">
-        <span aria-live="polite">{busy ? <><LoaderCircle size={13} className="spin" /> 正在应用…</> : dirty ? "有未应用的设置" : "设置已同步"}</span>
+      {(dirty || busy) && <div className="publish-footer">
+        <span aria-live="polite">{busy ? <><LoaderCircle size={13} className="spin" /> 正在应用…</> : "有未应用的设置"}</span>
         <button className="btn ghost" disabled={busy || !dirty} onClick={() => setDraft(status.config)}><RefreshCw size={13} /> 恢复设置</button>
-        <button className="btn primary" disabled={busy || !dirty || !validPort || (status.requested && !draft.adapter && !draft.tailscale)} onClick={() => void save("webPublishSave")}>{status.requested ? "应用设置" : "保存设置"}</button>
-      </div>
+        <button className="btn primary" disabled={busy || !dirty || !validPort || !validLimit || (status.requested && !draft.adapter && !draft.tailscale)} onClick={() => void save("webPublishSave")}>{status.requested ? "应用设置" : "保存设置"}</button>
+      </div>}
 
       {qr && <dialog className="publish-qr" ref={qrDialog} onClose={() => setQR(undefined)} aria-label="扫码打开档案网页">
         <header><h2>扫码打开档案网页</h2><button className="btn sm ghost" aria-label="关闭二维码" onClick={() => qrDialog.current?.close()}><X size={16} /></button></header>
