@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -148,7 +149,7 @@ func tailscaleAddresses(ctx context.Context) ([]netip.Addr, string) {
 
 const startupName = "TelegramArchiveKit.WebPublication"
 
-func SetWindowsStartup(enabled bool) error {
+func setWindowsStartup(dir string, enabled bool) error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE|registry.QUERY_VALUE)
 	if err != nil {
 		return err
@@ -164,7 +165,7 @@ func SetWindowsStartup(enabled bool) error {
 	if err != nil {
 		return err
 	}
-	command := fmt.Sprintf(`"%s" --restore-web-publication`, exe)
+	command := windows.EscapeArg(exe) + " --restore-web-publication " + windows.EscapeArg(dir)
 	if len([]rune(command)) > 260 || strings.ContainsRune(exe, '"') {
 		return fmt.Errorf("程序路径太长，无法写入登录启动项")
 	}

@@ -17,11 +17,14 @@ import (
 )
 
 type Config struct {
-	Scope     Scope  `json:"scope"`
-	Adapter   string `json:"adapter"`
-	Tailscale bool   `json:"tailscale"`
-	Port      int    `json:"port"`
-	Auto      bool   `json:"auto"`
+	Scope            Scope  `json:"scope"`
+	Adapter          string `json:"adapter"`
+	Tailscale        bool   `json:"tailscale"`
+	Port             int    `json:"port"`
+	Auto             bool   `json:"auto"`
+	KeepOnExit       bool   `json:"keepOnExit"`
+	RestartOnFailure bool   `json:"restartOnFailure"`
+	RestartLimit     int    `json:"restartLimit"`
 }
 
 type savedConfig struct {
@@ -97,21 +100,40 @@ type Manager struct {
 	site         *Site
 	listeners    map[string]listener
 	loadAt       time.Time
+	failure      chan error
 }
 
 func NewManager(dir string, current func() string, discover func(context.Context) Network, startup func(bool) error) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{path: filepath.Join(dir, "web-publication.json"), current: current, discover: discover, startup: startup,
-		ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), listeners: make(map[string]listener),
-		saved: savedConfig{Config: Config{Port: 8780}}}
-	if data, err := os.ReadFile(m.path); err == nil {
-		var saved savedConfig
-		if json.Unmarshal(data, &saved) == nil && saved.Port > 0 && saved.Port <= 65535 {
-			m.saved = saved
-		}
-	}
+		ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), listeners: make(map[string]listener)}
+	m.saved = readConfig(m.path)
 	go m.run()
 	return m
+}
+
+func readConfig(path string) savedConfig {
+	defaults := savedConfig{Config: Config{Port: 8780, RestartLimit: 3}}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaults
+	}
+	saved := defaults
+	if json.Unmarshal(data, &saved) != nil || saved.Port < 1 || saved.Port > 65535 {
+		return defaults
+	}
+	if saved.RestartLimit < 1 || saved.RestartLimit > 10 {
+		saved.RestartLimit = 3
+	}
+	return saved
+}
+
+func (m *Manager) reloadIdle() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.requested {
+		m.saved = readConfig(m.path)
+	}
 }
 
 func (m *Manager) Status(refresh bool) Status {
@@ -182,6 +204,10 @@ func (m *Manager) HasAddress(address string) bool {
 // Save applies scope and network changes immediately. The port stays fixed
 // while running so the remaining published addresses keep working.
 func (m *Manager) Save(cfg Config, start bool) error {
+	return m.save(cfg, start, false)
+}
+
+func (m *Manager) save(cfg Config, start, prepare bool) error {
 	m.commands.Lock()
 	defer m.commands.Unlock()
 	root := m.current()
@@ -190,6 +216,12 @@ func (m *Manager) Save(cfg Config, start bool) error {
 	}
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return errors.New("端口必须在 1 到 65535 之间")
+	}
+	if cfg.RestartLimit == 0 && !cfg.RestartOnFailure {
+		cfg.RestartLimit = 3
+	}
+	if cfg.RestartLimit < 1 || cfg.RestartLimit > 10 {
+		return errors.New("重启上限须在 1 到 10 次之间")
 	}
 	if start && cfg.Adapter == "" && !cfg.Tailscale {
 		return errors.New("请选择至少一种访问网络")
@@ -212,7 +244,10 @@ func (m *Manager) Save(cfg Config, start bool) error {
 	if running && cfg.Adapter == "" && !cfg.Tailscale {
 		return errors.New("请使用「停止部署」关闭所有访问地址")
 	}
-	if cfg.Auto != previous.Auto {
+	if running && (previous.RestartOnFailure != cfg.RestartOnFailure || previous.RestartLimit != cfg.RestartLimit) {
+		return errors.New("请先停止部署，再修改故障重启设置")
+	}
+	if cfg.Auto || cfg.Auto != previous.Auto {
 		if err := m.startup(cfg.Auto); err != nil {
 			return fmt.Errorf("无法更新 Windows 登录启动项：%w", err)
 		}
@@ -225,7 +260,7 @@ func (m *Manager) Save(cfg Config, start bool) error {
 		return fmt.Errorf("无法保存部署设置：%w", err)
 	}
 	m.mu.Lock()
-	m.saved, m.requested = next, next.Resume
+	m.saved, m.requested = next, next.Resume && !prepare
 	if m.site != nil {
 		m.published = m.site.Publish(m.catalog, cfg.Scope)
 		if m.published > 0 {
@@ -242,10 +277,14 @@ func (m *Manager) Save(cfg Config, start bool) error {
 }
 
 func (m *Manager) Restore() {
+	m.resume(true)
+}
+
+func (m *Manager) resume(requireAuto bool) {
 	m.commands.Lock()
 	defer m.commands.Unlock()
 	m.mu.Lock()
-	if !m.closed && m.saved.Auto && m.saved.Resume {
+	if !m.closed && m.saved.Resume && (m.saved.Auto || !requireAuto) {
 		m.requested = true
 	}
 	m.mu.Unlock()
@@ -460,10 +499,16 @@ func (m *Manager) reconcile() {
 		m.listeners[key] = listener{server, endpoint, b}
 		endpoints = append(endpoints, endpoint)
 		go func() {
-			_ = server.Serve(ln)
+			err := server.Serve(ln)
 			m.mu.Lock()
 			if m.listeners[key].server == server {
 				delete(m.listeners, key)
+				if err != nil && !errors.Is(err, http.ErrServerClosed) && m.failure != nil {
+					select {
+					case m.failure <- err:
+					default:
+					}
+				}
 				m.signal()
 			}
 			m.mu.Unlock()

@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"rsc.io/qr"
 	"telegramarchivekit/desktop/webpublish"
@@ -23,6 +25,15 @@ func (b *Bridge) publicationRPC(method string, raw json.RawMessage) (any, error)
 		var config webpublish.Config
 		if err := json.Unmarshal(raw, &config); err != nil {
 			return nil, errors.New("网页部署设置无效")
+		}
+		if config.KeepOnExit || config.Auto {
+			drive := strings.TrimSuffix(strings.ToUpper(filepath.VolumeName(b.facade.PublicationRoot())), ":")
+			b.mountMu.Lock()
+			temporary := b.mounts[drive] != nil
+			b.mountMu.Unlock()
+			if temporary {
+				return nil, errors.New("此档案库使用客户端的临时挂载。请改用 UNC 路径或 Windows 管理的网络驱动器，再启用退出后部署或登录自动部署")
+			}
 		}
 		if err := b.publication.Save(config, method == "webPublishStart"); err != nil {
 			return nil, err

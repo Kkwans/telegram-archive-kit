@@ -3,6 +3,7 @@ module telegramarchivekit/desktop
 go 1.26.4
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/gotd/td v0.163.0
 	github.com/wailsapp/wails/v3 v3.0.0
 	go.etcd.io/bbolt v1.5.0

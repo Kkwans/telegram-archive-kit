@@ -29,7 +29,7 @@ type Bridge struct {
 	window      *application.WebviewWindow
 	profile     *ProfileService
 	online      *OnlineService
-	publication *webpublish.Manager
+	publication *webpublish.Controller
 
 	mu      sync.Mutex
 	mountMu sync.Mutex
@@ -772,7 +772,11 @@ func (b *Bridge) closeWindow() {
 
 func (b *Bridge) quit() {
 	if b.publication != nil {
-		b.publication.Close()
+		if err := b.publication.Quit(); err != nil {
+			b.QueueNotice("退出前无法停止网页部署：" + err.Error())
+			b.showWindow()
+			return
+		}
 	}
 	b.stopAllRcloneMounts()
 	b.facade.Shutdown()

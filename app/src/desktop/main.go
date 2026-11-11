@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"slices"
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -51,9 +50,8 @@ func main() {
 	}
 	defer facade.ReleaseLibraryLock()
 	bridge := NewBridge(facade)
-	bridge.publication = webpublish.NewManager(facade.ConfigDir(), facade.PublicationRoot, webpublish.DiscoverWindows, webpublish.SetWindowsStartup)
+	bridge.publication = webpublish.NewController(facade.ConfigDir(), facade.PublicationRoot)
 	defer bridge.publication.Close()
-	restorePublication := slices.Contains(os.Args[1:], restoreWebPublicationArg)
 	bridge.QueueArgs(os.Args[1:])
 
 	windowsOpts := application.WindowsOptions{
@@ -79,10 +77,6 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: instanceID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				if slices.Contains(data.Args, restoreWebPublicationArg) {
-					bridge.publication.Restore()
-					return
-				}
 				bridge.QueueArgs(data.Args)
 				bridge.showWindow()
 			},
@@ -99,7 +93,6 @@ func main() {
 		MinHeight:      680,
 		Frameless:      true,
 		EnableFileDrop: true,
-		Hidden:         restorePublication,
 		// Mica only works with a translucent background on Windows 11 22621+.
 		// The frontend detects data-mica="off" and falls back to a solid surface.
 		BackgroundType:   application.BackgroundTypeTranslucent,
@@ -111,9 +104,7 @@ func main() {
 		},
 	})
 	bridge.Attach(win)
-	if !restorePublication {
-		win.Show()
-	}
+	win.Show()
 
 	win.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
 		files := e.Context().DroppedFiles()
@@ -159,9 +150,6 @@ func main() {
 	tray.SetMenu(menu)
 	tray.OnClick(func() { bridge.showWindow() })
 	tray.Show()
-	if restorePublication {
-		bridge.publication.Restore()
-	}
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
@@ -191,6 +179,40 @@ func handleHeadlessCLI(args []string) bool {
 		return false
 	}
 	switch args[0] {
+	case webpublish.WorkerArg, webpublish.WatchdogArg:
+		if len(args) != 3 || !filepath.IsAbs(args[1]) {
+			os.Exit(1)
+		}
+		run := webpublish.RunWorker
+		if args[0] == webpublish.WatchdogArg {
+			run = webpublish.RunWatchdog
+		}
+		if err := run(args[1], args[2]); err != nil {
+			log.Printf("web publication worker: %v", err)
+			os.Exit(1)
+		}
+		return true
+	case restoreWebPublicationArg:
+		dir := ""
+		if len(args) == 2 {
+			dir = args[1]
+		} else {
+			// Compatibility with the original startup entry.
+			dir = strings.TrimSpace(os.Getenv("TAK_CONFIG_DIR"))
+			if dir == "" {
+				if base, err := os.UserConfigDir(); err == nil {
+					dir = filepath.Join(base, "TelegramArchiveKit")
+				}
+			}
+		}
+		if !filepath.IsAbs(dir) {
+			os.Exit(1)
+		}
+		if err := webpublish.ResumeAfterLogin(dir); err != nil {
+			log.Printf("web publication login recovery: %v", err)
+			os.Exit(1)
+		}
+		return true
 	case "--version":
 		// No console under -H windowsgui, so the exit code is the contract.
 		for i, a := range args {
