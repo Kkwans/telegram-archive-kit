@@ -1793,10 +1793,42 @@ html[data-theme="dark"] .palette {
 .media-size button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 10.5px; padding: 3px 7px; border-radius: 5px; cursor: pointer; }
 .media-size button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(15, 22, 40, .1); }
 .media-tabs { margin-left: 0; }
-.viewer-modal { background: #090d16; backdrop-filter: none; isolation: isolate; }
-.viewer-backdrop {
-  position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  background-position: center; background-size: 100% 100%;
+.viewer-modal { background: rgba(9, 12, 20, 0.34); isolation: isolate; }
+.viewer-modal.backdrop-ambient {
+  background: rgba(9, 12, 20, 0.34);
+  backdrop-filter: blur(26px) saturate(1.35);
+  -webkit-backdrop-filter: blur(26px) saturate(1.35);
+}
+.viewer-modal.backdrop-solid { background: #080a10; }
+.viewer-modal.backdrop-frosted {
+  background: rgba(10, 13, 21, 0.3);
+  backdrop-filter: blur(28px) saturate(1.32) brightness(0.74);
+  -webkit-backdrop-filter: blur(28px) saturate(1.32) brightness(0.74);
+}
+.viewer-modal::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  opacity: .07;
+  mix-blend-mode: soft-light;
+}
+.viewer-ambient {
+  position: absolute; inset: -14%; z-index: 0; pointer-events: none;
+  background-size: cover; background-position: center;
+  filter: blur(64px) saturate(1.5) brightness(.82); opacity: .66; transform: scale(1.08);
+  transition: opacity .3s ease;
+}
+.viewer-ambient::after {
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(58% 52% at 50% 40%, rgba(4, 7, 14, .02) 0%, rgba(4, 7, 14, .34) 62%, rgba(4, 7, 14, .72) 100%),
+    linear-gradient(180deg, rgba(4, 7, 14, .12), rgba(4, 7, 14, .03) 32%, rgba(4, 7, 14, .52));
+}
+.viewer-ambient.solid { background: #070a10; filter: none; opacity: 1; transform: none; inset: 0; }
+.viewer-ambient.solid::after {
+  background:
+    radial-gradient(66% 56% at 50% 28%, rgba(255, 255, 255, .055), transparent 64%),
+    linear-gradient(180deg, rgba(4, 7, 14, .04), rgba(4, 7, 14, .48));
 }
 .viewer-head, .viewer-stage, .viewer-strip { position: relative; z-index: 2; }
 .media-nav { z-index: 4; }
@@ -2594,6 +2626,7 @@ html[data-theme="dark"] .export-preview-item { background: rgba(255, 255, 255, .
 }
 .export-loading-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 10.5px; }
 .export-loading-meta b { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.viewer-modal.backdrop-frosted .viewer-ambient { opacity: .48; }
 
 /* ===================== Task detail final pass ===================== */
 .download-hero-desc.bad { color: var(--danger); }
@@ -2809,13 +2842,25 @@ html[data-theme="dark"] .media-type-card { background: rgba(255, 255, 255, .05);
 .image-loading-guard .load-spinner { width: 38px; height: 38px; border-color: rgba(255, 255, 255, .34); border-top-color: #fff; }
 .viewer-fs-cover {
   position: fixed; inset: 0; z-index: 9999; overflow: hidden; pointer-events: all;
-  background-color: #090d16; background-position: center; background-size: 100% 100%;
+  background: #070b13;
   opacity: 1;
   transition: opacity .2s ease;
 }
+.viewer-fs-backdrop {
+  position: fixed; inset: -52px; width: calc(100% + 104px); height: calc(100% + 104px);
+  z-index: 0; object-fit: cover;
+  filter: blur(38px) saturate(1.12) brightness(.72);
+  opacity: .82;
+  transform: scale(1.03);
+  pointer-events: none;
+}
+.viewer-fs-cover::before {
+  content: ""; position: absolute; inset: 0; z-index: 1;
+  background:
+    radial-gradient(48% 44% at 50% 50%, rgba(47, 107, 255, .08), transparent 72%),
+    rgba(5, 8, 14, .42);
+}
 .viewer-fs-cover.settle { opacity: 0; }
-.viewer-fs-cover.handoff { transition-duration: .1s; }
-.viewer-fs-cover.handoff .viewer-fs-ghost { box-shadow: none; }
 .viewer-fs-ghost {
   position: fixed; z-index: 2; object-fit: contain;
   background: #05070b;
@@ -2829,4 +2874,8 @@ html[data-theme="dark"] .media-type-card { background: rgba(255, 255, 255, .05);
     width .28s cubic-bezier(.2, .8, .2, 1),
     height .28s cubic-bezier(.2, .8, .2, 1),
     border-radius .28s ease;
+}
+.viewer-fs-empty {
+  position: absolute; inset: 0;
+  background: radial-gradient(40% 36% at 50% 50%, rgba(47, 107, 255, .12), transparent 72%);
 }

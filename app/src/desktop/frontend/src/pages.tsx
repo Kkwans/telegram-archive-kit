@@ -87,7 +87,6 @@ import type {
   ViewerPrefs,
 } from "./types";
 import { bytes, dateTime, duration, rate, rateParts } from "./format";
-import { loadBackdropImage, viewerBackdrop } from "./viewerBackdrop";
 
 export interface PageCtx {
   boot: Bootstrap | null;
@@ -1025,12 +1024,10 @@ export function MediaGallery({ ctx, chat, onSummary }: {
   const [error, setError] = useState("");
   const [cancelledPage, setCancelledPage] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
-  const [viewer, setViewer] = useState<{ page: MediaPage; rel: string; pageBackdrop: string } | null>(null);
+  const [viewer, setViewer] = useState<{ page: MediaPage; rel: string } | null>(null);
   const viewerRef = useRef(viewer);
   viewerRef.current = viewer;
   const viewerRequest = useRef<AbortController | null>(null);
-  const viewerOpenRequest = useRef<AbortController | null>(null);
-  useEffect(() => () => viewerOpenRequest.current?.abort(), []);
   const [viewerBusy, setViewerBusy] = useState(false);
   const [viewerError, setViewerError] = useState("");
   const [audioItem, setAudioItem] = useState<{ item: MediaItem; version: string } | null>(null);
@@ -1244,7 +1241,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
         const visual = next.items.filter((entry) => entry.kind === "image" || entry.kind === "video");
         const target = direction > 0 ? visual[0] : visual[visual.length - 1];
         if (target) {
-          if (!auto || target.kind === "video") setViewer({ ...current, page: next, rel: target.rel });
+          if (!auto || target.kind === "video") setViewer({ page: next, rel: target.rel });
           return;
         }
         nextPage += direction;
@@ -1260,26 +1257,13 @@ export function MediaGallery({ ctx, chat, onSummary }: {
     }
   };
 
-  const openItem = async (item: MediaItem) => {
-    if (!displayed || displayed.page !== page || loading || searchPending || viewerOpenRequest.current) return;
+  const openItem = (item: MediaItem) => {
+    if (!displayed || displayed.page !== page || loading || searchPending) return;
     if (item.kind === "audio") {
       setAudioItem({ item, version: displayed.version });
     } else if (item.kind === "image" || item.kind === "video") {
-      let pageBackdrop = "";
-      if (ctx.prefs.backdrop !== "solid") {
-        const controller = new AbortController();
-        viewerOpenRequest.current = controller;
-        try {
-          pageBackdrop = await call<string>("captureViewerBackdrop", undefined, AbortSignal.any([controller.signal, AbortSignal.timeout(220)]));
-        } catch {
-          // The same neutral background is used if window capture is unavailable.
-        } finally {
-          viewerOpenRequest.current = null;
-        }
-        if (controller.signal.aborted) return;
-      }
       setViewerError("");
-      setViewer({ page: displayed, rel: item.rel, pageBackdrop });
+      setViewer({ page: displayed, rel: item.rel });
     }
   };
   const reveal = (item: MediaItem) =>
@@ -1446,7 +1430,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
         libraryKey={libraryKey} version={viewer.page.version} performanceMode={performanceMode} libraryKind={libraryKind}
         limiter={limiter} loading={viewerBusy} error={viewerError}
         onClose={() => { cancelViewerRequest(); setViewer(null); }}
-        onReveal={reveal} onOpen={openExternal} prefs={ctx.prefs} pageBackdrop={viewer.pageBackdrop}
+        onReveal={reveal} onOpen={openExternal} prefs={ctx.prefs}
       />}
       {audioItem && <AudioViewer chat={chat} item={audioItem.item} libraryKey={libraryKey} version={audioItem.version}
         onClose={() => setAudioItem(null)} onReveal={reveal} />}
@@ -2061,24 +2045,15 @@ const ArtVideo = forwardRef<VideoApi, {
 });
 
 type ViewerRect = { left: number; top: number; width: number; height: number };
-type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number; handoff?: boolean };
+type FsGhost = { src: string; from: ViewerRect; to: ViewerRect; radius: number };
 
 function mediaBox(modal: HTMLElement | null, isVideo: boolean): ViewerRect | null {
-  const video = isVideo ? modal?.querySelector<HTMLVideoElement>(".art-video-wrap.is-ready video") : null;
   const el = isVideo
-    ? video || modal?.querySelector<HTMLElement>(".art-video-wrap")
+    ? modal?.querySelector<HTMLElement>(".art-video-wrap")
     : modal?.querySelector<HTMLElement>(".image-stage img");
   if (!el) return null;
   const r = el.getBoundingClientRect();
   if (r.width < 8 || r.height < 8) return null;
-  // The player frame can include letterboxing. Match the pixels shown in the
-  // video, so the native image doesn't overshoot the web frame during handoff.
-  if (video?.videoWidth && video.videoHeight && getComputedStyle(video).objectFit === "contain") {
-    const fit = Math.min(r.width / video.videoWidth, r.height / video.videoHeight);
-    const width = video.videoWidth * fit;
-    const height = video.videoHeight * fit;
-    return { left: r.left + (r.width - width) / 2, top: r.top + (r.height - height) / 2, width, height };
-  }
   return { left: r.left, top: r.top, width: r.width, height: r.height };
 }
 
@@ -2131,6 +2106,79 @@ function nextPaint(): Promise<void> {
 const fullscreenZoomMs = 180;
 const fullscreenFadeMs = 100;
 
+function buildFullscreenCover(snapshot: string, inset?: { rect: ViewerRect; radius: number }): Promise<string> {
+  if (!snapshot) return Promise.resolve("");
+  return new Promise((resolve) => {
+    const img = new Image();
+    const timeout = window.setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      resolve("");
+    }, 750);
+    img.onload = () => {
+      window.clearTimeout(timeout);
+      try {
+        const screenW = Math.max(1, window.screen.width);
+        const screenH = Math.max(1, window.screen.height);
+        const aspect = Math.max(0.5, Math.min(3, screenW / screenH));
+        const w = 960;
+        const h = Math.max(2, Math.round(w / aspect));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve("");
+          return;
+        }
+        ctx.fillStyle = "#070b13";
+        ctx.fillRect(0, 0, w, h);
+        const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+        const dw = img.naturalWidth * scale;
+        const dh = img.naturalHeight * scale;
+        ctx.save();
+        ctx.globalAlpha = 0.82;
+        ctx.filter = "blur(22px) saturate(1.12) brightness(.82)";
+        ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+        ctx.restore();
+        ctx.fillStyle = "rgba(5, 8, 14, 0.3)";
+        ctx.fillRect(0, 0, w, h);
+        const glow = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.48);
+        glow.addColorStop(0, "rgba(47, 107, 255, 0.08)");
+        glow.addColorStop(1, "rgba(47, 107, 255, 0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, w, h);
+        if (inset && inset.rect.width > 4 && inset.rect.height > 4) {
+          const sx = w / screenW;
+          const sy = h / screenH;
+          const x = inset.rect.left * sx;
+          const y = inset.rect.top * sy;
+          const iw = inset.rect.width * sx;
+          const ih = inset.rect.height * sy;
+          ctx.save();
+          ctx.beginPath();
+          const radius = Math.max(0, inset.radius * sx);
+          if (typeof ctx.roundRect === "function") ctx.roundRect(x, y, iw, ih, radius);
+          else ctx.rect(x, y, iw, ih);
+          ctx.clip();
+          ctx.fillStyle = "#05070b";
+          ctx.fillRect(x, y, iw, ih);
+          ctx.drawImage(img, x, y, iw, ih);
+          ctx.restore();
+        }
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        resolve("");
+      }
+    };
+    img.onerror = () => {
+      window.clearTimeout(timeout);
+      resolve("");
+    };
+    img.src = snapshot;
+  });
+}
+
 function fitViewerRect(ratio: number): ViewerRect {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -2167,7 +2215,6 @@ function MediaViewer({
   onReveal,
   onOpen,
   prefs,
-  pageBackdrop,
 }: {
   chat: ChatRow;
   items: MediaItem[];
@@ -2191,7 +2238,6 @@ function MediaViewer({
   onReveal: (item: MediaItem) => void;
   onOpen: (item: MediaItem) => void;
   prefs: ViewerPrefs;
-  pageBackdrop: string;
 }) {
   const item = items[index];
   const isVideo = item.kind === "video";
@@ -2218,12 +2264,6 @@ function MediaViewer({
   const [imageBusy, setImageBusy] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [tone, setTone] = useState("hsl(221 24% 14%)");
-  const [pageFrame, setPageFrame] = useState<HTMLImageElement>();
-  const [mediaFrame, setMediaFrame] = useState<{ src: string; image: HTMLImageElement }>();
-  const [transitionBackdrop, setTransitionBackdrop] = useState<string | null>(null);
-  const backdrop = useMemo(() => viewerBackdrop(prefs.backdrop, tone, pageFrame, mediaFrame?.src === ambient ? mediaFrame.image : undefined), [prefs.backdrop, tone, pageFrame, mediaFrame, ambient]);
-  const backdropImage = transitionBackdrop ?? backdrop;
-  const backdropStyle = backdropImage ? { backgroundImage: `url("${backdropImage}")` } : undefined;
   const [immersive, setImmersive] = useState(false);
   const immersiveRef = useRef(false);
   immersiveRef.current = immersive;
@@ -2235,7 +2275,7 @@ function MediaViewer({
   const [fsShowGhost, setFsShowGhost] = useState(false);
   const [fsGhostLive, setFsGhostLive] = useState(false);
   const [fsFade, setFsFade] = useState(false);
-  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null; rel: string } | null>(null);
+  const fsReturn = useRef<{ windowX: number; windowY: number; screenX: number; screenY: number; rect: ViewerRect | null } | null>(null);
 
   useEffect(() => {
     setImageReady(false);
@@ -2285,20 +2325,6 @@ function MediaViewer({
   };
   const stateRef = useRef({ onStep: step, onClose, prefs, kind: item.kind });
   stateRef.current = { onStep: step, onClose, prefs, kind: item.kind };
-
-  useEffect(() => {
-    if (!pageBackdrop) return;
-    let alive = true;
-    void loadBackdropImage(pageBackdrop).then((image) => { if (alive) setPageFrame(image); }).catch(() => undefined);
-    return () => { alive = false; };
-  }, [pageBackdrop]);
-
-  useEffect(() => {
-    if (prefs.backdrop !== "ambient" || !ambient) return;
-    let alive = true;
-    void loadBackdropImage(ambient).then((image) => { if (alive) setMediaFrame({ src: ambient, image }); }).catch(() => undefined);
-    return () => { alive = false; };
-  }, [ambient, prefs.backdrop]);
 
   useEffect(() => {
     if (prefs.backdrop !== "solid") return;
@@ -2407,40 +2433,7 @@ function MediaViewer({
     }
   };
 
-  const stageFullscreenHandoff = (snapshot: string, rect: ViewerRect | null, radius: number) => {
-    if (!rect) return false;
-    setFsGhost({ src: snapshot, from: rect, to: rect, radius, handoff: true });
-    setFsShowGhost(true);
-    return true;
-  };
-
-  const finishNativeHandoff = async (staged: boolean, nativeFade: number) => {
-    if (staged) {
-      // Make sure WebView2 has painted the same still before withdrawing the
-      // native cover; a ready video can temporarily lose its surface on resize.
-      await nextPaint();
-      const still = modal.current?.querySelector<HTMLImageElement>(".viewer-fs-cover.handoff .viewer-fs-ghost");
-      if (still && !still.complete) {
-        await Promise.race([still.decode().catch(() => undefined), new Promise<void>((resolve) => window.setTimeout(resolve, 80))]);
-        await nextPaint();
-      }
-    }
-    await hideFullscreenCover(staged ? nativeFade : fullscreenFadeMs);
-    if (staged) {
-      await nextPaint();
-      setFsFade(true);
-      await nextPaint();
-      await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
-    }
-    setFsGhost(null);
-    setFsShowGhost(false);
-    setFsGhostLive(false);
-    setFsFade(false);
-    finishFullscreenTransition();
-  };
-
   const finishFullscreenTransition = () => {
-    setTransitionBackdrop(null);
     fsBusy.current = false;
     if (pendingAutoNext.current) {
       pendingAutoNext.current = false;
@@ -2451,7 +2444,6 @@ function MediaViewer({
   const transitionFullscreen = async (enter: boolean, hideChrome = false) => {
     if (fsBusy.current || loading || enter === windowFsRef.current) return;
     fsBusy.current = true;
-    setTransitionBackdrop(backdrop);
     setZoom(1);
     setOffset({ x: 0, y: 0 });
     api.current?.setZoom(1, { x: 0, y: 0 }, false);
@@ -2473,9 +2465,9 @@ function MediaViewer({
         screenX: window.screenX,
         screenY: window.screenY,
         rect: measured,
-        rel: item.rel,
       };
       windowFsRef.current = true;
+      const backdrop = measured && snapshot ? await buildFullscreenCover(snapshot) : "";
       const startScreen = screenRect(measured);
       let native = false;
       if (backdrop && snapshot && startScreen) {
@@ -2505,12 +2497,17 @@ function MediaViewer({
         } catch {
           /* the static frame still covers the resize */
         }
-        const staged = stageFullscreenHandoff(snapshot, target, radius);
         await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenZoomMs + 8));
-        await finishNativeHandoff(staged, 0);
+        await hideFullscreenCover(fullscreenFadeMs);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
+        setFsGhost(null);
+        setFsShowGhost(false);
+        setFsGhostLive(false);
+        setFsFade(false);
+        finishFullscreenTransition();
         return;
       }
-      // Fallback: the same backdrop under a page-owned scaling image.
+      // Fallback: the page-owned blurred cover + ghost scale.
       setFsGhost({ src: snapshot, from: measured || full, to: measured || full, radius });
       setFsShowGhost(false);
       setFsGhostLive(false);
@@ -2555,19 +2552,19 @@ function MediaViewer({
       if (nativeCover) await hideFullscreenCover();
     } else {
       const ret = fsReturn.current;
+      const backdrop = snapshot ? await buildFullscreenCover(snapshot) : "";
       const currentScreen = screenRect(measured);
-      const savedTarget = ret?.rel === item.rel && ret.rect ? [
+      const targetScreen = ret?.rect ? [
         Math.round(ret.windowX + ret.rect.left),
         Math.round(ret.windowY + ret.rect.top),
         Math.round(ret.rect.width),
         Math.round(ret.rect.height),
       ] : null;
       let native = false;
-      if (backdrop && snapshot && currentScreen) {
+      if (backdrop && snapshot && currentScreen && targetScreen) {
         try {
           const res = await call<{ shown: boolean }>("showFullscreenCover", {
-            cover: backdrop, sharp: snapshot, from: currentScreen, to: savedTarget || currentScreen, radius,
-            duration: savedTarget ? fullscreenZoomMs : 0,
+            cover: backdrop, sharp: snapshot, from: currentScreen, to: targetScreen, radius, duration: fullscreenZoomMs,
           });
           native = Boolean(res?.shown);
         } catch {
@@ -2575,29 +2572,22 @@ function MediaViewer({
         }
       }
       if (native) {
-        let zoomEndsAt = performance.now() + fullscreenZoomMs;
+        const zoomEndsAt = performance.now() + fullscreenZoomMs;
         windowFsRef.current = false;
         await applyWindowFullscreen(false);
         await nextPaint();
         setWindowFs(false);
         if (hideChrome) setImmersive(false);
         await nextPaint();
-        const target = (isVideo ? mediaBox(modal.current, true) : imageTargetRect()) || mediaBox(modal.current, isVideo);
-        const restored = screenRect(target);
-        if (!savedTarget && currentScreen && restored) {
-          try {
-            await call("animateFullscreenCover", { from: currentScreen, to: restored, radius, duration: fullscreenZoomMs });
-          } catch {
-            /* the still in the restored viewer can still take over */
-          }
-          zoomEndsAt = performance.now() + fullscreenZoomMs;
-        }
-        const staged = stageFullscreenHandoff(snapshot, target, radius);
         const remaining = zoomEndsAt - performance.now();
         if (remaining > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
-        // Reveal the restored desktop around the window, while the still in
-        // WebView2 keeps the media itself in place.
-        await finishNativeHandoff(staged, 55);
+        await hideFullscreenCover(fullscreenFadeMs);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, fullscreenFadeMs));
+        setFsGhost(null);
+        setFsShowGhost(false);
+        setFsGhostLive(false);
+        setFsFade(false);
+        finishFullscreenTransition();
         return;
       }
       // Fallback: animate the page ghost, then restore the window underneath.
@@ -2917,7 +2907,12 @@ function MediaViewer({
   return (
     <div ref={modal} className={`media-modal viewer-modal backdrop-${prefs.backdrop} ${immersive ? "immersive" : ""}`} role="dialog" aria-modal="true" aria-label={`${isVideo ? "视频" : "图片"}：${item.name}`}>
       {fsGhost && (
-        <div className={`viewer-fs-cover ${fsGhost.handoff ? "handoff" : ""} ${fsFade ? "settle" : ""}`} style={backdropStyle} aria-hidden="true">
+        <div className={`viewer-fs-cover ${fsFade ? "settle" : ""}`} aria-hidden="true">
+          {fsGhost.src ? (
+            <img className="viewer-fs-backdrop" src={fsGhost.src} alt="" draggable={false} />
+          ) : (
+            <span className="viewer-fs-empty" />
+          )}
           {fsShowGhost && fsGhost.src && (
             <img
               className={`viewer-fs-ghost ${fsGhostLive ? "live" : ""}`}
@@ -2935,7 +2930,15 @@ function MediaViewer({
           )}
         </div>
       )}
-      <div className="viewer-backdrop" style={backdropStyle} aria-hidden="true" />
+      <div
+        className={`viewer-ambient ${prefs.backdrop === "solid" ? "solid" : "ambient"}`}
+        style={prefs.backdrop === "ambient" && ambient
+          ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .26), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .22), transparent 66%), url(${ambient})` }
+          : prefs.backdrop === "solid" ? { background: tone }
+          : ambient ? { backgroundImage: `radial-gradient(62% 72% at 16% 6%, rgba(47, 107, 255, .2), transparent 62%), radial-gradient(56% 64% at 86% 86%, rgba(124, 92, 255, .16), transparent 66%), url(${ambient})` }
+          : undefined}
+        aria-hidden="true"
+      />
       <header className="media-modal-head viewer-head">
         <span className="media-modal-name" title={item.name}>{item.name}</span>
         <span className="media-modal-count" title={positionLabel}>{position.toLocaleString()} / {total.toLocaleString()} · {bytes(item.size)}</span>
