@@ -55,7 +55,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 - **Online chat**: reuses the local tdl session and reads the full conversation list (type, unread, pinned, last message, real avatars) through gotd, with filters and search.
 - **Incremental online archiving**: fetches only messages newer than the local maximum Message ID; the preview also checks **media actually missing from the archive**, so a stopped download is never mistaken for "up to date" just because `result.json` is current.
 - **Preview before every download**: online update, result.json backfill, sync selected chat, continue download and sync-all-missing all share one statistics dialog with media counts, types, estimated size and free disk space. Insufficient space blocks task creation.
-- **Remote libraries**: SMB / UNC locations, an rclone mount wizard and SSHFS-Win guidance, with an offline banner and local thumbnail cache.
+- **Remote libraries**: SMB / UNC locations, in-app SSH / SFTP connections and rclone mounts, with an offline banner and local thumbnail cache.
 - **Viewer improvements**: single-click image zoom / double-click reset, wheel zoom anchored at the cursor, drag to pan; video supports HTML fullscreen and window-level immersive fullscreen, speed control, picture-in-picture and auto-next.
 
 ## ✨ Features
@@ -68,7 +68,7 @@ TAK bridges the two: you supply the `result.json` exported from Telegram Desktop
 - Download board: progress ring, real-time / average / peak speed, speed curve, ETA and per-file table
 - In-app QR / phone / 2FA login, Ctrl+K command palette, drag-and-drop import and taskbar progress
 - Online chat page: conversation list, filters, real avatars and incremental archiving
-- Remote libraries: SMB / UNC, rclone mounts and SSHFS guidance
+- Remote libraries: SMB / UNC, SSH / SFTP connections and rclone mounts
 
 ### 📥 Smart media download (powered by tdl)
 
@@ -263,7 +263,7 @@ python scripts/build_windows.py --target all --zip
 | [Documentation index](docs/README.md) | Navigation for all documents (Chinese) |
 | [Usage Guide](docs/USAGE.md) | Install, login, import, ChatExport inheritance, multi-disk management, download settings |
 | [Online capabilities & incremental archiving](docs/ONLINE_TDL_3.0.md) | tdl integration, gotd online sessions, merge strategy |
-| [Remote libraries](docs/REMOTE_LIBRARY_3.0.md) | SMB / UNC, rclone mounts, SSHFS, cache and offline behaviour |
+| [Remote libraries](docs/REMOTE_LIBRARY_3.0.md) | SMB / UNC, SSH / SFTP, rclone mounts, cache and offline behaviour |
 | [Data & Directory Structure](docs/DATA_FORMAT.md) | Library layout, data-safety rules, config file locations |
 | [Storage & SQLite](docs/STORAGE_SQLITE.md) | Index and storage design |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | 0 B/s downloads, login issues, thumbnails, web page caching, and more |

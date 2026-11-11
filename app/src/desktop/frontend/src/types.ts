@@ -479,6 +479,8 @@ export interface RemoteTools {
   sshfs: boolean;
   winget: boolean;
   powerShell: boolean;
+  openSSH: boolean;
+  sshAliases?: string[];
   rcloneRemotes?: string[];
 }
 

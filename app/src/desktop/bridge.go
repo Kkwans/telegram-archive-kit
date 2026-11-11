@@ -444,6 +444,10 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.ClearRemoteCache()
 	case "rcloneMount":
 		return b.StartRcloneMount(p.Name, p.Path, p.Drive)
+	case "sshMount":
+		return b.StartSSHMount(ctx, p.Name, p.Path)
+	case "sshMountInstall":
+		return nil, installMountTools(ctx)
 	case "rcloneUnmount":
 		return nil, b.StopRcloneMount(p.Drive)
 	case "listLogs":

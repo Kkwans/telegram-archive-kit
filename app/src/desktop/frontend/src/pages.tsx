@@ -3254,6 +3254,13 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [rcloneSub, setRcloneSub] = useState("");
   const [rcloneDrive, setRcloneDrive] = useState("Z");
   const [rcloneBusy, setRcloneBusy] = useState(false);
+  const [sshOpen, setSSHOpen] = useState(false);
+  const [sshAlias, setSSHAlias] = useState("");
+  const [sshTarget, setSSHTarget] = useState("");
+  const [sshDirectory, setSSHDirectory] = useState("");
+  const [sshAction, setSSHAction] = useState<"install" | "connect" | "switch">();
+  const [sshError, setSSHError] = useState("");
+  const sshRequest = useRef<AbortController | null>(null);
 
   const showDetail = (chat: ChatRow) => {
     setDetailLibraryKey(boot?.libraryKey ?? "");
@@ -3316,10 +3323,53 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     setRemoteTools(null);
     setRcloneOpen(false);
     setRcloneBusy(false);
+    setSSHOpen(false);
+    setSSHError("");
     call<RemoteTools>("remoteTools").then((tools) => {
       setRemoteTools(tools);
       if (tools.rcloneRemotes?.length) setRcloneRemote(tools.rcloneRemotes[0]);
+      setSSHAlias((current) => tools.sshAliases?.includes(current) ? current : tools.sshAliases?.[0] || "");
     }).catch(() => undefined);
+  };
+  const installSSHMountTools = async () => {
+    setSSHAction("install");
+    setSSHError("");
+    try {
+      await call("sshMountInstall");
+      setRemoteTools(await call<RemoteTools>("remoteTools"));
+    } catch (error) {
+      setSSHError((error as Error).message);
+    } finally {
+      setSSHAction(undefined);
+    }
+  };
+  const mountSSH = async () => {
+    if (sshAction || !(sshAlias || sshTarget.trim())) return;
+    const controller = new AbortController();
+    sshRequest.current = controller;
+    setSSHAction("connect");
+    setSSHError("");
+    try {
+      const root = await call<string>("sshMount", { name: sshAlias || sshTarget, path: sshDirectory }, controller.signal);
+      sshRequest.current = null;
+      setSSHAction("switch");
+      if (await switchTo(root)) {
+        setRemoteOpen(false);
+      } else {
+        setRemotePath(root);
+        setRemoteProbe(await call<RemoteStatus>("remoteStatus", { root }));
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setSSHError((error as Error).message);
+    } finally {
+      sshRequest.current = null;
+      setSSHAction(undefined);
+    }
+  };
+  const closeRemote = () => {
+    if (sshAction && !sshRequest.current) return;
+    sshRequest.current?.abort();
+    setRemoteOpen(false);
   };
   const mountRclone = async () => {
     if (!rcloneRemote) {
@@ -3470,14 +3520,16 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         const publication = await call<{ requested: boolean }>("webPublishStatus");
         if (publication.requested) {
           setPendingPublishSwitch(root);
-          return;
+          return true;
         }
       }
       await call("switchLibrary", { root });
       toast("已切换档案库");
       refresh();
+      return true;
     } catch (e) {
       toast((e as Error).message, true);
+      return false;
     } finally {
       setBusy("");
     }
@@ -3833,17 +3885,17 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       </div>
 
       {remoteOpen && createPortal(
-        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setRemoteOpen(false); }}>
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeRemote(); }}>
           <div className="modal remote-modal" role="dialog" aria-modal="true" aria-labelledby="remote-title">
             <div className="remote-head">
               <div className="remote-title">
                 <span className="remote-title-icon"><Network size={18} /></span>
                 <div>
                   <h2 id="remote-title">添加网络档案库</h2>
-                  <p>直接使用 SMB / UNC，或先用 rclone / SSHFS 挂载为盘符，再选择该位置。</p>
+                  <p>连接 SMB 共享、映射盘或 SSH 档案库。</p>
                 </div>
               </div>
-              <button className="icon-btn" aria-label="关闭网络档案库设置" onClick={() => setRemoteOpen(false)}>
+              <button className="icon-btn" aria-label="关闭网络档案库设置" disabled={sshAction === "install" || sshAction === "switch"} onClick={closeRemote}>
                 <X size={15} />
               </button>
             </div>
@@ -3916,9 +3968,19 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
               <div className="remote-options-head">
                 <h3>没有挂载网络位置？</h3>
-                <p>以下工具会把远程存储挂载成本地盘符；挂载完成后回到上方选择该盘符即可。</p>
+                <p>可以在这里连接 SSH 档案库，或使用已配置的 rclone remote。</p>
               </div>
               <div className="remote-options">
+                <div className="remote-option">
+                  <span className="remote-option-icon"><Server size={17} /></span>
+                  <div className="remote-option-main">
+                    <b>SSH / SFTP</b>
+                    <span>使用 Windows OpenSSH 的主机配置和密钥连接 NAS。</span>
+                  </div>
+                  <button type="button" className="btn sm ghost" aria-expanded={sshOpen} disabled={!remoteTools || Boolean(sshAction) || rcloneBusy} onClick={() => { setSSHOpen(!sshOpen); setRcloneOpen(false); }}>
+                    <Network size={12} /> SSH 连接
+                  </button>
+                </div>
                 <div className="remote-option">
                   <span className="remote-option-icon"><Cloud size={17} /></span>
                   <div className="remote-option-main">
@@ -3933,7 +3995,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                     )}
                   </div>
                   {remoteTools?.rcloneRemotes?.length ? (
-                    <button className="btn sm ghost" onClick={() => setRcloneOpen((v) => !v)}>
+                    <button className="btn sm ghost" disabled={Boolean(sshAction)} onClick={() => { setRcloneOpen((v) => !v); setSSHOpen(false); }}>
                       <Server size={12} /> 挂载 remote
                     </button>
                   ) : remoteTools?.rclone ? (
@@ -3946,35 +4008,40 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                     </button>
                   )}
                 </div>
-                <div className="remote-option">
-                  <span className="remote-option-icon"><Server size={17} /></span>
-                  <div className="remote-option-main">
-                    <b>SSHFS-Win <em>SSH / SFTP</em></b>
-                    <span>适合 Linux 服务器或 NAS 的 SSH；安装后映射 <code>\\sshfs\user@host</code> 即可。</span>
-                    <div className="remote-tool-state">
-                      <em className={remoteTools?.sshfs ? "ok" : ""}>SSHFS {remoteTools?.sshfs ? "已安装" : "未检测到"}</em>
-                      <em className={remoteTools?.winFsp ? "ok" : ""}>WinFsp {remoteTools?.winFsp ? "已安装" : "未检测到"}</em>
-                    </div>
-                  </div>
-                  {remoteTools?.sshfs ? (
-                    <button className="btn sm ghost" onClick={() => copyRemoteCommand("net use X: \\\\sshfs\\user@host")}>
-                      <Copy size={12} /> 复制映射命令
-                    </button>
-                  ) : (
-                    <button className="btn sm ghost" onClick={() => copyRemoteCommand("winget install SSHFS-Win.SSHFS-Win")}>
-                      <Copy size={12} /> 复制安装命令
-                    </button>
-                  )}
-                </div>
-                <div className="remote-option muted">
-                  <span className="remote-option-icon"><Network size={17} /></span>
-                  <div className="remote-option-main">
-                    <b>原生 SFTP / Remote Agent <em>3.1 评估</em></b>
-                    <span>不依赖挂载：应用内镜像或 NAS 端 Agent 通过 HTTP 访问；需要额外的同步/冲突协议，放在 3.1 评估。</span>
-                  </div>
-                  <span className="remote-planned">规划中</span>
-                </div>
               </div>
+              {sshOpen && remoteTools && (
+                <form className="rclone-form" onSubmit={(event) => { event.preventDefault(); void mountSSH(); }}>
+                  {!remoteTools.openSSH ? (
+                    <p role="status">请在 Windows 的「可选功能」启用 OpenSSH 客户端，然后重新打开网络位置。</p>
+                  ) : !remoteTools.rclone || !remoteTools.winFsp ? (
+                    <>
+                      <div className="rclone-form-head"><b>安装挂载组件</b><span>{[!remoteTools.rclone && "rclone", !remoteTools.winFsp && "WinFsp"].filter(Boolean).join("、")}</span></div>
+                      {remoteTools.winget ? <button type="button" className="btn primary rclone-mount-btn" disabled={Boolean(sshAction)} onClick={() => void installSSHMountTools()}>
+                        {sshAction === "install" && <Loader2 size={13} className="spin" />} {sshAction === "install" ? "正在安装…" : "安装组件"}
+                      </button> : <p role="status">请先通过 Windows 应用安装程序启用 WinGet。</p>}
+                    </>
+                  ) : (
+                    <>
+                      <div className="rclone-fields">
+                        <div className="rclone-field grow">
+                          <span>SSH 主机</span>
+                          {!!remoteTools.sshAliases?.length && <Select ariaLabel="SSH 主机配置" value={sshAlias} disabled={Boolean(sshAction)} onChange={setSSHAlias} options={[...remoteTools.sshAliases.map((alias) => ({ value: alias, label: alias })), { value: "", label: "手动输入" }]} />}
+                          {!sshAlias && <input value={sshTarget} onChange={(e) => setSSHTarget(e.target.value)} disabled={Boolean(sshAction)} placeholder="主机别名或 用户名@主机" spellCheck={false} aria-label="SSH 主机" />}
+                        </div>
+                        <label className="rclone-field grow">
+                          <span>NAS 档案库目录</span>
+                          <input value={sshDirectory} onChange={(e) => setSSHDirectory(e.target.value)} disabled={Boolean(sshAction)} placeholder="留空使用 SSH 登录目录" spellCheck={false} />
+                        </label>
+                        <button type="submit" className="btn primary rclone-mount-btn" disabled={Boolean(sshAction) || !(sshAlias || sshTarget.trim())}>
+                          {sshAction && <Loader2 size={13} className="spin" />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : "连接并使用"}
+                        </button>
+                      </div>
+                      <p>使用已信任主机的密钥或 SSH Agent；客户端退出时断开。</p>
+                    </>
+                  )}
+                  {sshError && <p role="alert">{sshError}</p>}
+                </form>
+              )}
               {rcloneOpen && (
                 <div className="rclone-form">
                   <div className="rclone-form-head">
@@ -4007,7 +4074,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   <p>挂载成功后会自动填入上方路径；TAK 退出时会结束自己启动的 rclone 进程。</p>
                 </div>
               )}
-              <p className="remote-note">TAK 不保存 SMB 密码；网络共享使用 Windows 凭据管理器，rclone / SSHFS 由对应工具管理凭据。远程库的缩略图与视频播放缓存会在本机单独保存。</p>
+              <p className="remote-note">SMB 连接使用 Windows 凭据，SSH 连接使用 OpenSSH 配置。远程库的缩略图与视频播放缓存保存在本机。</p>
             </div>
           </div>
         </div>,

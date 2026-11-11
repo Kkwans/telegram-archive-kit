@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,26 +13,18 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 
+	"golang.org/x/sys/windows"
 	"telegramarchivekit/internal/platform"
 )
 
 type rcloneMount struct {
-	cmd     *exec.Cmd
-	drive   string
-	logPath string
-	done    chan error
+	cmd  *exec.Cmd
+	done chan struct{}
+	err  error
 }
 
 func (b *Bridge) StartRcloneMount(remote, subpath, drive string) (string, error) {
-	exe := findRclone()
-	if exe == "" {
-		return "", errors.New("未检测到 rclone，请先安装并配置 remote")
-	}
-	if !fileExists(filepath.Join(programFilesDir(), "WinFsp")) && !fileExists(filepath.Join(programFilesX86Dir(), "WinFsp")) {
-		return "", errors.New("未检测到 WinFsp，请先安装 rclone 挂载所需的文件系统驱动")
-	}
 	remote = strings.TrimSuffix(strings.TrimSpace(remote), ":")
 	if remote == "" || strings.ContainsAny(remote, " \t/:") {
 		return "", errors.New("请选择有效的 rclone remote")
@@ -43,73 +36,138 @@ func (b *Bridge) StartRcloneMount(remote, subpath, drive string) (string, error)
 		}
 	}
 	drive = strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(drive), ":"))
-	if len([]rune(drive)) != 1 || !unicode.IsLetter([]rune(drive)[0]) {
+	if len(drive) != 1 || drive[0] < 'A' || drive[0] > 'Z' {
 		return "", errors.New("盘符必须是单个字母，例如 Z")
 	}
-	root := drive + `:\`
-	if _, err := os.Stat(root); err == nil {
+	return b.startRemoteMount(context.Background(), remote+":"+subpath, drive, false, nil)
+}
+
+func (b *Bridge) startRemoteMount(ctx context.Context, spec, drive string, sshLibrary bool, options []string) (string, error) {
+	exe := findRclone()
+	if exe == "" || !hasWinFsp() {
+		return "", errors.New("请先安装 rclone 和 WinFsp 挂载组件")
+	}
+	b.mountMu.Lock()
+	occupied, err := windows.GetLogicalDrives()
+	if err != nil {
+		b.mountMu.Unlock()
+		return "", fmt.Errorf("无法读取 Windows 盘符：%w", err)
+	}
+	inUse := func(letter byte) bool {
+		return occupied&(1<<(letter-'A')) != 0 || b.mounts[string(letter)] != nil
+	}
+	if drive == "" {
+		for letter := byte('Z'); letter >= 'D'; letter-- {
+			if !inUse(letter) {
+				drive = string(letter)
+				break
+			}
+		}
+		if drive == "" {
+			b.mountMu.Unlock()
+			return "", errors.New("没有可用的 Windows 盘符")
+		}
+	} else if inUse(drive[0]) {
+		b.mountMu.Unlock()
 		return "", fmt.Errorf("盘符 %s 已被占用", drive)
 	}
-
-	spec := remote + ":"
-	if subpath != "" {
-		spec += subpath
-	}
+	root := drive + `:\`
 	logPath := filepath.Join(b.facade.ConfigDir(), "rclone-mount-"+drive+".log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
+		b.mountMu.Unlock()
 		return "", err
 	}
-	cmd := exec.Command(exe, "mount", spec, drive+":",
+	args := []string{"mount", spec, drive + ":",
 		"--volname", "TAK Remote",
 		"--vfs-cache-mode", "writes",
 		"--dir-cache-time", "30s",
-		"--network-mode",
-	)
+	}
+	// WinFsp network mode rejects the handle-relative subdirectory opens used
+	// by the web publisher. Disk mode supports those opens on SSH mounts.
+	if !sshLibrary {
+		args = append(args, "--network-mode")
+	}
+	cmd := exec.Command(exe, append(args, options...)...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Start(); err != nil {
+		b.mountMu.Unlock()
 		logFile.Close()
 		return "", err
 	}
-	mount := &rcloneMount{cmd: cmd, drive: drive, logPath: logPath, done: make(chan error, 1)}
-	go func() {
-		err := cmd.Wait()
-		_ = logFile.Close()
-		mount.done <- err
-	}()
-	b.mountMu.Lock()
+	mount := &rcloneMount{cmd: cmd, done: make(chan struct{})}
 	b.mounts[drive] = mount
+	var unmark func()
+	if sshLibrary {
+		unmark = platform.MarkManagedRemoteDrive(drive)
+	}
 	b.mountMu.Unlock()
-
-	deadline := time.Now().Add(18 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-mount.done:
-			b.mountMu.Lock()
-			delete(b.mounts, drive)
-			b.mountMu.Unlock()
-			return "", fmt.Errorf("rclone 挂载失败：%s", tailLog(logPath, err))
-		default:
+	go func() {
+		mount.err = cmd.Wait()
+		_ = logFile.Close()
+		b.mountMu.Lock()
+		if unmark != nil {
+			unmark()
 		}
-		if st, err := os.Stat(root); err == nil && st.IsDir() {
-			if err := platform.ProbeDirectoryWrite(root); err == nil {
+		delete(b.mounts, drive)
+		b.mountMu.Unlock()
+		close(mount.done)
+	}()
+
+	ctx, cancel := context.WithTimeout(ctx, 22*time.Second)
+	defer cancel()
+	tick := time.NewTicker(300 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-mount.done:
+			return "", fmt.Errorf("rclone 挂载失败：%s", tailLog(logPath, mount.err))
+		case <-ctx.Done():
+			_ = stopRemoteMount(mount)
+			return "", fmt.Errorf("连接远程档案库超时或已取消：%w", ctx.Err())
+		case <-tick.C:
+			drives, err := windows.GetLogicalDrives()
+			if err != nil || drives&(1<<(drive[0]-'A')) == 0 {
+				continue
+			}
+			ready := make(chan error, 1)
+			go func() {
+				if sshLibrary {
+					if info, err := os.Stat(filepath.Join(root, "library.json")); err != nil || info.IsDir() {
+						ready <- errors.New("未能读取 library.json，请选择 NAS 上的档案库根目录")
+						return
+					}
+				}
+				ready <- platform.ProbeDirectoryWrite(root)
+			}()
+			select {
+			case err := <-ready:
+				if err != nil {
+					_ = stopRemoteMount(mount)
+					return "", err
+				}
 				return root, nil
+			case <-mount.done:
+				return "", fmt.Errorf("rclone 挂载失败：%s", tailLog(logPath, mount.err))
+			case <-ctx.Done():
+				_ = stopRemoteMount(mount)
+				return "", fmt.Errorf("验证远程档案库超时或已取消：%w", ctx.Err())
 			}
 		}
-		time.Sleep(350 * time.Millisecond)
 	}
-	b.StopRcloneMount(drive)
-	return "", fmt.Errorf("rclone 挂载超时，请查看日志：%s", logPath)
 }
 
 func (b *Bridge) StopRcloneMount(drive string) error {
 	drive = strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(drive), ":"))
 	b.mountMu.Lock()
 	mount := b.mounts[drive]
-	delete(b.mounts, drive)
 	b.mountMu.Unlock()
+	return stopRemoteMount(mount)
+}
+
+func stopRemoteMount(mount *rcloneMount) error {
 	if mount == nil {
 		return nil
 	}
@@ -119,6 +177,7 @@ func (b *Bridge) StopRcloneMount(drive string) error {
 	select {
 	case <-mount.done:
 	case <-time.After(4 * time.Second):
+		return errors.New("远程挂载尚未退出")
 	}
 	return nil
 }
@@ -138,7 +197,7 @@ func (b *Bridge) stopAllRcloneMounts() {
 func tailLog(path string, cause error) string {
 	f, err := os.Open(path)
 	if err != nil {
-		return cause.Error()
+		return mountExitMessage(cause)
 	}
 	defer f.Close()
 	var lines []string
@@ -153,7 +212,14 @@ func tailLog(path string, cause error) string {
 		}
 	}
 	if len(lines) == 0 {
-		return cause.Error()
+		return mountExitMessage(cause)
 	}
 	return strings.Join(lines, " · ")
+}
+
+func mountExitMessage(cause error) string {
+	if cause == nil {
+		return "挂载进程已退出"
+	}
+	return cause.Error()
 }
