@@ -35,7 +35,7 @@ import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
-import { SyncPlans } from "./SyncPlans";
+import { SyncPlans, type SyncPlanLocation } from "./SyncPlans";
 import type { Bootstrap, TaskDetail, TaskInfo } from "./types";
 import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
 
@@ -327,7 +327,7 @@ interface DownloadConfigDraft {
   reconnectTimeout: string;
 }
 
-export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string) => void; toast: (msg: string, err?: boolean) => void }) {
+export function TaskDetailView({ task, onBack, fromPlan, onOpenTask, onOpenPlans, toast }: { task: TaskDetail; onBack: () => void; fromPlan: boolean; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
@@ -538,10 +538,10 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
     <>
       <div className="page-head download-detail-head">
         <button className="btn" onClick={onBack}>
-          <ArrowLeft size={14} /> 返回任务中心
+          <ArrowLeft size={14} /> {fromPlan ? "返回本轮记录" : "返回任务中心"}
         </button>
         <div className="actions">
-          {planned && <button className="btn ghost" onClick={() => onOpenPlans(task.planId)}><CalendarClock size={13} /> 查看同步计划</button>}
+          {planned && !fromPlan && <button className="btn ghost" onClick={() => onOpenPlans(task.planId, task.planRunId)}><CalendarClock size={13} /> 查看同步计划</button>}
           {!planned && running && !pausing && (
             <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
@@ -969,11 +969,13 @@ export function TasksPage({
   boot,
   tab,
   onTabChange,
-  expandedPlan,
-  onExpandPlan,
+  planLocation,
+  onPlanNavigate,
   onAccount,
   onLibrary,
   onRemote,
+  restorePlanFocus,
+  onPlanFocusHandled,
   focusTaskId = "",
   onFocusHandled,
   onRefresh,
@@ -985,11 +987,13 @@ export function TasksPage({
   boot: Bootstrap | null;
   tab: "records" | "plans";
   onTabChange: (tab: "records" | "plans") => void;
-  expandedPlan: string;
-  onExpandPlan: (id: string) => void;
+  planLocation: SyncPlanLocation | null;
+  onPlanNavigate: (location: SyncPlanLocation | null) => void;
   onAccount: () => void;
   onLibrary: () => void;
   onRemote: () => void;
+  restorePlanFocus: boolean;
+  onPlanFocusHandled: () => void;
   focusTaskId?: string;
   onFocusHandled?: () => void;
   onRefresh: () => void;
@@ -1001,6 +1005,7 @@ export function TasksPage({
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<TaskDetail | null>(null);
+  const [taskFromPlan, setTaskFromPlan] = useState(false);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
   const [selectionVersion, setSelectionVersion] = useState(0);
   const selection = useRef(0);
@@ -1053,13 +1058,14 @@ export function TasksPage({
   const failed = tasks.filter((t) => t.state === "failed").length;
   const done = tasks.filter((t) => t.state === "done").length;
 
-  const loadTask = async (taskID: string) => {
+  const loadTask = async (taskID: string, fromPlan = false) => {
     const version = ++selection.current;
     const known = tasks.find((task) => task.id === taskID);
     const show = (detail: TaskDetail) => {
       setSelectionVersion(version);
       if (kindMeta(detail.kind).group === "download") {
         setModalTask(null);
+        setTaskFromPlan(fromPlan);
         setActive(detail);
       } else {
         setActive(null);
@@ -1151,7 +1157,16 @@ export function TasksPage({
   }, [modalTask?.id, modalTask?.state, selectionVersion]);
 
   if (active) {
-    return <TaskDetailView key={active.id} task={active} onBack={() => { selection.current++; setActive(null); }} onOpenTask={(taskID) => void loadTask(taskID)} onOpenPlans={(planId) => { selection.current++; setActive(null); onTabChange("plans"); if (planId) onExpandPlan(planId); }} toast={toast} />;
+    return <TaskDetailView key={active.id} task={active} fromPlan={taskFromPlan}
+      onBack={() => { selection.current++; setActive(null); }}
+      onOpenTask={(taskID) => void loadTask(taskID, taskFromPlan)}
+      onOpenPlans={(planId, runId) => {
+        selection.current++;
+        setActive(null);
+        onTabChange("plans");
+        onPlanNavigate(planId ? { planId, runId } : null);
+      }}
+      toast={toast} />;
   }
 
   const modalMeta = modalTask ? kindMeta(modalTask.kind) : null;
@@ -1171,28 +1186,29 @@ export function TasksPage({
         <div>
           <h1>任务中心</h1>
         </div>
-      </div>
-
-      <div className="task-center-nav">
-        <div className="tabs task-center-tabs" role="tablist" aria-label="任务中心" onKeyDown={(e) => {
-          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
-          e.preventDefault();
-          const next = e.key === "Home" ? "records" : e.key === "End" ? "plans" : tab === "records" ? "plans" : "records";
-          onTabChange(next);
-          e.currentTarget.querySelector<HTMLButtonElement>(`#task-tab-${next}`)?.focus();
-        }}>
-          <button id="task-tab-records" role="tab" type="button" aria-controls="task-records" aria-selected={tab === "records"} tabIndex={tab === "records" ? 0 : -1} className={tab === "records" ? "on" : ""} onClick={() => onTabChange("records")}><ListTodo size={15} /> 任务记录</button>
-          <button id="task-tab-plans" role="tab" type="button" aria-controls="task-plans" aria-selected={tab === "plans"} tabIndex={tab === "plans" ? 0 : -1} className={tab === "plans" ? "on" : ""} onClick={() => onTabChange("plans")}><CalendarClock size={15} /> 同步计划</button>
+        <div className="task-head-actions">
+          {tab === "records" && <div className="task-record-actions actions">
+            <button className="btn ghost" onClick={onRefresh}><RefreshCw size={13} /> 刷新状态</button>
+            <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}><Trash2 size={13} /> 全部删除</button>
+          </div>}
+          <div className="task-center-tabs" role="tablist" aria-label="任务中心" onKeyDown={(e) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+            e.preventDefault();
+            const next = e.key === "Home" ? "records" : e.key === "End" ? "plans" : tab === "records" ? "plans" : "records";
+            onTabChange(next);
+            e.currentTarget.querySelector<HTMLButtonElement>(`#task-tab-${next}`)?.focus();
+          }}>
+            <button id="task-tab-records" role="tab" type="button" aria-controls="task-records" aria-selected={tab === "records"} tabIndex={tab === "records" ? 0 : -1} className={tab === "records" ? "on" : ""} onClick={() => onTabChange("records")}><ListTodo size={15} /> 任务记录</button>
+            <button id="task-tab-plans" role="tab" type="button" aria-controls="task-plans" aria-selected={tab === "plans"} tabIndex={tab === "plans" ? 0 : -1} className={tab === "plans" ? "on" : ""} onClick={() => onTabChange("plans")}><CalendarClock size={15} /> 同步计划</button>
+          </div>
         </div>
-        {tab === "records" && <div className="actions">
-          <button className="btn ghost" onClick={onRefresh}><RefreshCw size={13} /> 刷新状态</button>
-          <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}><Trash2 size={13} /> 全部删除</button>
-        </div>}
       </div>
 
       {tab === "plans" ? (
         <div id="task-plans" role="tabpanel" aria-labelledby="task-tab-plans" className="task-center-content">
-          <SyncPlans boot={boot} expandedPlan={expandedPlan} onExpandPlan={onExpandPlan} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={(id) => void loadTask(id)} toast={toast} />
+          <SyncPlans boot={boot} location={planLocation} onNavigate={onPlanNavigate} onAccount={onAccount} onLibrary={onLibrary}
+            onRemote={onRemote} onOpenTask={(id) => void loadTask(id, true)} restoreRecoveryFocus={restorePlanFocus}
+            onRecoveryFocusHandled={onPlanFocusHandled} toast={toast} />
         </div>
       ) : <div id="task-records" role="tabpanel" aria-labelledby="task-tab-records" className="task-center-content">
 

@@ -269,6 +269,7 @@ export interface TaskInfo {
   id: string;
   kind: string;
   planId?: string;
+  planRunId?: string;
   title: string;
   chat?: string;
   chatId?: string;

@@ -3229,7 +3229,7 @@ interface LibrarySwitchOptions {
   onError?: (message: string) => void;
 }
 
-export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: PageCtx; remoteRequest?: number; onRemoteHandled?: () => void }) {
+export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClosed }: { ctx: PageCtx; remoteRequest?: number; onRemoteHandled?: () => void; onRemoteClosed?: () => void }) {
   const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
   const history = boot?.history ?? [];
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
@@ -3259,6 +3259,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
   const [remoteError, setRemoteError] = useState("");
   const [connectionBusy, setConnectionBusy] = useState(false);
   const remoteDialog = useRef<HTMLDivElement>(null);
+  const remoteWasOpen = useRef(false);
   const [remotePath, setRemotePath] = useState("");
   const [remoteProbe, setRemoteProbe] = useState<RemoteStatus | null>(null);
   const [remoteTesting, setRemoteTesting] = useState(false);
@@ -3372,6 +3373,12 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
     };
   }, [remoteOpen]);
+
+  useEffect(() => {
+    const wasOpen = remoteWasOpen.current;
+    remoteWasOpen.current = remoteOpen;
+    if (wasOpen && !remoteOpen) onRemoteClosed?.();
+  }, [remoteOpen, onRemoteClosed]);
 
   const showRemoteMode = (mode: typeof remoteMode) => {
     setRemoteMode(mode);
@@ -4385,7 +4392,7 @@ function SettingsField({ label, hint, children, wide, liveHint }: { label: strin
   );
 }
 
-function SettingsToggle({ checked, onChange, title, desc }: { checked: boolean; onChange: (v: boolean) => void; title: string; desc: string }) {
+function SettingsToggle({ checked, onChange, title, desc, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; title: string; desc: string; disabled?: boolean }) {
   return (
     <label className="switch-row">
       <span>
@@ -4393,11 +4400,52 @@ function SettingsToggle({ checked, onChange, title, desc }: { checked: boolean; 
         <em>{desc}</em>
       </span>
       <span className={`switch ${checked ? "on" : ""}`}>
-        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
         <i />
       </span>
     </label>
   );
+}
+
+function SyncPlanStartupSettings({ toast }: { toast: PageCtx["toast"] }) {
+  type Startup = { launchOnLogin: boolean; launchOnLoginError?: string };
+  const [data, setData] = useState<Startup | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    void call<Startup>("syncPlanList", undefined, controller.signal).then((result) => {
+      if (!controller.signal.aborted) setData(result);
+    }).catch((e: Error) => {
+      if (!controller.signal.aborted) setError(e.message);
+    });
+    return () => controller.abort();
+  }, [retry]);
+
+  const toggle = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      const result = await call<Startup>("syncPlanSetLaunchOnLogin", { enabled });
+      setData(result);
+      if (!result.launchOnLoginError) toast(enabled ? "已开启登录 Windows 后启动" : "已关闭登录 Windows 后启动");
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <section className="settings-card plan-startup">
+    <header><div><h3>启动与后台</h3></div></header>
+    <SettingsToggle checked={!!data?.launchOnLogin} disabled={busy || !data || !!data.launchOnLoginError}
+      onChange={(enabled) => void toggle(enabled)} title="登录 Windows 后自动启动 TAK"
+      desc="让同步计划随客户端启动恢复调度。此设置即时生效。" />
+    {(error || data?.launchOnLoginError) && <div className="plan-startup-error plan-inline-notice" role="alert">
+      <span>{error || data?.launchOnLoginError}</span>
+      <button type="button" className="btn sm ghost" onClick={() => { setError(""); setRetry((value) => value + 1); }}>重新读取</button>
+    </div>}
+  </section>;
 }
 
 export function SettingsPage({ ctx }: { ctx: PageCtx }) {
@@ -4490,6 +4538,8 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           </button>
         </div>
       </div>
+
+      <SyncPlanStartupSettings toast={toast} />
 
       <section className="settings-card">
         <header>

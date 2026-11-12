@@ -30,6 +30,7 @@ import { call } from "./rpc";
 import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, MediaSummary, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
+import type { SyncPlanLocation } from "./SyncPlans";
 import { OnlineChatsPage } from "./OnlineChats";
 import { Select } from "./Select";
 import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
@@ -486,7 +487,8 @@ export default function App() {
   const [remoteRequest, setRemoteRequest] = useState(0);
   const [taskFocus, setTaskFocus] = useState("");
   const [taskTab, setTaskTab] = useState<"records" | "plans">("records");
-  const [expandedPlan, setExpandedPlan] = useState("");
+  const [planLocation, setPlanLocation] = useState<SyncPlanLocation | null>(null);
+  const [planRecovery, setPlanRecovery] = useState<"remote" | "returning" | null>(null);
   const go = useCallback((next: string) => {
     if (page === "chats" && next === "settings" && selected) {
       const area = scrollArea.current;
@@ -505,6 +507,7 @@ export default function App() {
     setSideTip(null);
     setAppTip(null);
     if (next === "remote") setRemoteRequest((value) => value + 1);
+    else setPlanRecovery(null);
     setPage(next === "remote" ? "library" : next);
   }, [page, selected]);
   useEffect(() => {
@@ -957,7 +960,11 @@ export default function App() {
             {(page === "chats" || (page === "settings" && galleryReturn.current !== null && galleryReturn.current.libraryKey === boot?.libraryKey)) && (
               <Activity mode={page === "chats" ? "visible" : "hidden"}><Chats ctx={ctx} /></Activity>
             )}
-            {page === "library" && <Library ctx={ctx} remoteRequest={remoteRequest} onRemoteHandled={() => setRemoteRequest(0)} />}
+            {page === "library" && <Library ctx={ctx} remoteRequest={remoteRequest} onRemoteHandled={() => setRemoteRequest(0)} onRemoteClosed={() => {
+              if (planRecovery !== "remote") return;
+              setPlanRecovery("returning");
+              setPage("tasks");
+            }} />}
             {page === "publish" && <WebPublication ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
             {page === "tasks" && (
@@ -966,11 +973,13 @@ export default function App() {
                 boot={boot}
                 tab={taskTab}
                 onTabChange={setTaskTab}
-                expandedPlan={expandedPlan}
-                onExpandPlan={setExpandedPlan}
+                planLocation={planLocation}
+                onPlanNavigate={setPlanLocation}
                 onAccount={() => go("account")}
                 onLibrary={() => go("library")}
-                onRemote={() => go("remote")}
+                onRemote={() => { setPlanRecovery("remote"); go("remote"); }}
+                restorePlanFocus={planRecovery === "returning"}
+                onPlanFocusHandled={() => setPlanRecovery(null)}
                 focusTaskId={taskFocus}
                 onFocusHandled={() => setTaskFocus("")}
                 onRefresh={refresh}

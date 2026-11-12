@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarClock, Check, CheckCircle2, ChevronDown, Clock, Database, FileText, Image, Loader2, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, Video } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { dateTime } from "./format";
+import { dateTime, duration } from "./format";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type { Bootstrap, OnlineChat, OnlineChats } from "./types";
@@ -86,8 +86,6 @@ interface PlanList {
   plans?: Plan[];
   runs?: PlanRun[];
   currentLibraryId?: string;
-  launchOnLogin: boolean;
-  launchOnLoginError?: string;
   error?: string;
 }
 
@@ -140,19 +138,85 @@ function mediaText(kinds: MediaKind[]) {
   return labels.length ? `消息 · ${labels.join("、")}` : "仅消息";
 }
 
-function Status({ state }: { state: PlanState }) {
+function Status({ state, label }: { state: PlanState; label?: string }) {
   const entry = STATES[state] ?? { label: state, tone: "" };
-  return <span className={`task-state plan-status ${entry.tone}`}>{state === "running" || state === "stopping" ? <Loader2 size={12} className="spin" /> : <span className="plan-status-dot" />}{entry.label}</span>;
+  return <span className={`task-state plan-status ${entry.tone}`}>{state === "running" || state === "stopping" ? <Loader2 size={12} className="spin" /> : <span className="plan-status-dot" />}{label ?? entry.label}</span>;
 }
 
-export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibrary, onRemote, onOpenTask, toast }: {
+export interface SyncPlanLocation {
+  planId: string;
+  runId?: string;
+  failedOnly?: boolean;
+}
+
+type RunAction = "retry" | "stop" | "run";
+const RUN_ACTIONS = {
+  retry: { label: "重试失败项", icon: RefreshCw },
+  stop: { label: "停止本次", icon: Square },
+  run: { label: "立即运行", icon: Play },
+};
+const HISTORY_FILTERS = [{ value: "all", label: "全部结果" }, { value: "failed", label: "仅失败" }];
+
+function planRunAction(plan: Plan, latest?: PlanRun): RunAction {
+  if (latest && (plan.activeRunId ? latest.state === "blocked" : latest.state === "failed" || latest.state === "stopped")) return "retry";
+  return plan.activeRunId ? "stop" : "run";
+}
+
+function PlanRunButton({ action, primary, disabled, onAct }: { action: RunAction; primary?: boolean; disabled: boolean; onAct: (action: PlanAction) => void }) {
+  const { label, icon: Icon } = RUN_ACTIONS[action];
+  return <button type="button" className={`btn ${action === "stop" ? "stop-action" : primary ? "primary" : "sm"}`}
+    title={action === "retry" ? "重试最近一轮的失败项" : undefined} disabled={disabled} onClick={() => onAct(action)}>
+    <Icon size={14} /> {action === "retry" && !primary ? "重试" : label}
+  </button>;
+}
+
+function PlanMoreActions({ plan, action, busy, onAct, onEdit, onDelete }: {
+  plan: Plan;
+  action: RunAction;
+  busy: boolean;
+  onAct: (action: PlanAction) => void;
+  onEdit?: () => void;
+  onDelete: () => void;
+}) {
+  const menu = useRef<HTMLDetailsElement>(null);
+  const trigger = useRef<HTMLElement>(null);
+  const run = (callback: () => void) => {
+    if (menu.current) menu.current.open = false;
+    trigger.current?.focus({ preventScroll: true });
+    callback();
+  };
+  return <details className="plan-more" ref={menu}
+    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}
+    onKeyDown={(event) => {
+      if (event.key !== "Escape" || !event.currentTarget.open) return;
+      event.stopPropagation();
+      event.currentTarget.open = false;
+      trigger.current?.focus();
+    }}>
+    <summary className="icon-btn" ref={trigger} aria-label={`${plan.name}的更多操作`} title="更多操作"><Ellipsis size={17} /></summary>
+    <div className="plan-more-menu">
+      {onEdit && <button type="button" disabled={busy || !!plan.activeRunId} onClick={() => run(onEdit)}><Pencil size={14} /> 编辑计划</button>}
+      {action === "retry" && <button type="button" disabled={busy} onClick={() => run(() => onAct(plan.activeRunId ? "stop" : "run"))}>
+        {plan.activeRunId ? <><Square size={14} /> 停止本次</> : <><Play size={14} /> 立即运行</>}
+      </button>}
+      <button type="button" disabled={busy} onClick={() => run(() => onAct(plan.enabled ? "pause" : "resume"))}>
+        {plan.enabled ? <><Pause size={14} /> 暂停计划</> : <><CalendarCheck size={14} /> 恢复计划</>}
+      </button>
+      <button type="button" className="danger" disabled={busy || !!plan.activeRunId} onClick={() => run(onDelete)}><Trash2 size={14} /> 删除计划</button>
+    </div>
+  </details>;
+}
+
+export function SyncPlans({ boot, location, onNavigate, onAccount, onLibrary, onRemote, onOpenTask, restoreRecoveryFocus, onRecoveryFocusHandled, toast }: {
   boot: Bootstrap | null;
-  expandedPlan: string;
-  onExpandPlan: (id: string) => void;
+  location: SyncPlanLocation | null;
+  onNavigate: (location: SyncPlanLocation | null) => void;
   onAccount: () => void;
   onLibrary: () => void;
   onRemote: () => void;
   onOpenTask: (id: string) => void;
+  restoreRecoveryFocus: boolean;
+  onRecoveryFocusHandled: () => void;
   toast: (message: string, error?: boolean) => void;
 }) {
   const [data, setData] = useState<PlanList | null>(null);
@@ -163,7 +227,6 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
   const request = useRef(0);
   const mutation = useRef(false);
   const createButton = useRef<HTMLButtonElement>(null);
-  const editorOrigin = useRef<{ planId?: string }>({});
 
   const read = useCallback(async (signal?: AbortSignal) => {
     if (mutation.current) return;
@@ -207,7 +270,7 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
   const act = async (plan: Plan, action: PlanAction) => {
     try {
       if (!await mutate(`${plan.id}:${action}`, PLAN_METHOD[action], { id: plan.id })) return;
-      if (action === "delete" && expandedPlan === plan.id) onExpandPlan("");
+      if (action === "delete" && location?.planId === plan.id) onNavigate(null);
       toast(ACTION_MESSAGES[action]);
     } catch (e) {
       toast((e as Error).message, true);
@@ -217,12 +280,9 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
   const closeEditor = () => {
     setEditor(null);
     requestAnimationFrame(() => {
-      const origin = editorOrigin.current.planId;
-      const editButton = origin ? document.getElementById(`sync-plan-edit-${origin}`) : null;
-      const returnTarget = editButton instanceof HTMLButtonElement && editButton.disabled
-        ? editButton.closest(".plan-item")?.querySelector<HTMLButtonElement>(".plan-row-title")
-        : editButton;
-      (returnTarget ?? createButton.current)?.focus({ preventScroll: true });
+      const origin = typeof editor === "object" ? editor?.id : undefined;
+      const editButton = origin ? document.getElementById(`sync-plan-edit-${origin}`) : createButton.current;
+      (editButton instanceof HTMLButtonElement && !editButton.disabled ? editButton : document.getElementById("sync-plan-heading"))?.focus({ preventScroll: true });
     });
   };
 
@@ -231,14 +291,6 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
     if (!await mutate("save", "syncPlanSave", { plan, runNow })) return;
     closeEditor();
     toast(runNow ? "已保存计划，同步已加入队列" : "已保存同步计划");
-  };
-
-  const toggleStartup = async (enabled: boolean) => {
-    try {
-      if (await mutate("startup", "syncPlanSetLaunchOnLogin", { enabled })) toast(enabled ? "已开启登录 Windows 后启动" : "已关闭登录 Windows 后启动");
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
   };
 
   const runsByPlan = useMemo(() => {
@@ -251,104 +303,195 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
     return map;
   }, [data?.runs]);
 
-  if (editor) return <PlanEditor plan={editor === "new" ? undefined : editor} boot={boot} currentLibraryId={data?.currentLibraryId} saving={busy === "save"} onAccount={onAccount} onCancel={closeEditor} onSave={save} />;
-
   const plans = data?.plans ?? [];
-  return (
-    <>
-      <div className="plan-toolbar">
-        {data && <p>{plans.length} 个计划 <span aria-hidden="true">·</span> {plans.filter((plan) => plan.enabled).length} 个已启用</p>}
-        <button ref={createButton} type="button" className="btn primary" disabled={!boot?.libraryRoot || !!busy} onClick={() => { editorOrigin.current = {}; setEditor("new"); }}><Plus size={15} /> 新建计划</button>
-      </div>
-      {(error || data?.error) && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error || data?.error}</span><button type="button" className="btn sm ghost" onClick={() => void read()}><RefreshCw size={12} /> 重新读取</button></div>}
-      {!data && !error && <div className="panel plan-loading" role="status" aria-label="正在读取同步计划">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div>}
-      {data && (plans.length ? <section className="panel plan-list" aria-label="同步计划">
-        <div className="plan-list-heading" aria-hidden="true"><span>计划 / 同步频率</span><span>状态</span><span>下次运行</span><span>最近运行</span><span>操作</span></div>
-        {plans.map((plan) => {
-          const runs = runsByPlan.get(plan.id) ?? [];
-          const latest = runs[0];
-          const active = !!plan.activeRunId;
-          const expanded = expandedPlan === plan.id;
-          const reason = plan.blockedReason || latest?.blockedReason;
-          const canRetry = latest && (active ? latest.state === "blocked" : ["failed", "stopped"].includes(latest.state));
-          const key = `sync-plan-${plan.id}`;
-          return <article className="plan-item" key={plan.id}>
-            <div className="plan-row">
-              <button type="button" className="plan-row-title" aria-expanded={expanded} aria-controls={expanded ? key : undefined} onClick={() => onExpandPlan(expanded ? "" : plan.id)}>
-                <span className="plan-row-icon"><CalendarClock size={17} /></span>
-                <span className="plan-row-name"><span className="plan-row-heading"><b title={plan.name}>{plan.name}</b><ChevronDown size={14} className="plan-row-chevron" /></span><span className="plan-row-meta" title={plan.libraryLabel}>{plan.targets?.length ?? 0} 个聊天 · {scheduleText(plan.schedule)}{plan.libraryLabel && ` · ${plan.libraryLabel}`}</span></span>
-              </button>
-              <Status state={plan.state} />
-              <div className="plan-row-time plan-next-run"><span className="plan-time-label">下次运行</span><b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></div>
-              <div className="plan-row-time plan-last-run"><span className="plan-time-label">最近运行</span><b>{when(latest?.startedAt || latest?.scheduledAt, latest ? "等待开始" : "尚未运行")}</b>{latest && latest.state !== plan.state && <span className="plan-last-result">{STATES[latest.state]?.label ?? latest.state}</span>}</div>
-              <div className="plan-row-actions">
-                {canRetry ? <button type="button" className="btn sm ghost" disabled={!!busy} onClick={() => void act(plan, "retry")}><RefreshCw size={12} /> 重试</button> : active ? <button type="button" className="btn sm stop-action" disabled={!!busy || plan.state === "stopping"} onClick={() => void act(plan, "stop")}><Square size={12} /> 停止本次</button> : <button type="button" className="btn sm ghost" disabled={!!busy} onClick={() => void act(plan, "run")}><Play size={12} /> 立即运行</button>}
-                <button type="button" className="btn sm ghost plan-schedule-action" disabled={!!busy} aria-label={plan.enabled ? "暂停定时运行" : "恢复定时运行"} title={plan.enabled ? "暂停定时运行" : "恢复定时运行"} onClick={() => void act(plan, plan.enabled ? "pause" : "resume")}>{plan.enabled ? <Pause size={12} /> : <Play size={12} />}{plan.enabled ? "暂停计划" : "恢复计划"}</button>
-              </div>
+  const selectedPlan = plans.find((plan) => plan.id === location?.planId);
+  useEffect(() => {
+    if (!restoreRecoveryFocus || !data) return;
+    const target = document.getElementById("sync-plan-recovery") ?? document.getElementById("sync-plan-heading");
+    target?.focus();
+    onRecoveryFocusHandled();
+  }, [restoreRecoveryFocus, data, onRecoveryFocusHandled]);
+
+  const openPlan = (plan: Plan) => {
+    onNavigate({ planId: plan.id });
+    document.querySelector(".scroll")?.scrollTo({ top: 0 });
+    requestAnimationFrame(() => document.getElementById("sync-plan-heading")?.focus({ preventScroll: true }));
+  };
+  const closePlan = () => {
+    onNavigate(null);
+    requestAnimationFrame(() => (document.getElementById(`sync-plan-open-${location?.planId}`) ?? createButton.current)?.focus());
+  };
+  const errorNotice = (error || data?.error) && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error || data?.error}</span><button type="button" className="btn sm ghost" onClick={() => void read()}><RefreshCw size={12} /> 重新读取</button></div>;
+  const deletion = <ConfirmDialog compact open={!!confirmDelete} title={`删除计划「${confirmDelete?.name ?? ""}」？`} message="将停止定时运行。已归档的消息、媒体和任务记录会保留。" confirmLabel="删除计划" danger onCancel={() => setConfirmDelete(null)} onConfirm={() => { const plan = confirmDelete; setConfirmDelete(null); if (plan) void act(plan, "delete"); }} />;
+
+  if (editor) return <PlanEditor plan={editor === "new" ? undefined : editor} boot={boot} currentLibraryId={data?.currentLibraryId} saving={busy === "save"} onAccount={onAccount} onCancel={closeEditor} onSave={save} />;
+  if (location) return <section className="plan-subpage">
+    <button type="button" className="plan-back" onClick={closePlan}><ArrowLeft size={15} /> 返回同步计划</button>
+    {errorNotice}
+    {selectedPlan ? <PlanDetails plan={selectedPlan} runs={runsByPlan.get(selectedPlan.id) ?? []} location={location} busy={!!busy}
+      onNavigate={onNavigate} onEdit={() => setEditor(selectedPlan)} onAct={(action) => void act(selectedPlan, action)}
+      onDelete={() => setConfirmDelete(selectedPlan)} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={onOpenTask} /> :
+      data ? <div className="panel task-empty"><p>该同步计划已不存在。</p></div> :
+        !error && <div className="panel plan-loading" role="status" aria-label="正在读取同步计划"><div><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div></div>}
+    {deletion}
+  </section>;
+
+  return <>
+    <div className="plan-toolbar">
+      {data && <p>{plans.length} 个计划 <span aria-hidden="true">·</span> {plans.filter((plan) => plan.enabled).length} 个已启用</p>}
+      <button ref={createButton} type="button" className="btn primary" disabled={!boot?.libraryRoot || !!busy} onClick={() => setEditor("new")}><Plus size={15} /> 新建计划</button>
+    </div>
+    {errorNotice}
+    {!data && !error && <div className="panel plan-loading" role="status" aria-label="正在读取同步计划">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div>}
+    {data && (plans.length ? <section className="panel plan-list" aria-label="同步计划">
+      <div className="plan-list-heading" aria-hidden="true"><span>计划 / 同步频率</span><span>状态</span><span>下次运行</span><span>最近运行</span><span>操作</span></div>
+      {plans.map((plan) => {
+        const latest = runsByPlan.get(plan.id)?.[0];
+        const action = planRunAction(plan, latest);
+        return <article className="plan-item" key={plan.id}>
+          <div className="plan-row">
+            <button id={`sync-plan-open-${plan.id}`} type="button" className="plan-row-title" onClick={() => openPlan(plan)}>
+              <span className="plan-row-icon"><CalendarClock size={17} /></span>
+              <span className="plan-row-name"><b title={plan.name}>{plan.name}</b><span className="plan-row-meta" title={plan.libraryLabel}>{plan.targets?.length ?? 0} 个聊天 · {scheduleText(plan.schedule)}{plan.libraryLabel && ` · ${plan.libraryLabel}`}</span></span>
+            </button>
+            <Status state={plan.state} />
+            <div className="plan-row-time plan-next-run"><span className="plan-time-label">下次运行</span><b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></div>
+            <div className="plan-row-time plan-last-run"><span className="plan-time-label">最近运行</span><b>{when(latest?.startedAt || latest?.scheduledAt, latest ? "等待开始" : "尚未运行")}</b>{latest && latest.state !== plan.state && <span className="plan-last-result">{STATES[latest.state]?.label ?? latest.state}</span>}</div>
+            <div className="plan-row-actions">
+              <PlanRunButton action={action} disabled={!!busy || plan.state === "stopping"} onAct={(value) => void act(plan, value)} />
+              <PlanMoreActions plan={plan} action={action} busy={!!busy} onAct={(value) => void act(plan, value)}
+                onEdit={() => { onNavigate({ planId: plan.id }); setEditor(plan); }} onDelete={() => setConfirmDelete(plan)} />
             </div>
-            {expanded && <div id={key} className="plan-details">
-              <div className="plan-detail-summary">
-                <div><Database size={13} /><span>{plan.libraryLabel || "档案库"}</span><span>{mediaText(plan.mediaKinds ?? [])}{plan.includeHistory ? " · 补齐历史缺失媒体" : ""}</span></div>
-                <div className="plan-row-actions">
-                  {canRetry && (active ? <button type="button" className="btn sm stop-action" disabled={!!busy} onClick={() => void act(plan, "stop")}><Square size={12} /> 停止本次</button> : <button type="button" className="btn sm ghost" disabled={!!busy} onClick={() => void act(plan, "run")}><Play size={12} /> 立即运行</button>)}
-                  <button id={`sync-plan-edit-${plan.id}`} type="button" className="btn sm ghost" disabled={!!busy || active} onClick={() => { editorOrigin.current = { planId: plan.id }; setEditor(plan); }}><Pencil size={12} /> 编辑</button>
-                  <button type="button" className="icon-btn danger" disabled={!!busy || active} title="删除计划" aria-label={`删除计划 ${plan.name}`} onClick={() => setConfirmDelete(plan)}><Trash2 size={14} /></button>
-                </div>
-              </div>
-              {(reason || plan.state === "failed") && <div className="plan-inline-notice" role="status">
-                <AlertCircle size={15} /><span>{plan.message || latest?.message || REASONS[reason || ""] || "同步失败，请查看运行历史。"}</span>
-                {(reason === "account" || reason === "session") && <button type="button" className="btn sm ghost" onClick={onAccount}>重新登录 <ArrowUpRight size={12} /></button>}
-                {reason === "remote" && <button type="button" className="btn sm ghost" onClick={onRemote}>重新连接 <ArrowUpRight size={12} /></button>}
-                {reason === "library" && <button type="button" className="btn sm ghost" onClick={onLibrary}>前往档案管理 <ArrowUpRight size={12} /></button>}
-              </div>}
-              <TargetTable targets={plan.targets ?? []} onOpenTask={onOpenTask} />
-              <div className="plan-history">
-                <div className="plan-field-heading"><h3>运行历史</h3><span>{runs.length} 次记录</span></div>
-                {runs.length ? runs.map((run) => <RunRow key={run.id} run={run} onOpenTask={onOpenTask} />) : <p className="muted">计划运行后会在这里留下记录。</p>}
-              </div>
-            </div>}
-          </article>;
-        })}
-      </section> : <section className="panel task-empty large">
-        <CalendarClock size={28} /><p>还没有同步计划</p><span>选择聊天、同步内容与运行时间，让 TAK 按计划归档。</span>
-      </section>)}
-      {data && <section className="panel plan-startup">
-        <label className="switch-row">
-          <span><b>登录 Windows 后自动启动 TAK</b><em>让计划随 TAK 运行。关闭 TAK 后，计划暂停等待下次启动。</em></span>
-          <span className={`switch ${data.launchOnLogin ? "on" : ""}`}><input type="checkbox" role="switch" checked={data.launchOnLogin} disabled={!!busy} onChange={(event) => void toggleStartup(event.target.checked)} /><i /></span>
-        </label>
-        {data.launchOnLoginError && <p className="plan-startup-error" role="alert">{data.launchOnLoginError}</p>}
-      </section>}
-      <ConfirmDialog compact open={!!confirmDelete} title={`删除计划「${confirmDelete?.name ?? ""}」？`} message="将停止定时运行。已归档的消息、媒体和任务记录会保留。" confirmLabel="删除计划" danger onCancel={() => setConfirmDelete(null)} onConfirm={() => { const plan = confirmDelete; setConfirmDelete(null); if (plan) void act(plan, "delete"); }} />
-    </>
-  );
+          </div>
+        </article>;
+      })}
+    </section> : <section className="panel task-empty large">
+      <CalendarClock size={28} /><p>还没有同步计划</p><span>选择聊天、同步内容与运行时间，让 TAK 按计划归档。</span>
+    </section>)}
+    {deletion}
+  </>;
 }
 
-function RunRow({ run, onOpenTask }: { run: PlanRun; onOpenTask: (id: string) => void }) {
-  return <details className="plan-run">
-    <summary>
-      <ChevronDown size={13} className="plan-run-chevron" />
-      <time>{when(run.startedAt || run.scheduledAt, "等待开始")}</time>
-      <span>{run.trigger === "manual" ? "手动运行" : run.trigger === "retry" ? "重试" : "定时运行"}</span>
-      <Status state={run.state} />
-    </summary>
-    {(run.message || run.blockedReason || run.retryAt) && <p className="plan-run-message">{run.message || REASONS[run.blockedReason || ""]}{run.retryAt && ` 下次重试 ${when(run.retryAt, "—")}。`}</p>}
-    {!!run.targets?.length && <TargetTable targets={run.targets} onOpenTask={onOpenTask} />}
-  </details>;
+function runTrigger(run: PlanRun) {
+  return run.trigger === "manual" ? "手动运行" : run.trigger === "retry" ? "重试" : "定时运行";
+}
+
+function runDate(run: PlanRun) {
+  return when(run.startedAt || run.scheduledAt, "等待开始");
+}
+
+function runTargets(run: PlanRun, runs: PlanRun[]) {
+  const targets = run.targets ?? [];
+  const missing = new Set(targets.filter((target) => !target.lastSuccessAt).map((target) => target.peer));
+  if (!missing.size) return targets;
+  const recovered = new Map<string, string>();
+  for (const previous of runs.slice(runs.indexOf(run) + 1)) {
+    for (const target of previous.targets ?? []) {
+      if (target.lastSuccessAt && missing.delete(target.peer)) recovered.set(target.peer, target.lastSuccessAt);
+    }
+    if (!missing.size) break;
+  }
+  return targets.map((target) => recovered.has(target.peer) ? { ...target, lastSuccessAt: recovered.get(target.peer) } : target);
+}
+
+function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, onDelete, onAccount, onLibrary, onRemote, onOpenTask }: {
+  plan: Plan;
+  runs: PlanRun[];
+  location: SyncPlanLocation;
+  busy: boolean;
+  onNavigate: (location: SyncPlanLocation) => void;
+  onEdit: () => void;
+  onAct: (action: PlanAction) => void;
+  onDelete: () => void;
+  onAccount: () => void;
+  onLibrary: () => void;
+  onRemote: () => void;
+  onOpenTask: (id: string) => void;
+}) {
+  const latest = runs[0];
+  const visible = location.failedOnly ? runs.filter((run) => run.state === "failed") : runs;
+  const run = visible.find((item) => item.id === location.runId) ?? visible[0];
+  const action = planRunAction(plan, latest);
+  const currentReason = plan.blockedReason !== latest?.blockedReason ? plan.blockedReason : undefined;
+  const recoveryFor = (reason?: string) => reason === "remote" ? { label: "重连档案库", open: onRemote } :
+    reason === "library" ? { label: "前往档案管理", open: onLibrary } :
+    reason === "account" || reason === "session" ? { label: "重新登录", open: onAccount } : null;
+  const currentRecovery = recoveryFor(currentReason);
+  const recovery = run && run.id === latest?.id && !currentRecovery ? recoveryFor(run.blockedReason) : null;
+  const message = run?.message || REASONS[run?.blockedReason || ""];
+  const targets = useMemo(() => run ? runTargets(run, runs) : [], [run, runs]);
+  const failedCount = targets.filter((target) => target.state === "failed").length;
+  const elapsed = run?.startedAt && run.finishedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : 0;
+  const selectRun = (runId: string) => onNavigate({ ...location, runId });
+  const filterRuns = (value: string) => {
+    const failedOnly = value === "failed";
+    const next = failedOnly && run?.state !== "failed" ? runs.find((item) => item.state === "failed") : run;
+    onNavigate({ ...location, failedOnly, runId: next?.id ?? location.runId });
+  };
+
+  return <>
+    <header className="plan-detail-heading">
+      <div className="plan-detail-title"><h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
+        <p><Database size={14} /> {plan.libraryLabel || "档案库"} <span>·</span> {plan.targets?.length ?? 0} 个聊天 <span>·</span> {scheduleText(plan.schedule)}</p>
+        <p>{mediaText(plan.mediaKinds ?? [])}{plan.includeHistory && " · 补齐历史缺失媒体"}</p>
+      </div>
+      <div className="plan-row-actions">
+        <button id={`sync-plan-edit-${plan.id}`} type="button" className="btn" disabled={busy || !!plan.activeRunId} onClick={onEdit}><Pencil size={14} /> 编辑计划</button>
+        <PlanRunButton primary action={action} disabled={busy || plan.state === "stopping"} onAct={onAct} />
+        <PlanMoreActions plan={plan} action={action} busy={busy} onAct={onAct} onDelete={onDelete} />
+      </div>
+    </header>
+    {currentReason && <div className="plan-inline-notice plan-run-notice" role="status">
+      <AlertCircle size={16} /><span>{plan.message || REASONS[currentReason]}</span>
+      {currentRecovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { if (run) selectRun(run.id); currentRecovery.open(); }}>{currentRecovery.label} <ArrowUpRight size={13} /></button>}
+    </div>}
+    <div className="plan-history-heading"><h2>运行历史</h2><span><CalendarClock size={15} /> 下次运行 <b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></span></div>
+    {runs.length ? <div className="panel plan-history">
+      <aside className="plan-run-nav" aria-label="运行记录">
+        <div className="plan-run-filter"><span aria-live="polite">共 {visible.length} 轮</span><Select ariaLabel="筛选运行记录"
+          options={HISTORY_FILTERS} value={location.failedOnly ? "failed" : "all"} onChange={filterRuns} /></div>
+        <div className="plan-run-options">
+          {visible.map((item) => <button key={item.id} type="button" className="plan-run-option" aria-pressed={run?.id === item.id} onClick={() => selectRun(item.id)}>
+            <span><time>{runDate(item)}</time><Status state={item.state} /></span><small>{runTrigger(item)}</small>
+          </button>)}
+        </div>
+        {!!run && <div className="plan-run-compact"><Select ariaLabel="选择运行记录" options={visible.map((item) => ({ value: item.id, label: `${runDate(item)} · ${STATES[item.state]?.label ?? item.state}` }))} value={run.id} onChange={selectRun} /></div>}
+      </aside>
+      {run ? <section className="plan-run-result" aria-label="本轮运行结果">
+        <header><div><h3>{runDate(run)}</h3><p>{runTrigger(run)}{elapsed > 0 && ` · 耗时 ${duration(elapsed).replace(/h/g, " 小时").replace(/m/g, " 分").replace(/s/g, " 秒")}`}</p></div>
+          <Status state={run.state} label={run.state === "failed" && failedCount ? `${failedCount} 个聊天失败` : undefined} />
+        </header>
+        {!!targets.length && <dl className="plan-run-totals" aria-label="本轮汇总">
+          {([{ field: "addedMessages", label: "新增消息", unit: "条" }, { field: "addedMedia", label: "新增媒体", unit: "个" }, { field: "missing", label: "剩余缺失", unit: "个" }] as const).map(({ field, label, unit }) => {
+            const total = targets.reduce((sum, target) => sum + (target[field] ?? 0), 0);
+            return <div key={field}><dt>{label}</dt><dd className={field === "missing" && total > 0 ? "warn" : undefined}>{total.toLocaleString()} <span>{unit}</span></dd></div>;
+          })}
+        </dl>}
+        {(message || run.retryAt) && <div className="plan-inline-notice plan-run-notice" role="status">
+          <AlertCircle size={16} /><span>{message}{run.retryAt && ` 下次重试 ${when(run.retryAt, "待排程")}。`}</span>
+          {recovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { selectRun(run.id); recovery.open(); }}>{recovery.label} <ArrowUpRight size={13} /></button>}
+        </div>}
+        {targets.length ? <TargetTable targets={targets} onOpenTask={(id) => { selectRun(run.id); onOpenTask(id); }} /> : <p className="plan-run-empty muted">本轮还没有逐聊天结果。</p>}
+      </section> : <div className="plan-run-empty task-empty"><p>没有失败的运行记录</p></div>}
+    </div> : <>
+      <div className="panel task-empty"><p>计划尚未运行</p><span>运行后可在这里查看逐聊天结果与任务详情。</span></div>
+      <TargetTable targets={plan.targets ?? []} onOpenTask={onOpenTask} />
+    </>}
+  </>;
 }
 
 function TargetTable({ targets, onOpenTask }: { targets: Target[]; onOpenTask: (id: string) => void }) {
   if (!targets.length) return null;
-  return <div className="plan-targets"><table className="table">
-    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-time-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-task-col" /></colgroup>
-    <thead><tr><th>聊天</th><th>最近成功</th><th className="num">新增消息</th><th className="num">新增媒体</th><th className="num">仍缺失</th><th>任务</th></tr></thead>
+  return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
+    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-time-col" /><col className="plan-target-task-col" /></colgroup>
+    <thead><tr><th scope="col">聊天与结果</th><th scope="col" className="num">消息</th><th scope="col" className="num">媒体</th><th scope="col" className="num">缺失</th><th scope="col">上次成功</th><th scope="col">任务记录</th></tr></thead>
     <tbody>{targets.map((target) => <tr key={target.peer}>
       <td><div className="plan-target-name"><b>{target.name || target.peer}</b>{target.state && <Status state={target.state} />}</div>{target.message && <small>{target.message}</small>}</td>
-      <td>{when(target.lastSuccessAt, "—")}</td>
       <td className="num">{target.addedMessages?.toLocaleString() ?? "—"}</td>
       <td className="num">{target.addedMedia?.toLocaleString() ?? "—"}</td>
       <td className={`num ${target.missing ? "warn" : ""}`}>{target.missing?.toLocaleString() ?? "—"}</td>
-      <td>{target.taskId ? <button type="button" className="plan-text-button" onClick={() => onOpenTask(target.taskId!)}>任务详情 <ArrowUpRight size={12} /></button> : "—"}</td>
+      <td>{when(target.lastSuccessAt, "—")}</td>
+      <td>{target.taskId ? <button type="button" className="plan-text-button" onClick={() => onOpenTask(target.taskId!)}>查看任务</button> : "—"}</td>
     </tr>)}</tbody>
   </table></div>;
 }
@@ -455,68 +598,101 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
     }
   };
 
-  return <form className="plan-editor" onSubmit={(event) => void submit(event)}>
-    <div className="plan-editor-title"><h2>{plan ? "编辑同步计划" : "新建同步计划"}</h2><button type="button" className="btn ghost" disabled={saving} onClick={onCancel}><ArrowLeft size={14} /> 返回计划</button></div>
+  return <form className="plan-editor plan-subpage" onSubmit={(event) => void submit(event)}>
+    <header className="plan-editor-title">
+      <button type="button" className="plan-back" disabled={saving} onClick={onCancel}><ArrowLeft size={15} /> {plan ? "返回计划详情" : "返回同步计划"}</button>
+      <h1>{plan ? "编辑同步计划" : "新建同步计划"}</h1>
+    </header>
     <fieldset className="plan-editor-fields" disabled={saving}>
-      <div className="plan-editor-identity">
-        <label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label>
-        <div className="field plan-editor-library"><span>归档到</span><div className="plan-library-value"><Database size={14} /><b title={libraryLabel}>{libraryLabel}</b></div></div>
+      <div className="panel plan-editor-identity">
+        <label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus={!plan} required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label>
+        <div className="field plan-editor-library"><span>目标档案库</span><div className="plan-library-value"><Database size={14} /><b title={libraryLabel}>{libraryLabel}</b></div></div>
       </div>
-      <section className="panel plan-form-panel plan-chat-panel">
-        <div className="plan-form-section">
-          <div className="plan-field-heading"><h3>选择聊天</h3><span aria-live="polite">已选 <b>{draft.targets.length}</b> 个</span></div>
-          <div className="plan-chat-toolbar">
-            <label className="task-search"><Search size={14} /><input type="search" aria-label="搜索聊天" placeholder="搜索名称、用户名或聊天 ID" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-            <Select value={type} options={CHAT_TYPES} ariaLabel="按聊天类型筛选" onChange={setType} disabled={saving} />
-            <label className="plan-check plan-show-selected"><input type="checkbox" checked={onlySelected} onChange={(event) => setOnlySelected(event.target.checked)} /> 仅看已选</label>
-            <button type="button" className="icon-btn" aria-label="刷新聊天" title="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
+      <div className={`plan-editor-grid${mediaEnabled ? "" : " messages-only"}`}>
+        <section className="panel plan-form-panel plan-chat-panel">
+          <div className="plan-form-section">
+            <div className="plan-field-heading"><h2>归档对象</h2><span className="plan-selected-count" aria-live="polite">已选 <b>{draft.targets.length}</b> 个</span></div>
+            <div className="plan-chat-toolbar">
+              <label className="task-search"><Search size={14} /><input type="search" aria-label="搜索聊天" placeholder="搜索名称、用户名或 ID" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+              <Select value={type} options={CHAT_TYPES} ariaLabel="按聊天类型筛选" onChange={setType} disabled={saving} />
+              <button type="button" className="btn sm plan-pick" aria-pressed={onlySelected} onClick={() => setOnlySelected((value) => !value)}><ListFilter size={14} /> 仅看已选</button>
+              <button type="button" className="icon-btn" aria-label="刷新聊天" title="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
+            </div>
+            {!hasSession && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>登录 Telegram 后可读取聊天列表。</span><button type="button" className="btn sm ghost" onClick={onAccount}>前往登录 <ArrowUpRight size={12} /></button></div>}
+            {libraryChanged && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>编辑期间切换了档案库。请返回后为当前档案库新建计划。</span></div>}
+            {!boundLibraryOpen && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>打开此计划绑定的档案库后，可添加聊天。</span></div>}
+            {chatError && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{chatError}</span></div>}
+            <div className="plan-chat-list" aria-label="可选择的聊天">
+              {loading && !visible.length ? <div className="plan-loading" role="status" aria-label="正在读取聊天">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div> : visible.length ? visible.map((chat) => {
+                const checked = selected.has(chat.peer);
+                const ChatIcon = chat.type === "channel" ? Megaphone : chat.type === "group" ? UsersRound : MessageCircle;
+                return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={(event) => {
+                  toggle(chat);
+                  if (onlySelected && checked) event.currentTarget.closest(".plan-form-section")?.querySelector<HTMLButtonElement>(".plan-pick")?.focus();
+                }}>
+                  <span className="plan-chat-symbol"><ChatIcon size={15} /></span>
+                  <span className="plan-chat-identity"><b title={chat.name}>{chat.name}</b><span className="plan-chat-username">{CHAT_LABELS.get(chat.type) || chat.type || "聊天"}{chat.username ? ` · @${chat.username}` : ""}</span></span>
+                  {chat.localSlug && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}
+                  <span className="plan-chat-selected" aria-hidden="true">{checked && <><Check size={12} />已选</>}</span>
+                </button>;
+              }) : <p className="plan-chat-empty">{!hasSession ? "登录后选择要同步的聊天。" : onlySelected ? "没有符合条件的已选聊天。" : "没有找到符合条件的聊天。"}</p>}
+            </div>
+            {(loading || query || type !== "all" || onlySelected) && <div className="plan-chat-list-footer"><span>{loading ? "正在刷新聊天…" : `${visible.length} 个结果`}</span>{(query || type !== "all" || onlySelected) && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); }}>清除筛选</button>}</div>}
           </div>
-          {!hasSession && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>登录 Telegram 后可读取聊天列表。</span><button type="button" className="btn sm ghost" onClick={onAccount}>前往登录 <ArrowUpRight size={12} /></button></div>}
-          {libraryChanged && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>编辑期间切换了档案库。请返回后为当前档案库新建计划。</span></div>}
-          {!boundLibraryOpen && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>打开此计划绑定的档案库后，可添加聊天。</span></div>}
-          {chatError && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{chatError}</span></div>}
-          <div className="plan-chat-list" aria-label="可选择的聊天">
-            {loading && !visible.length ? <div className="plan-loading" role="status" aria-label="正在读取聊天">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div> : visible.length ? visible.map((chat) => {
-              const checked = selected.has(chat.peer);
-              return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={() => toggle(chat)}>
-                <span className="plan-chat-identity"><b title={chat.name}>{chat.name}</b>{chat.username && <span className="plan-chat-username">@{chat.username}</span>}</span><span className="plan-chat-type">{CHAT_LABELS.get(chat.type) || chat.type || "聊天"}</span>{chat.localSlug && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}<span className="plan-chat-selected" aria-hidden="true">{checked && <><Check size={12} />已选</>}</span>
-              </button>;
-            }) : <p className="plan-chat-empty">{!hasSession ? "登录后选择要同步的聊天。" : onlySelected ? "没有符合条件的已选聊天。" : "没有找到符合条件的聊天。"}</p>}
+          <div className="plan-scope-section">
+            <div><h3>首次归档范围</h3><p>仅用于未归档的聊天。已有归档从上次位置继续。</p></div>
+            <Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} />
+            {draft.firstScope === "all" && <p className="plan-field-hint" role="status"><AlertCircle size={14} /> 将读取所选未归档聊天的全部历史。</p>}
           </div>
-          {(loading || query || type !== "all" || onlySelected) && <div className="plan-chat-list-footer"><span>{loading ? "正在刷新聊天…" : `${visible.length} 个结果`}</span>{(query || type !== "all" || onlySelected) && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); }}>清除筛选</button>}</div>}
-        </div>
-      </section>
-      <section className="panel plan-form-panel plan-settings-panel">
-        <div className="plan-form-section plan-schedule-section"><div className="plan-field-heading"><h3>运行时间</h3><span><Clock size={13} /> 本机时间</span></div>
-          <div className="plan-schedule-fields">
-            <div className="field"><span>重复</span><Select ariaLabel="重复频率" value={draft.schedule.frequency} options={FREQUENCY_OPTIONS} disabled={saving} onChange={(frequency) => set("schedule", { ...draft.schedule, frequency: frequency as Schedule["frequency"] })} /></div>
-            {draft.schedule.frequency === "weekly" && <div className="field"><span>星期</span><Select ariaLabel="运行星期" value={String(draft.schedule.weekday ?? 1)} options={WEEKDAY_OPTIONS} disabled={saving} onChange={(weekday) => set("schedule", { ...draft.schedule, weekday: Number(weekday) })} /></div>}
-            <label className="field"><span>时间</span><input type="time" required value={draft.schedule.time} onChange={(event) => set("schedule", { ...draft.schedule, time: event.target.value })} /></label>
+        </section>
+        <section className="panel plan-form-panel plan-settings-panel">
+          <div className="plan-form-section plan-schedule-section">
+            <div className="plan-field-heading"><h2>运行时间</h2></div>
+            <div className={`plan-schedule-fields ${frequency}`}>
+              <div className="field"><span>重复</span><Select ariaLabel="重复频率" value={frequency} options={FREQUENCY_OPTIONS} disabled={saving} onChange={(value) => set("schedule", { ...draft.schedule, frequency: value as Schedule["frequency"] })} /></div>
+              {frequency === "weekly" && <div className="field"><span>星期</span><Select ariaLabel="运行星期" value={String(weekday ?? 1)} options={WEEKDAY_OPTIONS} disabled={saving} onChange={(value) => set("schedule", { ...draft.schedule, weekday: Number(value) })} /></div>}
+              <label className="field"><span>时间</span><input type="time" required value={time} onChange={(event) => set("schedule", { ...draft.schedule, time: event.target.value })} /></label>
+            </div>
+            <div className="plan-schedule-preview" aria-live="polite">
+              <span><Clock size={14} /> 下次运行</span>
+              <b title={preview?.error}>{!draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
+              <small>本机时间</small>
+            </div>
           </div>
-          <div className="plan-schedule-preview" aria-live="polite">
-            <span>下次定时运行</span>
-            <b title={preview?.error}>{!draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
+          <div className="plan-form-section plan-content-section">
+            <div className="plan-field-heading"><h2>同步内容</h2></div>
+            <div className="plan-content-choice tabs-pill" role="group" aria-label="同步内容">
+              <button type="button" aria-pressed={!mediaEnabled} className={!mediaEnabled ? "on" : ""} onClick={() => setMediaEnabled(false)}>仅消息</button>
+              <button type="button" aria-pressed={mediaEnabled} className={mediaEnabled ? "on" : ""} onClick={() => setMediaEnabled(true)}>消息与媒体</button>
+            </div>
+            {mediaEnabled && <>
+              <div className="plan-media-options" role="group" aria-label="媒体类型">{MEDIA.map(({ kind, label, icon: Icon }) => {
+                const checked = draft.mediaKinds.includes(kind);
+                return <button className="btn sm plan-pick" type="button" aria-pressed={checked} key={kind}
+                  onClick={() => set("mediaKinds", checked ? draft.mediaKinds.filter((entry) => entry !== kind) : [...draft.mediaKinds, kind])}>
+                  <Icon size={14} /> {label}<Check className="plan-pick-check" size={12} />
+                </button>;
+              })}</div>
+              {draft.mediaKinds.length === 0 && <p className="plan-field-hint" role="status">请选择至少一种媒体类型。</p>}
+              <label className="plan-history-toggle">
+                <span>补齐所选类型的历史缺失媒体</span>
+                <span className={`switch ${draft.includeHistory && draft.mediaKinds.length > 0 ? "on" : ""}`}>
+                  <input type="checkbox" role="switch" disabled={draft.mediaKinds.length === 0} checked={draft.includeHistory && draft.mediaKinds.length > 0} onChange={(event) => set("includeHistory", event.target.checked)} /><i />
+                </span>
+              </label>
+            </>}
           </div>
-        </div>
-        <div className="plan-form-section plan-content-section"><div className="plan-field-heading"><h3>同步内容</h3></div>
-          <div className="plan-content-choice" role="group" aria-label="同步内容">
-            <label className="plan-check"><input type="radio" name="sync-plan-content" checked={!mediaEnabled} onChange={() => setMediaEnabled(false)} /> 仅消息</label>
-            <label className="plan-check"><input type="radio" name="sync-plan-content" checked={mediaEnabled} onChange={() => setMediaEnabled(true)} /> 消息及所选媒体</label>
-          </div>
-          {mediaEnabled && <><div className="plan-media-options" role="group" aria-label="媒体类型">{MEDIA.map(({ kind, label, icon: Icon }) => <label className="plan-check" key={kind}><input type="checkbox" checked={draft.mediaKinds.includes(kind)} onChange={() => set("mediaKinds", draft.mediaKinds.includes(kind) ? draft.mediaKinds.filter((entry) => entry !== kind) : [...draft.mediaKinds, kind])} /><Icon size={14} /> {label}</label>)}</div>{draft.mediaKinds.length === 0 && <p className="plan-field-hint" role="status">请选择至少一种媒体类型。</p>}</>}
-          <label className="plan-check plan-history-check"><input type="checkbox" disabled={!mediaEnabled || draft.mediaKinds.length === 0} checked={mediaEnabled && draft.mediaKinds.length > 0 && draft.includeHistory} onChange={(event) => set("includeHistory", event.target.checked)} /> 同时补齐已归档消息中缺失的所选媒体</label>
-        </div>
-        <div className="plan-form-section plan-scope-section"><div className="plan-field-heading"><h3>首次范围</h3></div><Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} /><p className="muted">用于未归档的聊天。已归档的聊天从已有记录继续同步。</p></div>
-      </section>
+        </section>
+      </div>
     </fieldset>
-    <section className="panel plan-editor-footer">
-      <div className="plan-editor-summary"><span>{draft.targets.length} 个聊天 · {scheduleText(draft.schedule)} · {mediaText(mediaEnabled ? draft.mediaKinds : [])}</span></div>
+    <footer className="panel plan-editor-footer">
       {error && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error}</span></div>}
+      <div className="plan-editor-summary"><b>已选 {draft.targets.length} 个聊天</b><span>{scheduleText(draft.schedule)} · {mediaText(mediaEnabled ? draft.mediaKinds : [])}</span></div>
       <div className="plan-row-actions">
         <button type="button" className="btn ghost" disabled={saving} onClick={onCancel}>取消</button>
-        <button type="submit" className="btn ghost" value="save" disabled={saving || !canSave}>{saving && !saveAndRun && <Loader2 size={13} className="spin" />} 保存</button>
-        <button type="submit" className="btn primary" value="run" disabled={saving || !canSave || !hasSession}>{saving && saveAndRun ? <Loader2 size={13} className="spin" /> : <Play size={13} />} 保存并立即运行</button>
+        <button type="submit" className="btn primary" value="save" disabled={saving || !canSave}>{saving && !saveAndRun && <Loader2 size={13} className="spin" />} 保存计划</button>
+        <button type="submit" className="btn" value="run" disabled={saving || !canSave || !hasSession}>{saving && saveAndRun ? <Loader2 size={13} className="spin" /> : <Play size={13} />} 保存并运行</button>
       </div>
-    </section>
+    </footer>
   </form>;
 }
