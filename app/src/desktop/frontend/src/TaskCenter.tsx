@@ -1166,7 +1166,7 @@ export function TasksPage({
   const modalShowError = Boolean(modalTask?.error) && (modalTask?.state === "failed" || modalTask?.state === "partial");
 
   return (
-    <>
+    <div className="task-center-workspace">
       <div className="page-head">
         <div>
           <h1>任务中心</h1>
@@ -1428,6 +1428,6 @@ export function TasksPage({
         onConfirm={clearAll}
         onCancel={() => setClearConfirm(false)}
       />
-    </>
+    </div>
   );
 }

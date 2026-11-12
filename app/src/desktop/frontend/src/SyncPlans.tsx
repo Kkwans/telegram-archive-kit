@@ -276,15 +276,14 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
             <div className="plan-row">
               <button type="button" className="plan-row-title" aria-expanded={expanded} aria-controls={expanded ? key : undefined} onClick={() => onExpandPlan(expanded ? "" : plan.id)}>
                 <span className="plan-row-icon"><CalendarClock size={17} /></span>
-                <span className="plan-row-name"><b title={plan.name}>{plan.name}</b><span title={plan.libraryLabel}>{plan.targets?.length ?? 0} 个聊天 · {scheduleText(plan.schedule)}{plan.libraryLabel && ` · ${plan.libraryLabel}`}</span></span>
-                <ChevronDown size={14} className="plan-row-chevron" />
+                <span className="plan-row-name"><span className="plan-row-heading"><b title={plan.name}>{plan.name}</b><ChevronDown size={14} className="plan-row-chevron" /></span><span className="plan-row-meta" title={plan.libraryLabel}>{plan.targets?.length ?? 0} 个聊天 · {scheduleText(plan.schedule)}{plan.libraryLabel && ` · ${plan.libraryLabel}`}</span></span>
               </button>
               <Status state={plan.state} />
               <div className="plan-row-time plan-next-run"><span className="plan-time-label">下次运行</span><b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></div>
               <div className="plan-row-time plan-last-run"><span className="plan-time-label">最近运行</span><b>{when(latest?.startedAt || latest?.scheduledAt, latest ? "等待开始" : "尚未运行")}</b>{latest && latest.state !== plan.state && <span className="plan-last-result">{STATES[latest.state]?.label ?? latest.state}</span>}</div>
               <div className="plan-row-actions">
                 {canRetry ? <button type="button" className="btn sm ghost" disabled={!!busy} onClick={() => void act(plan, "retry")}><RefreshCw size={12} /> 重试</button> : active ? <button type="button" className="btn sm stop-action" disabled={!!busy || plan.state === "stopping"} onClick={() => void act(plan, "stop")}><Square size={12} /> 停止本次</button> : <button type="button" className="btn sm ghost" disabled={!!busy} onClick={() => void act(plan, "run")}><Play size={12} /> 立即运行</button>}
-                <button type="button" className="icon-btn" disabled={!!busy} aria-label={plan.enabled ? "暂停定时运行" : "恢复定时运行"} title={plan.enabled ? "暂停定时运行" : "恢复定时运行"} onClick={() => void act(plan, plan.enabled ? "pause" : "resume")}>{plan.enabled ? <Pause size={14} /> : <Play size={14} />}</button>
+                <button type="button" className="btn sm ghost plan-schedule-action" disabled={!!busy} aria-label={plan.enabled ? "暂停定时运行" : "恢复定时运行"} title={plan.enabled ? "暂停定时运行" : "恢复定时运行"} onClick={() => void act(plan, plan.enabled ? "pause" : "resume")}>{plan.enabled ? <Pause size={12} /> : <Play size={12} />}{plan.enabled ? "暂停计划" : "恢复计划"}</button>
               </div>
             </div>
             {expanded && <div id={key} className="plan-details">
@@ -459,7 +458,10 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   return <form className="plan-editor" onSubmit={(event) => void submit(event)}>
     <div className="plan-editor-title"><h2>{plan ? "编辑同步计划" : "新建同步计划"}</h2><button type="button" className="btn ghost" disabled={saving} onClick={onCancel}><ArrowLeft size={14} /> 返回计划</button></div>
     <fieldset className="plan-editor-fields" disabled={saving}>
-      <div className="plan-editor-identity"><label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label><div className="plan-editor-library"><Database size={14} /><span>归档到 <b title={libraryLabel}>{libraryLabel}</b></span></div></div>
+      <div className="plan-editor-identity">
+        <label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label>
+        <div className="field plan-editor-library"><span>归档到</span><div className="plan-library-value"><Database size={14} /><b title={libraryLabel}>{libraryLabel}</b></div></div>
+      </div>
       <section className="panel plan-form-panel plan-chat-panel">
         <div className="plan-form-section">
           <div className="plan-field-heading"><h3>选择聊天</h3><span aria-live="polite">已选 <b>{draft.targets.length}</b> 个</span></div>
@@ -485,7 +487,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
         </div>
       </section>
       <section className="panel plan-form-panel plan-settings-panel">
-        <div className="plan-form-section"><div className="plan-field-heading"><h3>运行时间</h3><span><Clock size={13} /> 本机时间</span></div>
+        <div className="plan-form-section plan-schedule-section"><div className="plan-field-heading"><h3>运行时间</h3><span><Clock size={13} /> 本机时间</span></div>
           <div className="plan-schedule-fields">
             <div className="field"><span>重复</span><Select ariaLabel="重复频率" value={draft.schedule.frequency} options={FREQUENCY_OPTIONS} disabled={saving} onChange={(frequency) => set("schedule", { ...draft.schedule, frequency: frequency as Schedule["frequency"] })} /></div>
             {draft.schedule.frequency === "weekly" && <div className="field"><span>星期</span><Select ariaLabel="运行星期" value={String(draft.schedule.weekday ?? 1)} options={WEEKDAY_OPTIONS} disabled={saving} onChange={(weekday) => set("schedule", { ...draft.schedule, weekday: Number(weekday) })} /></div>}
@@ -496,7 +498,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
             <b title={preview?.error}>{!draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
           </div>
         </div>
-        <div className="plan-form-section"><div className="plan-field-heading"><h3>同步内容</h3></div>
+        <div className="plan-form-section plan-content-section"><div className="plan-field-heading"><h3>同步内容</h3></div>
           <div className="plan-content-choice" role="group" aria-label="同步内容">
             <label className="plan-check"><input type="radio" name="sync-plan-content" checked={!mediaEnabled} onChange={() => setMediaEnabled(false)} /> 仅消息</label>
             <label className="plan-check"><input type="radio" name="sync-plan-content" checked={mediaEnabled} onChange={() => setMediaEnabled(true)} /> 消息及所选媒体</label>
@@ -504,7 +506,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
           {mediaEnabled && <><div className="plan-media-options" role="group" aria-label="媒体类型">{MEDIA.map(({ kind, label, icon: Icon }) => <label className="plan-check" key={kind}><input type="checkbox" checked={draft.mediaKinds.includes(kind)} onChange={() => set("mediaKinds", draft.mediaKinds.includes(kind) ? draft.mediaKinds.filter((entry) => entry !== kind) : [...draft.mediaKinds, kind])} /><Icon size={14} /> {label}</label>)}</div>{draft.mediaKinds.length === 0 && <p className="plan-field-hint" role="status">请选择至少一种媒体类型。</p>}</>}
           <label className="plan-check plan-history-check"><input type="checkbox" disabled={!mediaEnabled || draft.mediaKinds.length === 0} checked={mediaEnabled && draft.mediaKinds.length > 0 && draft.includeHistory} onChange={(event) => set("includeHistory", event.target.checked)} /> 同时补齐已归档消息中缺失的所选媒体</label>
         </div>
-        <div className="plan-form-section"><div className="plan-field-heading"><h3>首次范围</h3></div><Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} /><p className="muted">用于未归档的聊天。已归档的聊天从已有记录继续同步。</p></div>
+        <div className="plan-form-section plan-scope-section"><div className="plan-field-heading"><h3>首次范围</h3></div><Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} /><p className="muted">用于未归档的聊天。已归档的聊天从已有记录继续同步。</p></div>
       </section>
     </fieldset>
     <section className="panel plan-editor-footer">
