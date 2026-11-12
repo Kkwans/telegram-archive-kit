@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	takapp "telegramarchivekit/internal/app"
+)
 
 func TestMatchOnlineChatByName(t *testing.T) {
 	chats := []OnlineChat{
@@ -23,5 +27,22 @@ func TestMatchOnlineChatByName(t *testing.T) {
 	dupes := []OnlineChat{{ID: 4, Name: "同名"}, {ID: 5, Name: "同名"}}
 	if _, n := matchOnlineChatByName(dupes, "同名"); n != 2 {
 		t.Fatalf("duplicate count = %d", n)
+	}
+}
+
+func TestAnnotateOnlineLocalClearsPreviousLibrary(t *testing.T) {
+	t.Setenv("TAK_CONFIG_DIR", t.TempDir())
+	t.Setenv("TAK_LIBRARY_ROOT", t.TempDir())
+	facade, err := takapp.OpenFacade()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto := OnlineChatsDTO{Chats: []OnlineChat{{
+		ID: 10, Archived: true, ArchivedLocally: true, LocalSlug: "previous",
+		LocalMessages: 10, LocalMedia: 2, LocalUpdatedAt: "2026-01-01",
+	}}}
+	NewBridge(facade).annotateOnlineLocal(&dto)
+	if got := dto.Chats[0]; got != (OnlineChat{ID: 10, Archived: true}) {
+		t.Fatalf("unexpected chat after checking an empty library: %+v", got)
 	}
 }

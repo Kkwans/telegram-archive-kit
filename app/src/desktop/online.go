@@ -742,13 +742,10 @@ func (b *Bridge) annotateOnlineLocal(dto *OnlineChatsDTO) {
 	}
 	for i := range dto.Chats {
 		c, ok := byID[strconv.FormatInt(dto.Chats[i].ID, 10)]
-		if !ok {
-			continue
-		}
 		dto.Chats[i].LocalSlug = c.Slug
 		dto.Chats[i].LocalMessages = c.Messages
 		dto.Chats[i].LocalMedia = c.Media
 		dto.Chats[i].LocalUpdatedAt = c.UpdatedAt
-		dto.Chats[i].ArchivedLocally = true
+		dto.Chats[i].ArchivedLocally = ok
 	}
 }
