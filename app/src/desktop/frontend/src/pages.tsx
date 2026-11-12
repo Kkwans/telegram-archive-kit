@@ -3367,19 +3367,19 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
   useEffect(() => {
     if (!remoteOpen) return;
     const previous = document.activeElement;
-    const focus = () => {
-      if (!document.body.classList.contains("glass-ready")) return;
-      observer.disconnect();
-      remoteDialog.current?.querySelector<HTMLButtonElement>(".remote-head button")?.focus({ preventScroll: true });
-    };
-    const observer = new MutationObserver(focus);
-    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
-    focus();
+    remoteDialog.current?.querySelector<HTMLButtonElement>('[aria-label="关闭网络位置"]')?.focus({ preventScroll: true });
     return () => {
-      observer.disconnect();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
     };
   }, [remoteOpen]);
+
+  const showRemoteMode = (mode: typeof remoteMode) => {
+    setRemoteMode(mode);
+    requestAnimationFrame(() => {
+      const selector = mode === "add" ? ".remote-method.selected" : ".saved-connections-head > button";
+      remoteDialog.current?.querySelector<HTMLButtonElement>(selector)?.focus({ preventScroll: true });
+    });
+  };
 
   const switchRemote = (root: string, newRemoteMount = false, onError = setRemoteError) => switchTo(root, false, {
     newRemoteMount,
@@ -3965,8 +3965,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
       </div>
 
       {remoteOpen && createPortal(
-        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeRemote(); }}>
-          <div ref={remoteDialog} className="modal remote-modal remote-workspace" role="dialog" aria-modal="true" aria-labelledby="remote-title" onKeyDown={(event) => {
+        <div className="remote-dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeRemote(); }}>
+          <div ref={remoteDialog} className="remote-modal remote-workspace" role="dialog" aria-modal="true" aria-labelledby="remote-title" onKeyDown={(event) => {
             if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
             if (event.key === "Escape") { event.preventDefault(); closeRemote(); }
             if (event.key !== "Tab") return;
@@ -3978,18 +3978,15 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
           }}>
             <div className="remote-head">
               <div className="remote-title">
-                <span className="remote-title-icon"><Network size={18} /></span>
-                <div>
-                  <h2 id="remote-title">网络位置</h2>
-                  <p>连接 SMB 共享、SSH 或 rclone 档案库。</p>
-                </div>
+                {remoteMode === "add" && <button type="button" className="icon-btn" aria-label="返回已保存的连接" title="返回已保存的连接" disabled={remoteFormBusy} onClick={() => showRemoteMode("saved")}><ChevronLeft size={16} /></button>}
+                <h2 id="remote-title">{remoteMode === "saved" ? "网络位置" : "添加网络连接"}</h2>
               </div>
               <button className="icon-btn" aria-label="关闭网络位置" disabled={sshAction === "install" || sshAction === "switch" || rcloneBusy || remoteTesting || connectionBusy || busy === "switch" || !!pendingPublishSwitch} onClick={closeRemote}>
                 <X size={15} />
               </button>
             </div>
             <div className="remote-body" key={remoteMode}>
-              {remote && (
+              {remote && remoteMode === "saved" && (
                 <div className={`remote-current ${remote.remote ? "is-remote" : ""} ${remote.reachable ? "" : "is-offline"}`}>
                   <span className="remote-current-icon"><Database size={16} /></span>
                   <div>
@@ -4010,17 +4007,12 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
               )}
 
               {remoteMode === "saved" ? (
-                <RemoteConnections onAdd={() => setRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy} toast={toast} />
+                <RemoteConnections onAdd={() => showRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy} toast={toast} />
               ) : <>
-              <div className="remote-add-head">
-                <button type="button" className="btn sm ghost" disabled={remoteFormBusy} onClick={() => setRemoteMode("saved")}><ChevronLeft size={14} /> 已保存的连接</button>
-                <h3>添加连接</h3>
-              </div>
-
               <div className="remote-methods" role="group" aria-label="连接方式">
-                <button type="button" className={`remote-method ${!sshOpen && !rcloneOpen ? "selected" : ""}`} aria-pressed={!sshOpen && !rcloneOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(false); setRcloneOpen(false); }}><Network size={16} /><span><b>SMB / 网络盘</b><small>共享文件夹或已挂载盘符</small></span></button>
-                <button type="button" className={`remote-method ${sshOpen ? "selected" : ""}`} aria-label="SSH 连接" aria-pressed={sshOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(true); setRcloneOpen(false); }}><Server size={16} /><span><b>SSH / SFTP</b><small>主机配置与密钥连接</small></span></button>
-                <button type="button" className={`remote-method ${rcloneOpen ? "selected" : ""}`} aria-label="rclone 连接" aria-pressed={rcloneOpen} disabled={remoteFormBusy} onClick={() => { setRcloneOpen(true); setSSHOpen(false); }}><Cloud size={16} /><span><b>rclone</b><small>网盘、WebDAV 与对象存储</small></span></button>
+                <button type="button" className={`remote-method ${!sshOpen && !rcloneOpen ? "selected" : ""}`} aria-pressed={!sshOpen && !rcloneOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(false); setRcloneOpen(false); }}><Network size={15} />SMB / 网络盘</button>
+                <button type="button" className={`remote-method ${sshOpen ? "selected" : ""}`} aria-label="SSH 连接" aria-pressed={sshOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(true); setRcloneOpen(false); }}><Server size={15} />SSH / SFTP</button>
+                <button type="button" className={`remote-method ${rcloneOpen ? "selected" : ""}`} aria-label="rclone 连接" aria-pressed={rcloneOpen} disabled={remoteFormBusy} onClick={() => { setRcloneOpen(true); setSSHOpen(false); }}><Cloud size={15} />rclone</button>
               </div>
 
               <div className="remote-save-settings">
@@ -4127,7 +4119,6 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                     </>
                   ) : (
                     <>
-                      <div className="rclone-form-head"><b>SSH / SFTP 连接</b><span>使用 Windows OpenSSH 的主机配置和密钥。</span></div>
                       <div className="rclone-fields">
                         <div className="rclone-field grow">
                           <span>SSH 主机</span>
@@ -4181,7 +4172,6 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                   <p>挂载成功后进入网络盘路径，确认测试结果后切换。TAK 退出时会结束自己启动的 rclone 进程。</p>
                 </div>
               )}
-              <p className="remote-note">SMB 连接使用 Windows 凭据，SSH 连接使用 OpenSSH 配置。远程库的缩略图与视频播放缓存保存在本机。</p>
               </>}
             </div>
           </div>

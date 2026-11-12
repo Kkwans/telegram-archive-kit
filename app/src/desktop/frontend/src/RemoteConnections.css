@@ -1,48 +1,60 @@
-/* Network location workspace: keep the shared dialog material and localize layout. */
-.remote-workspace.remote-modal {
-  width: min(800px, calc(100vw - 40px));
-  max-height: min(88vh, 760px);
+.remote-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #11182766;
 }
-.remote-workspace .remote-head { flex: 0 0 auto; padding: 18px 20px 16px; }
+
+.remote-workspace.remote-modal {
+  width: min(740px, 100%);
+  max-height: calc(100dvh - 32px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 16px 42px #11182733;
+}
+.remote-workspace .remote-head { flex: 0 0 auto; align-items: center; padding: 12px 16px; }
+.remote-workspace .remote-title { align-items: center; gap: 8px; }
+.remote-workspace .remote-title h2 { margin: 0; font-size: 16px; line-height: 1.4; }
+.remote-workspace .remote-head .icon-btn { width: 30px; height: 30px; }
 .remote-workspace .remote-body {
-  padding: 16px 14px 18px 20px;
-  gap: 16px;
-  scrollbar-gutter: stable;
+  padding: 14px 16px 16px;
+  gap: 12px;
   overscroll-behavior: contain;
 }
-.remote-workspace .remote-current { padding: 10px 12px; border-radius: 10px; flex-shrink: 0; }
-.remote-workspace .remote-current > div { gap: 4px; }
+.remote-workspace .remote-current { padding: 0 0 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; flex-shrink: 0; }
+.remote-workspace .remote-current > div { gap: 3px; }
 .remote-workspace .remote-current b { font-size: 12px; font-weight: 600; }
 .remote-workspace .remote-current span { font-size: 11px; }
 .remote-workspace .remote-current > .remote-current-meta { max-width: 160px; }
-.remote-workspace .remote-add-head { justify-content: flex-start; gap: 12px; }
-.remote-workspace .remote-add-head h3 { font-size: 14px; font-weight: 650; }
-.remote-workspace .remote-add-head > .btn { padding-inline: 9px; }
-
-.remote-workspace .remote-methods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.remote-workspace .remote-methods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
 .remote-workspace .remote-method {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 7px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--surface);
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
-  text-align: left;
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
 .remote-workspace .remote-method > svg { flex: 0 0 auto; }
-.remote-workspace .remote-method > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.remote-workspace .remote-method b { color: var(--text); font-size: 12px; font-weight: 650; }
-.remote-workspace .remote-method small { font-size: 10.5px; line-height: 1.45; }
-.remote-workspace .remote-method:hover:not(:disabled) { border-color: var(--accent); background: var(--surface-2); }
-.remote-workspace .remote-method.selected { border-color: var(--accent); background: var(--accent-soft); }
+.remote-workspace .remote-method:hover:not(:disabled) { color: var(--text); }
+.remote-workspace .remote-method.selected { border-color: var(--line-strong); background: var(--surface); color: var(--text); font-weight: 650; }
 .remote-workspace .remote-method.selected > svg { color: var(--accent); }
 .remote-workspace .remote-method:disabled { opacity: .6; cursor: not-allowed; }
 
-.remote-workspace .remote-save-settings { gap: 10px; padding: 0 0 14px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.remote-workspace .remote-save-settings { gap: 8px; padding: 0 0 9px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
 .remote-workspace .remote-save-settings > .plan-check { width: fit-content; font-size: 12px; }
 .remote-workspace .remote-save-fields { gap: 10px 16px; }
 .remote-workspace .remote-save-fields > .field { flex: 1 1 200px; }
@@ -78,7 +90,6 @@
 .remote-workspace .rclone-fields > .rclone-mount-btn { align-self: end; }
 .remote-workspace .rclone-form p { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .remote-workspace .rclone-form p[role="alert"] { color: var(--danger); overflow-wrap: anywhere; }
-.remote-workspace .remote-note { color: var(--muted); font-size: 10.5px; padding-top: 12px; border-top: 1px solid var(--line); }
 .remote-workspace :is(input, button):disabled { cursor: not-allowed; }
 .remote-workspace input:disabled { opacity: .65; }
 .remote-workspace :is(input, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

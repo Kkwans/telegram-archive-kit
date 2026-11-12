@@ -257,7 +257,7 @@ export function SyncPlans({ boot, expandedPlan, onExpandPlan, onAccount, onLibra
   return (
     <>
       <div className="plan-toolbar">
-        <p>Telegram 新消息按计划归档到指定档案库。定时运行需要 Telegram 会话有效，且 TAK 正在运行。</p>
+        {data && <p>{plans.length} 个计划 <span aria-hidden="true">·</span> {plans.filter((plan) => plan.enabled).length} 个已启用</p>}
         <button ref={createButton} type="button" className="btn primary" disabled={!boot?.libraryRoot || !!busy} onClick={() => { editorOrigin.current = {}; setEditor("new"); }}><Plus size={15} /> 新建计划</button>
       </div>
       {(error || data?.error) && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error || data?.error}</span><button type="button" className="btn sm ghost" onClick={() => void read()}><RefreshCw size={12} /> 重新读取</button></div>}
@@ -457,7 +457,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   };
 
   return <form className="plan-editor" onSubmit={(event) => void submit(event)}>
-    <div className="plan-editor-title"><button type="button" className="btn ghost" disabled={saving} onClick={onCancel}><ArrowLeft size={14} /> 返回计划</button><h2>{plan ? "编辑同步计划" : "新建同步计划"}</h2></div>
+    <div className="plan-editor-title"><h2>{plan ? "编辑同步计划" : "新建同步计划"}</h2><button type="button" className="btn ghost" disabled={saving} onClick={onCancel}><ArrowLeft size={14} /> 返回计划</button></div>
     <fieldset className="plan-editor-fields" disabled={saving}>
       <div className="plan-editor-identity"><label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label><div className="plan-editor-library"><Database size={14} /><span>归档到 <b title={libraryLabel}>{libraryLabel}</b></span></div></div>
       <section className="panel plan-form-panel plan-chat-panel">
@@ -481,7 +481,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
               </button>;
             }) : <p className="plan-chat-empty">{!hasSession ? "登录后选择要同步的聊天。" : onlySelected ? "没有符合条件的已选聊天。" : "没有找到符合条件的聊天。"}</p>}
           </div>
-          <div className="plan-chat-list-footer"><span>{loading ? "正在刷新聊天…" : `${visible.length} 个聊天`}</span>{(query || type !== "all" || onlySelected) && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); }}>清除筛选</button>}</div>
+          {(loading || query || type !== "all" || onlySelected) && <div className="plan-chat-list-footer"><span>{loading ? "正在刷新聊天…" : `${visible.length} 个结果`}</span>{(query || type !== "all" || onlySelected) && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); }}>清除筛选</button>}</div>}
         </div>
       </section>
       <section className="panel plan-form-panel plan-settings-panel">
@@ -508,7 +508,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
       </section>
     </fieldset>
     <section className="panel plan-editor-footer">
-      <div className="plan-editor-summary"><Database size={15} /><div><b title={libraryLabel}>{libraryLabel}</b><span>{draft.targets.length} 个聊天 · {scheduleText(draft.schedule)} · {mediaText(mediaEnabled ? draft.mediaKinds : [])} · 首次范围 {SCOPE_OPTIONS.find((scope) => scope.value === draft.firstScope)?.label}{mediaEnabled && draft.mediaKinds.length > 0 && draft.includeHistory && " · 补齐历史缺失媒体"}</span></div></div>
+      <div className="plan-editor-summary"><span>{draft.targets.length} 个聊天 · {scheduleText(draft.schedule)} · {mediaText(mediaEnabled ? draft.mediaKinds : [])}</span></div>
       {error && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error}</span></div>}
       <div className="plan-row-actions">
         <button type="button" className="btn ghost" disabled={saving} onClick={onCancel}>取消</button>
