@@ -1,0 +1,75 @@
+.confirm-modal.confirm-compact {
+  box-sizing: border-box;
+  inline-size: min(408px, calc(100vw - 32px));
+  max-block-size: calc(100dvh - 32px);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 12px 32px #10182824;
+}
+
+.confirm-compact::backdrop {
+  background: #11182766;
+}
+
+.confirm-compact-copy {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 18px 18px 16px;
+}
+
+.confirm-compact-copy svg {
+  align-self: center;
+  color: var(--warn);
+}
+
+.confirm-compact-copy svg.is-danger {
+  color: var(--danger);
+}
+
+.confirm-compact-copy h2,
+.confirm-compact-copy p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.confirm-compact-copy h2 {
+  grid-column: 2;
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 680;
+}
+
+.confirm-compact-copy p {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.confirm-compact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.confirm-compact-actions .btn {
+  min-inline-size: 64px;
+  min-block-size: 32px;
+  height: auto;
+  padding: 5px 12px;
+}
+
+.confirm-compact-actions .btn:focus-visible {
+  outline-offset: 1px;
+}

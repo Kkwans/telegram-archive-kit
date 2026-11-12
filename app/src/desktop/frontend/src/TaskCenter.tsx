@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Activity,
@@ -1005,6 +1005,36 @@ export function TasksPage({
   const [selectionVersion, setSelectionVersion] = useState(0);
   const selection = useRef(0);
   const [clearConfirm, setClearConfirm] = useState(false);
+  const modalRef = useRef<HTMLDialogElement>(null);
+
+  useLayoutEffect(() => {
+    if (!modalTask) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = modalRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? []).filter((element) => element.getClientRects().length > 0);
+    dialog?.showModal();
+    focusable()[0]?.focus({ preventScroll: true });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        selection.current++;
+        setModalTask(null);
+      } else if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first) { event.preventDefault(); dialog?.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      dialog?.close();
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [modalTask?.id]);
 
   useEffect(() => () => { selection.current++; }, []);
 
@@ -1166,17 +1196,18 @@ export function TasksPage({
         </div>
       ) : <div id="task-records" role="tabpanel" aria-labelledby="task-tab-records" className="task-center-content">
 
-      <section className="stat-grid">
+      <section className="stat-grid task-record-stats" aria-label="任务概况">
         <div className="stat"><span>进行中</span><div><b className={running > 0 ? "accent" : ""}>{running}</b><em>个</em></div></div>
         <div className="stat"><span>已完成</span><div><b>{done}</b><em>个</em></div></div>
         <div className="stat"><span>失败</span><div><b className={failed > 0 ? "warn" : ""}>{failed}</b><em>个</em></div></div>
         <div className="stat"><span>全部任务</span><div><b>{tasks.length}</b><em>条</em></div></div>
       </section>
 
+      <section className="panel task-records-panel">
       <div className="task-toolbar">
         <div className="tabs-pill" role="group" aria-label="任务状态筛选">
           {STATUS_FILTERS.map(([key, label]) => (
-            <button key={key} className={filter === key ? "on" : ""} onClick={() => setFilter(key)}>{label}</button>
+            <button key={key} aria-pressed={filter === key} className={filter === key ? "on" : ""} onClick={() => setFilter(key)}>{label}</button>
           ))}
         </div>
         <div className="task-kind-select">
@@ -1192,18 +1223,20 @@ export function TasksPage({
           <input type="search" value={query} placeholder="搜索任务或聊天…" onChange={(e) => setQuery(e.target.value)} aria-label="搜索任务或聊天" />
         </label>
         <span className="spacer" />
-        <span className="muted">{visible.length} 条</span>
+        <span className="muted task-record-count" aria-live="polite">{visible.length} 条</span>
       </div>
 
-      <section className="panel">
+      <div className="task-table-scroll">
         {visible.length === 0 ? (
           <div className="task-empty large">
             <ListTodo size={30} />
-            <p>没有符合条件的任务</p>
-            <span>下载、导入 result.json、导出聊天、重建网页或合并档案库后会出现在这里。</span>
+            <p>{tasks.length ? "没有符合条件的任务" : "还没有任务记录"}</p>
+            <span>{tasks.length ? "试试其他状态、任务类型或关键词。" : "下载、导入、导出、同步计划等任务会在这里留下记录。"}</span>
+            {tasks.length > 0 && <button className="btn ghost" onClick={() => { setFilter("all"); setKind("all"); setQuery(""); }}>清除筛选</button>}
           </div>
         ) : (
           <table className="table task-table">
+            <colgroup><col className="task-state-track" /><col className="task-kind-track" /><col className="task-title-track" /><col className="task-chat-track" /><col className="task-time-track" /><col className="task-duration-track" /><col className="task-progress-track" /><col className="task-actions-track" /></colgroup>
             <thead>
               <tr>
                 <th className="task-col-state">状态</th>
@@ -1226,6 +1259,7 @@ export function TasksPage({
                     tabIndex={0}
                     onClick={() => void openTask(t)}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         void openTask(t);
@@ -1251,13 +1285,14 @@ export function TasksPage({
                         </b>
                         {t.state === "done" && noNewMedia(t) && <span className="task-note">无新增</span>}
                       </div>
+                      {(t.error || t.detail) && <span className={t.error && (t.state === "failed" || t.state === "partial") ? "err" : ""} title={t.error || t.detail}>{t.error || t.detail}</span>}
                     </td>
-                    <td className="task-chat">{t.chat || "—"}</td>
-                    <td className="muted">{dateTime(t.startedAt)}</td>
+                    <td className="task-chat" title={t.chat || undefined}>{t.chat || "—"}</td>
+                    <td className="muted task-started"><time>{dateTime(t.startedAt)}</time></td>
                     <td className="task-duration"><TaskElapsed state={t.state} elapsedMs={t.elapsedMs} startedAt={t.startedAt} finishedAt={t.finishedAt} /></td>
                     <td>
                       <div className="task-progress">
-                        <div className="mini"><i className={t.state} style={{ width: `${Math.max(t.state === "running" ? 1 : 0, Math.min(100, t.percent))}%` }} /></div>
+                        <div className="mini"><i className={t.state} style={{ width: `${t.state === "done" ? 100 : Math.max(t.state === "running" ? 1 : 0, Math.min(100, t.percent))}%` }} /></div>
                         <span>{t.state === "done" ? "100%" : `${t.percent}%`}</span>
                       </div>
                     </td>
@@ -1278,13 +1313,32 @@ export function TasksPage({
             </tbody>
           </table>
         )}
+      </div>
       </section>
 
       </div>}
 
       {modalTask && createPortal(
-        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) { selection.current++; setModalTask(null); } }}>
-          <div className="modal task-modal task-info-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
+          <dialog
+            ref={modalRef}
+            className="task-modal task-info-modal"
+            aria-modal="true"
+            aria-labelledby="task-modal-title"
+            onCancel={(event) => {
+              event.preventDefault();
+              selection.current++;
+              setModalTask(null);
+            }}
+            onMouseDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              if (event.clientX < rect.left || event.clientX > rect.right ||
+                  event.clientY < rect.top || event.clientY > rect.bottom) {
+                selection.current++;
+                setModalTask(null);
+              }
+            }}
+          >
             <div className="task-modal-head task-info-head">
               <div className="task-info-heading">
                 <div className="task-info-title-row">
@@ -1321,7 +1375,7 @@ export function TasksPage({
                 </div>
                 <div className="task-info-times">
                   <span>开始 <b>{dateTime(modalTask.startedAt)}</b></span>
-                  <span>结束 <b>{modalTask.finishedAt ? dateTime(modalTask.finishedAt) : "进行中"}</b></span>
+                  <span>结束 <b>{modalTask.finishedAt ? dateTime(modalTask.finishedAt) : modalTask.state === "running" ? "进行中" : "—"}</b></span>
                   <span>耗时 <b><TaskElapsed state={modalTask.state} elapsedMs={modalTask.elapsedMs} startedAt={modalTask.startedAt} finishedAt={modalTask.finishedAt} /></b></span>
                 </div>
               </div>
@@ -1361,8 +1415,7 @@ export function TasksPage({
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => { selection.current++; setModalTask(null); }}><X size={12} /> 关闭</button>
             </div>
-          </div>
-        </div>,
+          </dialog>,
         document.body
       )}
 

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, Copy, Database, ExternalLink, ListChecks, LoaderCircle, Monitor, Play, Plus, QrCode, RefreshCw, Search, Settings2, Shield, Square, Wifi, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Copy, Database, ExternalLink, ListChecks, LoaderCircle, Monitor, Play, Plus, QrCode, RefreshCw, Search, Settings2, Shield, Square, Wifi, X } from "lucide-react";
 import type { PageCtx } from "./pages";
 import { Select } from "./Select";
 import { call } from "./rpc";
+import "./WebPublication.css";
 
 type Selection = { slug: string; id: string };
 type Chat = Selection & { name: string; messages: number; ready: boolean };
@@ -47,10 +48,10 @@ function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose
   onClose?: () => void;
 }) {
   const result = check?.port === port ? check : undefined;
-  return <section id="publish-port-result" className="publish-port-result" aria-label={`端口 ${port} 检查结果`}>
+  return <section id="publish-port-result" className={`publish-port-result${blocked ? " is-blocked" : ""}`} aria-label={`端口 ${port} 检查结果`} aria-busy={!result}>
     <div className="publish-port-summary">
       <div>
-        <b>{blocked ? <><AlertCircle size={15} /> 无法监听端口 {port}</> : `TCP 端口 ${port}`}</b>
+        <b>{!result ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : blocked ? <AlertCircle size={15} aria-hidden="true" /> : null}{blocked ? `无法监听端口 ${port}` : `TCP 端口 ${port}`}</b>
         <span role="status">{!result ? "正在读取 Windows 监听列表…" : result.error || (
           result.owners?.length ? `${result.owners.length} 个程序正在监听此端口` : blocked
             ? "未发现监听程序。若仍无法部署，请换一个端口。"
@@ -59,7 +60,7 @@ function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose
       </div>
       {(onCheck || onClose) && <div className="publish-port-actions">
         {onCheck && <button className="btn sm ghost" disabled={!result || ending} onClick={onCheck}><RefreshCw size={13} /> 重新检查</button>}
-        {onClose && <button className="btn sm ghost" disabled={ending} onClick={onClose} aria-label="关闭端口检查" title="关闭端口检查"><X size={14} /></button>}
+        {onClose && <button className="btn sm ghost publish-icon-button" disabled={ending} onClick={onClose} aria-label="关闭端口检查" title="关闭端口检查"><X size={14} /></button>}
       </div>}
     </div>
     {!!result?.owners?.length && <ul className="publish-port-owners">
@@ -283,8 +284,8 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
           {view === "settings" ? <button type="button" className="btn ghost" onClick={() => navigate("console")}><ArrowLeft size={15} /> 返回部署</button> : <>
             <button type="button" className="btn ghost" onClick={() => navigate("settings")}><Settings2 size={15} /> 部署设置</button>
             {status.requested
-              ? <button type="button" className="btn ghost" disabled={busy} onClick={() => void save("webPublishStop")}><Square size={14} /> 停止部署</button>
-              : <button type="button" className="btn primary" disabled={busy || !canStart} onClick={() => void save("webPublishStart")}><Play size={14} /> 启动部署</button>}
+              ? <button type="button" className="btn ghost" disabled={busy} onClick={() => void save("webPublishStop")}>{busy ? <LoaderCircle size={14} className="spin" /> : <Square size={14} />} 停止部署</button>
+              : <button type="button" className="btn primary" disabled={busy || !canStart} onClick={() => void save("webPublishStart")}>{busy ? <LoaderCircle size={14} className="spin" /> : <Play size={14} />} 启动部署</button>}
           </>}
         </div>
       </header>
@@ -308,7 +309,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               const label = endpoint.url ? `${networkName[endpoint.kind]} ${endpoint.url.includes("[") ? "IPv6" : "IPv4"}` : networkName[endpoint.kind];
               return (
               <div className="publish-endpoint" key={endpoint.url || `${endpoint.kind}-${index}`}>
-                <span className="publish-endpoint-label">{endpoint.kind === "lan" ? <Wifi size={15} /> : <Shield size={15} />}{label}</span>
+                <span className="publish-endpoint-label">{endpoint.kind === "lan" ? <Wifi size={15} /> : <Shield size={15} />}<span>{networkName[endpoint.kind]}</span>{endpoint.url && <small>{endpoint.url.includes("[") ? "IPv6" : "IPv4"}</small>}</span>
                 {endpoint.url ? <>
                   <button type="button" className="publish-address" title={`在浏览器打开 ${endpoint.url}`} onClick={() => void act(endpoint, "open")}><code>{endpoint.url}</code></button>
                   <div className="publish-endpoint-actions">
@@ -347,7 +348,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
                   return <li key={chat.slug}>
                     {chat.ready ? <button type="button" className="publish-chat publish-chat-button" aria-label={chat.name} aria-pressed={pressed} disabled={settingsLocked} onClick={() => toggle(chat)}>
                       <ChatIdentity chat={chat} />
-                      <span className="publish-chat-indicator" aria-hidden="true">{pressed ? "已选" : <Plus size={16} />}</span>
+                      <span className="publish-chat-indicator" aria-hidden="true">{pressed ? <><Check size={14} />已选</> : <Plus size={16} />}</span>
                     </button> : <div className="publish-chat">
                       <ChatIdentity chat={chat} />
                       <button className="btn sm ghost" onClick={() => { ctx.setSelected(chat.slug); ctx.go("chats"); }}>前往重建</button>
@@ -408,12 +409,12 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
         <button className="btn primary" disabled={settingsLocked || !dirty || !validPort || !validLimit || (status.requested && !networkConfigured)} onClick={() => void save("webPublishSave")}>{status.requested ? "应用设置" : "保存设置"}</button>
       </div>}
 
-      {qr && <dialog className="publish-qr" ref={qrDialog} onClose={() => setQR(undefined)} aria-label="扫码打开档案网页">
-        <header><h2>扫码打开档案网页</h2><button className="btn sm ghost" aria-label="关闭二维码" onClick={() => qrDialog.current?.close()}><X size={16} /></button></header>
-        <img src={qr.src} alt="档案网页访问地址二维码" width={220} height={220} />
+      {qr && <dialog className="publish-qr" ref={qrDialog} onClose={() => setQR(undefined)} aria-modal="true" aria-label="扫码打开档案网页">
+        <header><h2>扫码打开档案网页</h2><button className="btn sm ghost publish-icon-button" aria-label="关闭二维码" onClick={() => qrDialog.current?.close()}><X size={16} /></button></header>
+        <div className="publish-qr-image"><img src={qr.src} alt="档案网页访问地址二维码" width={220} height={220} /></div>
         <code>{qr.url}</code>
       </dialog>}
-      {confirmOwner && <dialog className="publish-confirm" role="alertdialog" ref={confirmDialog} onClose={() => setConfirmOwner(undefined)} aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-target publish-confirm-message">
+      {confirmOwner && <dialog className="publish-confirm" role="alertdialog" ref={confirmDialog} onClose={() => setConfirmOwner(undefined)} aria-modal="true" aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-target publish-confirm-message">
         <header>
           <AlertCircle size={18} aria-hidden="true" />
           <h2 id="publish-confirm-title">结束程序以释放端口？</h2>

@@ -1,0 +1,184 @@
+/* Publication owns its layout so shared page/card rules cannot stretch settings. */
+.publish-page.publish-page {
+  display: grid;
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
+  gap: 16px;
+  width: 100%;
+  max-width: 1056px;
+  min-width: 0;
+  margin-inline: auto;
+  container-name: publication;
+}
+
+.publish-page .publish-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+.publish-page .publish-heading > div:first-child { min-width: 0; }
+.publish-page .publish-heading h1 { line-height: 1.35; }
+.publish-page .publish-heading p { margin-top: 5px; line-height: 1.5; }
+.publish-page .publish-heading-action { align-items: center; flex-wrap: nowrap; gap: 8px; }
+.publish-page .publish-heading-action .btn { min-height: 32px; }
+.publish-page .panel-head { padding: 12px 16px; }
+.publish-page .panel-head h3 { line-height: 1.35; }
+.publish-page .publish-body { gap: 12px; padding: 14px 16px 16px; }
+
+/* Stable address columns keep IPv4 and long IPv6 endpoints on the same grid. */
+.publish-page .publish-status-head { padding: 14px 16px; gap: 16px; background: var(--surface); }
+.publish-page .publish-status-title { gap: 5px; }
+.publish-page .publish-status-title h2 { font-size: 15px; line-height: 1.35; }
+.publish-page .publish-status-title > span { font-size: 11.5px; }
+.publish-page .publish-state-group { align-content: center; gap: 5px; }
+.publish-page .publish-state { white-space: nowrap; padding: 3px 8px; }
+.publish-page .publish-state.running { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 25%, var(--line)); }
+.publish-page .publish-dot.running { background: var(--ok); }
+.publish-page .publish-dot.starting,
+.publish-page .publish-dot.waiting { background: var(--warn); }
+.publish-page .publish-address-empty { min-height: 48px; padding: 12px 16px; }
+.publish-page .publish-endpoint {
+  grid-template-columns: 126px minmax(0, 1fr) 134px;
+  min-height: 50px;
+  gap: 12px;
+  padding: 9px 16px;
+}
+.publish-page .publish-endpoint-label { gap: 7px; white-space: nowrap; }
+.publish-page .publish-endpoint-label > svg { flex: none; color: var(--muted); }
+.publish-page .publish-endpoint-label > small { color: var(--muted); font-size: 10.5px; font-weight: 500; }
+.publish-page .publish-address { display: block; width: 100%; min-width: 0; padding: 4px 0; line-height: 1.6; }
+.publish-page .publish-address code { font: 11.5px/1.6 "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+.publish-page .publish-endpoint-actions { justify-content: flex-end; gap: 6px; }
+.publish-page .publish-endpoint-actions .btn { height: 30px; width: 30px; min-width: 30px; border-color: var(--line); }
+.publish-page .publish-endpoint-actions .publish-copy { width: 62px; padding-inline: 8px; }
+.publish-page .publish-endpoint-error { line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Scope is a choice followed by a selection list; no checkbox-led cards. */
+.publish-page .publish-selection-count { padding: 0; background: transparent; color: var(--muted); white-space: nowrap; }
+.publish-page .publish-scope-controls { gap: 10px 16px; }
+.publish-page .publish-scope-options { box-sizing: border-box; min-height: 36px; padding: 3px; gap: 2px; border-radius: 8px; }
+.publish-page .publish-scope-options label { min-height: 28px; padding: 3px 11px; line-height: 20px; }
+.publish-page .publish-scope-options label:hover:not(:has(input:disabled)) { color: var(--text); }
+.publish-page .publish-search { box-sizing: border-box; height: 36px; max-width: 240px; flex-basis: 160px; background: var(--surface); }
+.publish-page .publish-search > svg { flex: none; }
+.publish-page .publish-search input { height: 100%; padding: 0; font-size: 12px; }
+.publish-page .publish-search input::placeholder { color: var(--muted); opacity: 1; }
+.publish-page .publish-chat-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 300px; }
+.publish-page .publish-chat { min-height: 56px; padding: 9px 10px; gap: 10px; border-radius: 8px; }
+.publish-page .publish-chat-copy { gap: 3px; }
+.publish-page .publish-chat-copy b { font-size: 12.5px; line-height: 1.4; }
+.publish-page .publish-chat-copy small { font-size: 11px; font-variant-numeric: tabular-nums; }
+.publish-page .publish-chat-avatar { flex-basis: 32px; height: 32px; border-radius: 8px; font-size: 13px; }
+.publish-page .publish-chat-indicator { gap: 3px; min-width: 42px; font-size: 11px; }
+.publish-page .publish-chat-button[aria-pressed=true] { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); }
+.publish-page .publish-chat-button[aria-pressed=true] .publish-chat-indicator { padding: 0; background: transparent; }
+.publish-page .publish-chat-button:focus-visible { outline-offset: 1px; }
+
+/* Settings occupy their content height; labels and all three controls share a baseline. */
+.publish-page .publish-settings-panel { display: grid; align-items: start; align-content: start; gap: 16px; width: 100%; max-width: 820px; }
+.publish-page.publish-page-settings > .publish-heading { width: 100%; max-width: 820px; }
+.publish-page .publish-settings-panel > section { height: auto; min-height: 0; align-self: start; }
+.publish-page .publish-settings-panel > section > .panel-head { min-height: 43px; padding: 12px 16px; }
+.publish-page .publish-network-fields { grid-template-columns: minmax(0, 1fr) 222px; gap: 16px; align-items: start; }
+.publish-page .publish-network-fields .field { gap: 6px; }
+.publish-page .publish-network-fields .field > :is(span, label) { margin: 0; font-size: 12px; font-weight: 600; line-height: 18px; }
+.publish-page .publish-network-fields :is(.ui-select-btn, input[type=number], .publish-port-control .btn) {
+  box-sizing: border-box;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  line-height: 20px;
+  border-radius: 8px;
+}
+.publish-page .publish-network-fields :is(.ui-select-btn, input[type=number]) { background: var(--surface); font-size: 12.5px; }
+.publish-page .publish-network-fields :is(.ui-select-btn, input[type=number]):disabled { background: var(--surface-2); }
+.publish-page .publish-network-fields .ui-select-btn { padding-inline: 10px; }
+.publish-page .publish-port-control { grid-template-columns: minmax(76px, 1fr) auto; gap: 7px; }
+.publish-page .publish-port-control .btn { padding-inline: 11px; }
+.publish-page .publish-port-control input { font-variant-numeric: tabular-nums; }
+.publish-page .publish-network-switches { border-bottom: 0; }
+.publish-page .publish-network-switches .publish-switch,
+.publish-page .publish-lifecycle .publish-switch { min-height: 58px; padding-block: 10px; gap: 16px; }
+.publish-page .publish-switch-copy { gap: 3px; }
+.publish-page .publish-switch-copy b { font-size: 12.5px; line-height: 1.5; }
+.publish-page .publish-switch-copy small { font-size: 11.5px; line-height: 1.5; }
+.publish-page .publish-network > .publish-body > small { display: block; border-top: 1px solid var(--line); padding-top: 11px; line-height: 1.5; }
+.publish-page .publish-lifecycle { gap: 0; padding: 0 16px; }
+.publish-page .publish-limit { gap: 8px; padding-bottom: 12px; font-variant-numeric: tabular-nums; }
+.publish-page .publish-limit input { height: 30px; width: 60px; }
+.publish-page.publish-page-settings > .publish-footer,
+.publish-page.publish-page-settings > .publish-settings-lock { width: 100%; max-width: 820px; }
+.publish-page .publish-footer { padding: 10px 12px; gap: 8px; }
+.publish-page .publish-footer > span { font-size: 12px; }
+
+/* Diagnostics stay attached to the port, with compact, distinct process actions. */
+.publish-page .publish-port-result { padding: 11px 12px; border-radius: 8px; background: var(--surface-2); }
+.publish-page .publish-port-result.is-blocked { border-color: color-mix(in srgb, var(--warn) 32%, var(--line)); }
+.publish-page .publish-port-summary { flex-wrap: nowrap; align-items: flex-start; gap: 12px; }
+.publish-page .publish-port-summary > div:first-child { gap: 4px; }
+.publish-page .publish-port-summary b { font-size: 12.5px; line-height: 1.4; }
+.publish-page .publish-port-summary b svg { color: var(--warn); }
+.publish-page .publish-port-summary b svg.spin { color: var(--muted); }
+.publish-page .publish-port-summary span { line-height: 1.5; }
+.publish-page .publish-port-owners { margin-top: 10px; }
+.publish-page .publish-port-owners > li { padding-block: 10px; flex-wrap: nowrap; gap: 12px; }
+.publish-page .publish-port-owner { flex: 1; gap: 4px; }
+.publish-page .publish-port-owner b { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; white-space: normal; overflow-wrap: anywhere; }
+.publish-page .publish-port-owner b small { margin: 0; white-space: nowrap; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.publish-page .publish-port-owner > small { font: 11px/1.5 "Cascadia Mono", Consolas, monospace; }
+.publish-page .publish-end-process { flex: none; min-height: 30px; white-space: nowrap; }
+.publish-page .publish-icon-button { width: 28px; min-width: 28px; height: 28px; padding: 0; justify-content: center; background: transparent; border-color: transparent; color: var(--muted); }
+.publish-page .publish-icon-button:hover { color: var(--text); border-color: var(--line); background: var(--surface-3); }
+
+/* Native dialogs share the app's solid surface and compact action rhythm. */
+.publish-page :is(.publish-qr, .publish-confirm) {
+  box-sizing: border-box;
+  max-height: calc(100dvh - 32px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--text);
+  overflow: auto;
+}
+.publish-page :is(.publish-qr, .publish-confirm)::backdrop { background: rgb(11 16 32 / 42%); }
+.publish-page .publish-qr { width: 280px; max-width: calc(100vw - 32px); }
+.publish-page .publish-qr > header { padding: 16px 16px 0; gap: 12px; }
+.publish-page .publish-qr h2 { font-size: 15px; font-weight: 680; line-height: 1.4; }
+.publish-page .publish-qr-image { display: grid; place-items: center; margin: 14px auto; width: 220px; max-width: calc(100% - 32px); aspect-ratio: 1; border-radius: 8px; background: #fff; }
+.publish-page .publish-qr img { width: 100%; height: auto; margin: 0; border-radius: 0; }
+.publish-page .publish-qr > code { margin: 0; padding: 0 20px 18px; font: 11px/1.65 "Cascadia Mono", Consolas, monospace; color: var(--muted); overflow-wrap: anywhere; }
+.publish-page .publish-confirm { width: 384px; max-width: calc(100vw - 32px); }
+.publish-page .publish-confirm > header { padding: 18px 18px 0; gap: 9px; align-items: center; }
+.publish-page .publish-confirm h2 { font-size: 15px; line-height: 1.5; }
+.publish-page .publish-confirm-body { gap: 12px; padding: 14px 18px 18px; }
+.publish-page .publish-confirm-target { padding: 10px 11px; gap: 4px 10px; border-radius: 8px; }
+.publish-page .publish-confirm-target strong { font-size: 12.5px; }
+.publish-page .publish-confirm-target span { font-size: 11px; }
+.publish-page .publish-confirm-body p { font-size: 12.5px; line-height: 1.6; }
+.publish-page .publish-confirm > .modal-actions { padding: 12px 18px; gap: 8px; background: var(--surface-2); }
+.publish-page .publish-confirm > .modal-actions .btn { min-height: 32px; }
+
+@container publication (max-width: 660px) {
+  .publish-page .publish-network-fields { grid-template-columns: minmax(0, 1fr) 200px; gap: 12px; }
+  .publish-page .publish-endpoint { grid-template-columns: 118px minmax(0, 1fr) 98px; gap: 8px; }
+  .publish-page .publish-endpoint-actions .publish-copy { width: 30px; padding: 0; }
+  .publish-page .publish-copy > span { display: none; }
+  .publish-page .publish-chat-list { grid-template-columns: 1fr; }
+}
+
+@container publication (max-width: 460px) {
+  .publish-page .publish-heading { gap: 8px; }
+  .publish-page .publish-heading-action { gap: 5px; }
+  .publish-page .publish-heading-action .btn { padding-inline: 8px; gap: 4px; }
+  .publish-page .publish-network-fields { grid-template-columns: 1fr; }
+  .publish-page .publish-status-head { gap: 10px; }
+  .publish-page .publish-endpoint { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+  .publish-page .publish-endpoint-actions { grid-column: 2; grid-row: 1; }
+  .publish-page .publish-address { grid-column: 1 / -1; grid-row: 2; }
+  .publish-page .publish-endpoint-error { grid-column: 1 / -1; }
+  .publish-page .publish-search { max-width: none; }
+  .publish-page .publish-footer > span { flex-basis: 100%; }
+}

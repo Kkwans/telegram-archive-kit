@@ -3263,6 +3263,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
   const [remoteProbe, setRemoteProbe] = useState<RemoteStatus | null>(null);
   const [remoteTesting, setRemoteTesting] = useState(false);
   const [remoteTools, setRemoteTools] = useState<RemoteTools | null>(null);
+  const [remoteToolsError, setRemoteToolsError] = useState("");
   const [rcloneOpen, setRcloneOpen] = useState(false);
   const [rcloneRemote, setRcloneRemote] = useState("");
   const [rcloneSub, setRcloneSub] = useState("");
@@ -3276,6 +3277,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
   const [sshAction, setSSHAction] = useState<"install" | "connect" | "switch">();
   const [sshError, setSSHError] = useState("");
   const sshRequest = useRef<AbortController | null>(null);
+  const remoteFormBusy = !!sshAction || rcloneBusy || remoteTesting || busy === "switch" || !!pendingPublishSwitch;
 
   const showDetail = (chat: ChatRow) => {
     setDetailLibraryKey(boot?.libraryKey ?? "");
@@ -3331,6 +3333,14 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [boot?.libraryRoot]);
 
+  const readRemoteTools = () => {
+    setRemoteToolsError("");
+    void call<RemoteTools>("remoteTools").then((tools) => {
+      setRemoteTools(tools);
+      if (tools.rcloneRemotes?.length) setRcloneRemote(tools.rcloneRemotes[0]);
+      setSSHAlias((current) => tools.sshAliases?.includes(current) ? current : tools.sshAliases?.[0] || "");
+    }).catch((error: Error) => setRemoteToolsError(error.message));
+  };
   const openRemote = () => {
     setRemoteOpen(true);
     setRemoteMode("saved");
@@ -3346,11 +3356,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
     setRcloneBusy(false);
     setSSHOpen(false);
     setSSHError("");
-    call<RemoteTools>("remoteTools").then((tools) => {
-      setRemoteTools(tools);
-      if (tools.rcloneRemotes?.length) setRcloneRemote(tools.rcloneRemotes[0]);
-      setSSHAlias((current) => tools.sshAliases?.includes(current) ? current : tools.sshAliases?.[0] || "");
-    }).catch(() => undefined);
+    readRemoteTools();
   };
   useEffect(() => {
     if (!remoteRequest) return;
@@ -3420,6 +3426,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
         setStagedMountRoot(root);
         setRemotePath(root);
         setRemoteProbe(await call<RemoteStatus>("remoteStatus", { root, newRemoteMount: true }));
+        setSSHOpen(false);
       }
     } catch (error) {
       if (!controller.signal.aborted) setSSHError((error as Error).message);
@@ -3959,7 +3966,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
 
       {remoteOpen && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeRemote(); }}>
-          <div ref={remoteDialog} className="modal remote-modal" role="dialog" aria-modal="true" aria-labelledby="remote-title" onKeyDown={(event) => {
+          <div ref={remoteDialog} className="modal remote-modal remote-workspace" role="dialog" aria-modal="true" aria-labelledby="remote-title" onKeyDown={(event) => {
             if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
             if (event.key === "Escape") { event.preventDefault(); closeRemote(); }
             if (event.key !== "Tab") return;
@@ -3981,7 +3988,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                 <X size={15} />
               </button>
             </div>
-            <div className="remote-body">
+            <div className="remote-body" key={remoteMode}>
               {remote && (
                 <div className={`remote-current ${remote.remote ? "is-remote" : ""} ${remote.reachable ? "" : "is-offline"}`}>
                   <span className="remote-current-icon"><Database size={16} /></span>
@@ -4006,25 +4013,32 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                 <RemoteConnections onAdd={() => setRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy} toast={toast} />
               ) : <>
               <div className="remote-add-head">
-                <button type="button" className="btn sm ghost" disabled={!!sshAction || rcloneBusy || remoteTesting || busy === "switch"} onClick={() => setRemoteMode("saved")}><ChevronLeft size={14} /> 已保存的连接</button>
+                <button type="button" className="btn sm ghost" disabled={remoteFormBusy} onClick={() => setRemoteMode("saved")}><ChevronLeft size={14} /> 已保存的连接</button>
                 <h3>添加连接</h3>
               </div>
 
+              <div className="remote-methods" role="group" aria-label="连接方式">
+                <button type="button" className={`remote-method ${!sshOpen && !rcloneOpen ? "selected" : ""}`} aria-pressed={!sshOpen && !rcloneOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(false); setRcloneOpen(false); }}><Network size={16} /><span><b>SMB / 网络盘</b><small>共享文件夹或已挂载盘符</small></span></button>
+                <button type="button" className={`remote-method ${sshOpen ? "selected" : ""}`} aria-label="SSH 连接" aria-pressed={sshOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(true); setRcloneOpen(false); }}><Server size={16} /><span><b>SSH / SFTP</b><small>主机配置与密钥连接</small></span></button>
+                <button type="button" className={`remote-method ${rcloneOpen ? "selected" : ""}`} aria-label="rclone 连接" aria-pressed={rcloneOpen} disabled={remoteFormBusy} onClick={() => { setRcloneOpen(true); setSSHOpen(false); }}><Cloud size={16} /><span><b>rclone</b><small>网盘、WebDAV 与对象存储</small></span></button>
+              </div>
+
               <div className="remote-save-settings">
-                <label className="plan-check"><input type="checkbox" checked={remoteSave} disabled={!!sshAction || rcloneBusy || busy === "switch"} onChange={(e) => setRemoteSave(e.target.checked)} /> 保存此连接</label>
+                <label className="plan-check"><input type="checkbox" checked={remoteSave} disabled={remoteFormBusy} onChange={(e) => setRemoteSave(e.target.checked)} /> 保存此连接</label>
                 {remoteSave && <div className="remote-save-fields">
-                  <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={!!sshAction || rcloneBusy || busy === "switch"} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
-                  <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={!!sshAction || rcloneBusy || busy === "switch"} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>
+                  <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
+                  <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>
                 </div>}
               </div>
 
+              {!sshOpen && !rcloneOpen && <>
               <div className="remote-form">
                 <label htmlFor="remote-path-input">网络位置或盘符</label>
                 <div className="remote-path-row">
                   <input
                     id="remote-path-input"
                     value={remotePath}
-                    disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch"}
+                    disabled={remoteFormBusy}
                     onChange={(e) => { setRemotePath(e.target.value); setRemoteProbe(null); setRemoteError(""); }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !remoteTesting) void testRemote(); }}
                     placeholder="\\NAS\share\TG Library 或 Z:\TG Library"
@@ -4032,7 +4046,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                   />
                   <button
                     className="btn ghost"
-                    disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch"}
+                    disabled={remoteFormBusy}
                     onClick={async () => {
                       try {
                         const picked = await pickFolder("remote-library", "选择网络位置或盘符");
@@ -4046,46 +4060,36 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                   </button>
                 </div>
                 <div className="remote-form-actions">
-                  <button className="btn" disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch" || !remotePath.trim()} onClick={() => void testRemote()}>
+                  <button className="btn" disabled={remoteFormBusy || !remotePath.trim()} onClick={() => void testRemote()}>
                     {remoteTesting ? <Loader2 size={13} className="spin" /> : <Wifi size={13} />}
                     {remoteTesting ? "正在测试…" : "测试连接"}
                   </button>
-                  <button className="btn primary" disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch" || !remoteProbe || !remoteProbe.reachable || !remoteProbe.writable} onClick={() => void useRemote()}>
-                    {remoteProbe?.reachable && remoteProbe.writable ? <CheckCircle2 size={13} /> : <WifiOff size={13} />}
-                    {remoteSave ? "连接并保存" : "切换到此库"}
+                  <button className="btn primary" disabled={remoteFormBusy || !remoteProbe || !remoteProbe.reachable || !remoteProbe.writable} onClick={() => void useRemote()}>
+                    {busy === "switch" ? <Loader2 size={13} className="spin" /> : remoteProbe?.reachable && remoteProbe.writable ? <CheckCircle2 size={13} /> : <WifiOff size={13} />}
+                    {busy === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "切换到此库"}
                   </button>
                 </div>
               </div>
 
               {remoteProbe && (
-                <div className={`remote-probe ${remoteProbe.reachable && remoteProbe.writable ? "ok" : "bad"}`}>
+                <div className={`remote-probe ${remoteProbe.reachable && remoteProbe.writable ? "ok" : "bad"}`} role="status">
                   <span className="remote-probe-icon">
                     {remoteProbe.reachable && remoteProbe.writable ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
                   </span>
                   <div>
-                    <b>{remoteProbe.reachable && remoteProbe.writable ? "连接正常，可以切换" : "还不可用"}</b>
+                    <b>{remoteProbe.reachable && remoteProbe.writable ? "连接正常，可以切换" : remoteProbe.reachable ? "位置只读，暂时无法作为档案库" : "无法访问此位置"}</b>
                     <span>{pathKindLabel(remoteProbe.kind)} · {remoteProbe.latencyMs} ms{remoteProbe.freeKnown ? ` · ${bytes(remoteProbe.freeBytes)} 可用` : " · 空间未知"}</span>
                     {remoteProbe.error && <em>{remoteProbe.error}</em>}
+                    {remoteProbe.reachable && !remoteProbe.writable && <span>请检查目录写入权限，再重新测试连接。</span>}
                   </div>
                 </div>
               )}
+              </>}
               {remoteError && <div className="plan-inline-notice" role="alert"><AlertTriangle size={15} /><span>{remoteError}</span></div>}
+              {!sshOpen && sshError && <div className="plan-inline-notice" role="alert"><AlertTriangle size={15} /><span>{sshError}</span></div>}
 
-              <div className="remote-options-head">
-                <h3>没有挂载网络位置？</h3>
-                <p>可以在这里连接 SSH 档案库，或使用已配置的 rclone remote。</p>
-              </div>
-              <div className="remote-options">
-                <div className="remote-option">
-                  <span className="remote-option-icon"><Server size={17} /></span>
-                  <div className="remote-option-main">
-                    <b>SSH / SFTP</b>
-                    <span>使用 Windows OpenSSH 的主机配置和密钥连接 NAS。</span>
-                  </div>
-                  <button type="button" className="btn sm ghost" aria-expanded={sshOpen} disabled={!remoteTools || Boolean(sshAction) || rcloneBusy} onClick={() => { setSSHOpen(!sshOpen); setRcloneOpen(false); }}>
-                    <Network size={12} /> SSH 连接
-                  </button>
-                </div>
+              {(sshOpen || rcloneOpen) && !remoteTools && <div className="plan-inline-notice" role={remoteToolsError ? "alert" : "status"}>{remoteToolsError ? <AlertTriangle size={14} /> : <Loader2 size={14} className="spin" />}<span>{remoteToolsError || "正在检查连接组件…"}</span>{remoteToolsError && <button type="button" className="btn sm ghost" onClick={readRemoteTools}>重新检查</button>}</div>}
+              {rcloneOpen && remoteTools && <>
                 <div className="remote-option">
                   <span className="remote-option-icon"><Cloud size={17} /></span>
                   <div className="remote-option-main">
@@ -4099,23 +4103,19 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                       <span>已安装，但还没有 remote；先运行 <code>rclone config</code> 创建。</span>
                     )}
                   </div>
-                  {remoteTools?.rcloneRemotes?.length ? (
-                    <button className="btn sm ghost" disabled={Boolean(sshAction)} onClick={() => { setRcloneOpen((v) => !v); setSSHOpen(false); }}>
-                      <Server size={12} /> 挂载 remote
-                    </button>
-                  ) : remoteTools?.rclone ? (
+                  {remoteTools.rclone && remoteTools.winFsp && !remoteTools.rcloneRemotes?.length ? (
                     <button className="btn sm ghost" onClick={() => copyRemoteCommand("rclone config")}>
                       <Copy size={12} /> 配置 remote
                     </button>
-                  ) : (
+                  ) : (!remoteTools.rclone || !remoteTools.winFsp) ? (
                     <button className="btn sm ghost" onClick={() => copyRemoteCommand(remoteTools?.winFsp ? "winget install Rclone.Rclone" : "winget install Rclone.Rclone\nwinget install WinFsp.WinFsp")}>
                       <Copy size={12} /> 复制安装命令
                     </button>
-                  )}
+                  ) : null}
                 </div>
-              </div>
+              </>}
               {sshOpen && remoteTools && (
-                <form className="rclone-form" onSubmit={(event) => { event.preventDefault(); void mountSSH(); }}>
+                <form className="rclone-form remote-ssh-form" onSubmit={(event) => { event.preventDefault(); if (!remoteFormBusy) void mountSSH(); }}>
                   {!remoteTools.openSSH ? (
                     <p role="status">请在 Windows 的「可选功能」启用 OpenSSH 客户端，然后重新打开网络位置。</p>
                   ) : !remoteTools.rclone || !remoteTools.winFsp ? (
@@ -4127,17 +4127,18 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                     </>
                   ) : (
                     <>
+                      <div className="rclone-form-head"><b>SSH / SFTP 连接</b><span>使用 Windows OpenSSH 的主机配置和密钥。</span></div>
                       <div className="rclone-fields">
                         <div className="rclone-field grow">
                           <span>SSH 主机</span>
-                          {!!remoteTools.sshAliases?.length && <Select ariaLabel="SSH 主机配置" value={sshAlias} disabled={Boolean(sshAction)} onChange={setSSHAlias} options={[...remoteTools.sshAliases.map((alias) => ({ value: alias, label: alias })), { value: "", label: "手动输入" }]} />}
-                          {!sshAlias && <input value={sshTarget} onChange={(e) => setSSHTarget(e.target.value)} disabled={Boolean(sshAction)} placeholder="主机别名或 用户名@主机" spellCheck={false} aria-label="SSH 主机" />}
+                          {!!remoteTools.sshAliases?.length && <Select ariaLabel="SSH 主机配置" value={sshAlias} disabled={remoteFormBusy} onChange={setSSHAlias} options={[...remoteTools.sshAliases.map((alias) => ({ value: alias, label: alias })), { value: "", label: "手动输入" }]} />}
+                          {!sshAlias && <input value={sshTarget} onChange={(e) => setSSHTarget(e.target.value)} disabled={remoteFormBusy} placeholder="主机别名或 用户名@主机" spellCheck={false} aria-label="SSH 主机" />}
                         </div>
                         <label className="rclone-field grow">
                           <span>NAS 档案库目录</span>
-                          <input value={sshDirectory} onChange={(e) => setSSHDirectory(e.target.value)} disabled={Boolean(sshAction)} placeholder="留空使用 SSH 登录目录" spellCheck={false} />
+                          <input value={sshDirectory} onChange={(e) => setSSHDirectory(e.target.value)} disabled={remoteFormBusy} placeholder="留空使用 SSH 登录目录" spellCheck={false} />
                         </label>
-                        <button type="submit" className="btn primary rclone-mount-btn" disabled={Boolean(sshAction) || !(sshAlias || sshTarget.trim())}>
+                        <button type="submit" className="btn primary rclone-mount-btn" disabled={remoteFormBusy || !(sshAlias || sshTarget.trim())}>
                           {sshAction && <Loader2 size={13} className="spin" />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "连接并使用"}
                         </button>
                       </div>
@@ -4147,7 +4148,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                   {sshError && <p role="alert">{sshError}</p>}
                 </form>
               )}
-              {rcloneOpen && (
+              {rcloneOpen && remoteTools?.rclone && remoteTools.winFsp && !!remoteTools.rcloneRemotes?.length && (
                 <div className="rclone-form">
                   <div className="rclone-form-head">
                     <b>挂载 rclone remote</b>
@@ -4159,24 +4160,25 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
                       <Select
                         ariaLabel="选择 rclone remote"
                         value={rcloneRemote}
+                        disabled={remoteFormBusy}
                         onChange={setRcloneRemote}
                         options={(remoteTools?.rcloneRemotes || []).map((r) => ({ value: r, label: r }))}
                       />
                     </div>
                     <div className="rclone-field grow">
                       <span>子路径</span>
-                      <input value={rcloneSub} onChange={(e) => setRcloneSub(e.target.value)} placeholder="TG Library（可留空）" spellCheck={false} aria-label="rclone 子路径" />
+                      <input value={rcloneSub} disabled={remoteFormBusy} onChange={(e) => setRcloneSub(e.target.value)} placeholder="TG Library（可留空）" spellCheck={false} aria-label="rclone 子路径" />
                     </div>
                     <div className="rclone-field drive">
                       <span>盘符</span>
-                      <input value={rcloneDrive} onChange={(e) => setRcloneDrive(e.target.value.slice(0, 2).toUpperCase())} placeholder="Z" maxLength={2} spellCheck={false} aria-label="rclone 挂载盘符" />
+                      <input value={rcloneDrive} disabled={remoteFormBusy} onChange={(e) => setRcloneDrive(e.target.value.slice(0, 2).toUpperCase())} placeholder="Z" maxLength={2} spellCheck={false} aria-label="rclone 挂载盘符" />
                     </div>
-                    <button className="btn primary rclone-mount-btn" disabled={rcloneBusy || !rcloneRemote} onClick={() => void mountRclone()}>
+                    <button className="btn primary rclone-mount-btn" disabled={remoteFormBusy || !rcloneRemote} onClick={() => void mountRclone()}>
                       {rcloneBusy ? <Loader2 size={13} className="spin" /> : <Network size={13} />}
                       {rcloneBusy ? "挂载中…" : "挂载并测试"}
                     </button>
                   </div>
-                  <p>挂载成功后会自动填入上方路径；TAK 退出时会结束自己启动的 rclone 进程。</p>
+                  <p>挂载成功后进入网络盘路径，确认测试结果后切换。TAK 退出时会结束自己启动的 rclone 进程。</p>
                 </div>
               )}
               <p className="remote-note">SMB 连接使用 Windows 凭据，SSH 连接使用 OpenSSH 配置。远程库的缩略图与视频播放缓存保存在本机。</p>
@@ -4338,6 +4340,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: Page
 
       <ConfirmDialog
         open={Boolean(pendingPublishSwitch)}
+        compact
         title="停止网页部署并切换档案库？"
         message="当前网页地址会关闭，正在浏览的设备将断开。"
         confirmLabel="停止并切换"
