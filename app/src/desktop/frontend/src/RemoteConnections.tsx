@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Cloud, Loader2, Network, Pencil, Plus, RefreshCw, Server, Trash2, WifiOff, X } from "lucide-react";
+import { AlertCircle, Cloud, Loader2, Network, Pencil, Plus, Server, Trash2, WifiOff, X } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime } from "./format";
 import { call } from "./rpc";
@@ -150,7 +150,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, toast }: {
   });
 
   return <section className="saved-connections" aria-label="已保存的网络连接">
-    <div className="saved-connections-head"><div><h3>已保存的连接{items && <span className="saved-connection-count">{items.length}</span>}</h3><p>快速打开常用档案库；自动重连仅恢复当前库。</p></div><button type="button" className="btn sm primary" disabled={!!pending || !!waiting} onClick={onAdd}><Plus size={13} /> 添加连接</button></div>
+    <div className="saved-connections-head"><h3>已保存的连接{items && <span className="saved-connection-count">{items.length}</span>}</h3><button type="button" className="btn sm primary" disabled={!!pending || !!waiting} onClick={onAdd}><Plus size={13} /> 添加连接</button></div>
     {readError && <div className="plan-inline-notice" role="alert"><AlertCircle size={14} /><span>{readError}</span><button type="button" className="btn sm ghost" onClick={() => void read()}>重新读取</button></div>}
     {!items && !readError && <div className="panel plan-loading" role="status" aria-label="正在读取已保存的连接">{[0, 1].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div>}
     {items && !items.length && <div className="saved-connections-empty"><Network size={24} /><b>还没有保存的连接</b><span>连接档案库时勾选「保存此连接」，即可在这里快速打开。</span></div>}
@@ -169,16 +169,16 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, toast }: {
             <span className="saved-connection-icon"><Icon size={16} /></span>
             <div className="saved-connection-name"><b title={item.label || location}>{item.label || location}</b><span title={location}>{kind} · {location}</span></div>
             <div className="saved-connection-status"><span className={`task-state plan-status ${inProgress ? "running" : entry.tone}`}>{inProgress ? <Loader2 size={12} className="spin" /> : <span className="plan-status-dot" />}{inProgress && item.status !== "checking" ? "连接中" : entry.label}</span>{item.active && <span className="saved-active">当前库</span>}</div>
-            <label className="saved-auto"><span>自动重连</span><span className={`switch ${item.autoReconnect ? "on" : ""}`}><input type="checkbox" role="switch" aria-label={`${item.label || location} 自动重连`} checked={item.autoReconnect} disabled={busy || inProgress} onChange={(event) => void perform(item.id, "remoteConnectionSetAuto", { id: item.id, autoReconnect: event.target.checked }, () => undefined)} /><i /></span></label>
+            <label className="saved-auto" title="仅当此库为当前库时随 TAK 启动自动重连"><span>自动重连</span><span className={`switch ${item.autoReconnect ? "on" : ""}`}><input type="checkbox" role="switch" aria-label={`${item.label || location} 自动重连`} aria-description="仅当此库为当前库时随 TAK 启动自动重连" checked={item.autoReconnect} disabled={busy || inProgress} onChange={(event) => void perform(item.id, "remoteConnectionSetAuto", { id: item.id, autoReconnect: event.target.checked }, () => undefined)} /><i /></span></label>
             <div className="saved-connection-actions">
-              <span className="saved-connection-open">{!ready && <button type="button" className="btn sm ghost" disabled={busy || inProgress} onClick={() => reconnect(item.id)}>{inProgress ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}{inProgress ? "连接中…" : item.active ? "重新连接" : "打开档案库"}</button>}</span>
+              <span className="saved-connection-open">{!ready && <button type="button" className="btn sm saved-connection-connect" disabled={busy || inProgress} onClick={() => reconnect(item.id)}>{inProgress && <Loader2 size={12} className="spin" />}{inProgress ? "连接中…" : item.active ? "重新连接" : "打开档案库"}</button>}</span>
               <button type="button" className="icon-btn" title="重命名" aria-label={`重命名 ${item.label || location}`} aria-expanded={rename?.id === item.id} disabled={busy || inProgress} onClick={(event) => { renameTrigger.current = event.currentTarget; setRename({ id: item.id, label: item.label || location }); }}><Pencil size={13} /></button>
               <button type="button" className="icon-btn danger" title="移除连接" aria-label={`移除连接 ${item.label || location}`} disabled={busy || inProgress} onClick={() => setForget(item)}><Trash2 size={13} /></button>
             </div>
           </div>
           {rename?.id === item.id && <form className="saved-connection-edit" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) closeRename(); } }} onSubmit={(event) => { event.preventDefault(); if (rename.label.trim()) void perform(item.id, "remoteConnectionRename", { id: item.id, label: rename.label.trim() }, () => { closeRename(); toast("已更新连接名称"); }); }}>
-            <label htmlFor="saved-connection-label">连接名称</label><input id="saved-connection-label" type="text" autoFocus value={rename.label} maxLength={100} disabled={busy} onChange={(event) => setRename({ id: item.id, label: event.target.value })} />
-            <button type="submit" className="btn sm primary" disabled={busy || !rename.label.trim()}>{pending === item.id ? <Loader2 size={13} className="spin" /> : null}保存名称</button><button type="button" className="icon-btn" title="取消重命名" aria-label="取消重命名" onClick={closeRename} disabled={busy}><X size={13} /></button>
+            <div className="saved-connection-edit-field"><label htmlFor="saved-connection-label">连接名称</label><input id="saved-connection-label" type="text" autoFocus value={rename.label} maxLength={100} disabled={busy} onChange={(event) => setRename({ id: item.id, label: event.target.value })} /></div>
+            <div className="saved-connection-edit-actions"><button type="submit" className="btn sm primary" disabled={busy || !rename.label.trim()}>{pending === item.id ? <Loader2 size={13} className="spin" /> : null}保存名称</button><button type="button" className="icon-btn" title="取消重命名" aria-label="取消重命名" onClick={closeRename} disabled={busy}><X size={13} /></button></div>
           </form>}
           {(message || item.nextRetryAt) && <div className="saved-connection-message" role={actionError?.id === item.id ? "alert" : "status"}><WifiOff size={13} /><span>{message}{item.nextRetryAt ? ` 下次重试 ${dateTime(item.nextRetryAt).replace(/:\d{2}$/, "")}。` : ""}</span>{item.status === "missing_tools" && <button type="button" className="plan-text-button" onClick={onAdd}>查看组件</button>}</div>}
         </article>;
