@@ -31,8 +31,13 @@ type sessionLock struct {
 	h    syscall.Handle
 	root string
 
-	stop chan struct{}
-	done chan struct{}
+	stop            chan struct{}
+	done            chan struct{}
+	identityMu      sync.Mutex
+	identity        string
+	identityStop    chan struct{}
+	identityDone    chan struct{}
+	keepSessionFile bool
 }
 
 var heldLibraryLocks sync.Map // fingerprint -> *sessionLock
@@ -53,6 +58,56 @@ func libraryFingerprint(root string) string {
 
 func libraryMutexName(root string) string {
 	return `Local\TAK.Library.` + libraryFingerprint(root)
+}
+
+func identityMutexName(id string) string { return `Local\TAK.LibraryID.` + id }
+
+func publishLibraryID(source, target string) error {
+	from, err := syscall.UTF16PtrFromString(source)
+	if err != nil {
+		return err
+	}
+	to, err := syscall.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	return syscall.MoveFile(from, to)
+}
+
+func (l *sessionLock) addIdentity(id string) error {
+	l.identityMu.Lock()
+	defer l.identityMu.Unlock()
+	if l.identity == id {
+		return nil
+	}
+	handle, err := createNamedMutex(identityMutexName(id))
+	if err != nil {
+		return err
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	acquired := make(chan bool, 1)
+	go func() {
+		defer close(done)
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		defer syscall.CloseHandle(handle)
+		state, err := syscall.WaitForSingleObject(handle, 0)
+		ok := err == nil && (state == syscall.WAIT_OBJECT_0 || state == waitAbandoned)
+		acquired <- ok
+		if ok {
+			<-stop
+			_, _, _ = procReleaseMutex.Call(uintptr(handle))
+		}
+	}()
+	if !<-acquired {
+		return fmt.Errorf("档案库正由另一个进程使用")
+	}
+	if l.identityStop != nil {
+		close(l.identityStop)
+		<-l.identityDone
+	}
+	l.identity, l.identityStop, l.identityDone = id, stop, done
+	return nil
 }
 
 func sessionFilePath(root string) string {
@@ -115,6 +170,10 @@ func removeSessionFileIfOwner(root string) {
 // acquireSessionLock takes ownership of the library mutex on a dedicated
 // OS thread (mutex ownership is thread-affine) and keeps it held until release.
 func acquireSessionLock(root string) (*sessionLock, error) {
+	return acquireSessionLockAt(root, nil, "")
+}
+
+func acquireSessionLockAt(root string, previous *sessionLock, expectedID string) (*sessionLock, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, nil
 	}
@@ -123,6 +182,12 @@ func acquireSessionLock(root string) (*sessionLock, error) {
 		return nil, err
 	}
 	l := &sessionLock{h: h, root: root, stop: make(chan struct{}), done: make(chan struct{})}
+	if id, err := ReadLibraryID(root); err == nil && (previous == nil || previous.identity != id) {
+		if err := l.addIdentity(id); err != nil {
+			syscall.CloseHandle(h)
+			return nil, err
+		}
+	}
 	acquired := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -134,26 +199,54 @@ func acquireSessionLock(root string) (*sessionLock, error) {
 			close(l.done)
 			return
 		}
+		if expectedID != "" {
+			if id, err := ReadLibraryID(root); err != nil || id != expectedID {
+				_, _, _ = procReleaseMutex.Call(uintptr(h))
+				syscall.CloseHandle(h)
+				acquired <- ErrLibraryIdentity
+				close(l.done)
+				return
+			}
+		}
 		heldLibraryLocks.Store(libraryFingerprint(root), l)
 		writeSessionFile(root)
 		acquired <- nil
 		<-l.stop
-		removeSessionFileIfOwner(root)
+		if !l.keepSessionFile {
+			removeSessionFileIfOwner(root)
+		}
 		heldLibraryLocks.Delete(libraryFingerprint(root))
 		_, _, _ = procReleaseMutex.Call(uintptr(h))
 		syscall.CloseHandle(h)
 		close(l.done)
 	}()
 	if err := <-acquired; err != nil {
+		l.release()
 		return nil, err
 	}
 	return l, nil
+}
+
+func (l *sessionLock) transferIdentityFrom(previous *sessionLock, id string) {
+	if previous == nil || id == "" || previous.identity != id || l.identity == id {
+		return
+	}
+	l.identity, l.identityStop, l.identityDone = previous.identity, previous.identityStop, previous.identityDone
+	previous.identity, previous.identityStop, previous.identityDone = "", nil, nil
+	previous.keepSessionFile = true
 }
 
 func (l *sessionLock) release() {
 	if l == nil {
 		return
 	}
+	l.identityMu.Lock()
+	if l.identityStop != nil {
+		close(l.identityStop)
+		<-l.identityDone
+		l.identityStop = nil
+	}
+	l.identityMu.Unlock()
 	select {
 	case <-l.stop:
 	default:
@@ -174,7 +267,11 @@ func libraryInUse(root string) (bool, sessionFile) {
 	if _, ok := heldLibraryLocks.Load(libraryFingerprint(root)); ok {
 		return false, sessionFile{}
 	}
-	h, err := createNamedMutex(libraryMutexName(root))
+	name := libraryMutexName(root)
+	if id, err := ReadLibraryID(root); err == nil {
+		name = identityMutexName(id)
+	}
+	h, err := createNamedMutex(name)
 	if err != nil {
 		return false, sessionFile{}
 	}
@@ -200,6 +297,11 @@ func libraryInUse(root string) (bool, sessionFile) {
 }
 
 func (a *App) guardWritable() error {
+	if expected := a.Settings.ExpectedLibraryID; expected != "" {
+		if id, err := ReadLibraryID(a.Settings.LibraryRoot); err != nil || id != expected {
+			return ErrLibraryIdentity
+		}
+	}
 	if os.Getenv("TAK_ALLOW_CONCURRENT") == "1" {
 		return nil
 	}

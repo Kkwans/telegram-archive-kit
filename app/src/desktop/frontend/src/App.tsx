@@ -363,11 +363,14 @@ export default function App() {
 
   useEffect(() => {
     refresh();
+    const remoteChanged = () => refresh();
+    window.addEventListener("tak:remote-library-changed", remoteChanged);
     const timer = window.setInterval(() => {
       if (!libraryLoad.current && !document.hidden) refresh();
     }, 60_000);
     return () => {
       window.clearInterval(timer);
+      window.removeEventListener("tak:remote-library-changed", remoteChanged);
       libraryLoad.current?.abort();
     };
   }, [refresh]);
@@ -480,7 +483,10 @@ export default function App() {
   }, []);
 
   const [onlineRequest, setOnlineRequest] = useState<{ filter: string; seq: number } | null>(null);
+  const [remoteRequest, setRemoteRequest] = useState(0);
   const [taskFocus, setTaskFocus] = useState("");
+  const [taskTab, setTaskTab] = useState<"records" | "plans">("records");
+  const [expandedPlan, setExpandedPlan] = useState("");
   const go = useCallback((next: string) => {
     if (page === "chats" && next === "settings" && selected) {
       const area = scrollArea.current;
@@ -498,7 +504,8 @@ export default function App() {
     }
     setSideTip(null);
     setAppTip(null);
-    setPage(next);
+    if (next === "remote") setRemoteRequest((value) => value + 1);
+    setPage(next === "remote" ? "library" : next);
   }, [page, selected]);
   useEffect(() => {
     const open = () => go("publish");
@@ -950,12 +957,20 @@ export default function App() {
             {(page === "chats" || (page === "settings" && galleryReturn.current !== null && galleryReturn.current.libraryKey === boot?.libraryKey)) && (
               <Activity mode={page === "chats" ? "visible" : "hidden"}><Chats ctx={ctx} /></Activity>
             )}
-            {page === "library" && <Library ctx={ctx} />}
+            {page === "library" && <Library ctx={ctx} remoteRequest={remoteRequest} onRemoteHandled={() => setRemoteRequest(0)} />}
             {page === "publish" && <WebPublication ctx={ctx} />}
             {page === "account" && <Account ctx={ctx} />}
             {page === "tasks" && (
               <TasksPage
                 tasks={tasks}
+                boot={boot}
+                tab={taskTab}
+                onTabChange={setTaskTab}
+                expandedPlan={expandedPlan}
+                onExpandPlan={setExpandedPlan}
+                onAccount={() => go("account")}
+                onLibrary={() => go("library")}
+                onRemote={() => go("remote")}
                 focusTaskId={taskFocus}
                 onFocusHandled={() => setTaskFocus("")}
                 onRefresh={refresh}

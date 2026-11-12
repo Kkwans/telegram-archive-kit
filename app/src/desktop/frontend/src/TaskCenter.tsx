@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowLeft,
+  CalendarClock,
   Check,
   CheckCircle2,
   ChartPie,
@@ -34,12 +35,14 @@ import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
-import type { TaskDetail, TaskInfo } from "./types";
+import { SyncPlans } from "./SyncPlans";
+import type { Bootstrap, TaskDetail, TaskInfo } from "./types";
 import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
 
 const KIND_META: Record<string, { label: string; group: string; icon: typeof Download }> = {
   sync: { label: "下载", group: "download", icon: Download },
   "sync-all": { label: "批量下载", group: "download", icon: Download },
+  "sync-plan": { label: "计划同步", group: "download", icon: CalendarClock },
   "import-json": { label: "导入 JSON", group: "import", icon: FileJson },
   "import-official": { label: "官方导出", group: "import", icon: FolderInput },
   export: { label: "导出", group: "export", icon: FolderInput },
@@ -56,6 +59,7 @@ function kindMeta(kind: string) {
 function taskTitle(task: TaskInfo): string {
   if (task.kind === "sync") return "下载聊天";
   if (task.kind === "sync-all") return "批量下载";
+  if (task.kind === "sync-plan") return task.title || "计划同步";
   if (task.kind === "refresh") return "重建网页";
   if (task.kind === "refresh-all") return "重建全部网页";
   if (task.kind === "export") return "导出聊天";
@@ -105,7 +109,7 @@ const TaskElapsed = memo(function TaskElapsed({
 });
 
 function noNewMedia(task: TaskInfo | TaskDetail): boolean {
-  return kindMeta(task.kind).group === "download" && task.state !== "failed" && task.state !== "stopped" && !task.total && !task.bytes;
+  return kindMeta(task.kind).group === "download" && task.state !== "failed" && task.state !== "stopped" && !task.total && !task.bytes && !(task.kind === "sync-plan" && task.messages);
 }
 
 function modeLabel(mode?: string): string {
@@ -323,7 +327,7 @@ interface DownloadConfigDraft {
   reconnectTimeout: string;
 }
 
-export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; toast: (msg: string, err?: boolean) => void }) {
+export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string) => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
@@ -337,6 +341,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   });
   const [transfer, setTransfer] = useState<DownloadConfigDraft | null>(null);
   const meta = kindMeta(task.kind);
+  const planned = task.kind === "sync-plan";
   const running = task.state === "running";
   const failed = task.state === "failed";
   const partial = task.state === "partial";
@@ -392,6 +397,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
     doneSize: doneSizes[index],
   }));
   const recent = completed.slice(0, 5);
+  const showTransfer = !planned || totalCount > 0 || active.length > 0 || series.length > 0;
   const pageSize = 10;
   const recordPages = Math.max(1, Math.ceil(completed.length / pageSize));
   const safePage = Math.min(recordPage, recordPages);
@@ -418,7 +424,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
   };
 
   useEffect(() => {
-    if (!running) return;
+    if (!running || !showTransfer) return;
     call<Partial<DownloadConfigDraft>>("getSettings")
       .then((settings) => {
         setTransfer({
@@ -434,7 +440,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         });
       })
       .catch(() => undefined);
-  }, [running, task.id, task.concurrent, task.threads]);
+  }, [running, showTransfer, task.id, task.concurrent, task.threads]);
 
   const openConfig = () => {
     const base = transfer ?? configDraft;
@@ -535,18 +541,19 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           <ArrowLeft size={14} /> 返回任务中心
         </button>
         <div className="actions">
-          {running && !pausing && (
+          {planned && <button className="btn ghost" onClick={() => onOpenPlans(task.planId)}><CalendarClock size={13} /> 查看同步计划</button>}
+          {!planned && running && !pausing && (
             <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
             </button>
           )}
-          {task.slug && (
+          {!planned && task.slug && (
             <button className="btn ghost" disabled={!!busyAction} onClick={() => void rebuild()} title="重新生成数据、网页与缺失的视频封面">
               {busyAction === "rebuild" ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
               重建网页
             </button>
           )}
-          {task.slug && (
+          {!planned && task.slug && (
             <button
               className="btn ghost"
               onClick={() => call("openLibrary", { slug: task.slug }).catch((e: Error) => toast(e.message, true))}
@@ -554,19 +561,19 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
               <FolderOpen size={13} /> 打开归档库
             </button>
           )}
-          {(running || paused || partial) && (
+          {!planned && (running || paused || partial) && (
             <button className="btn stop-action" disabled={!!busyAction} onClick={() => void stop()}>
               {busyAction === "stop" ? <Loader2 size={13} className="spin" /> : <Square size={13} />}
               结束任务
             </button>
           )}
-          {task.slug && (failed || partial || paused) && (
+          {!planned && task.slug && (failed || partial || paused) && (
             <button className="btn primary" disabled={!!busyAction} onClick={() => void resume()}>
               {busyAction === "resume" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
               继续下载
             </button>
           )}
-          {running && (pausing ? (
+          {!planned && running && (pausing ? (
             <button className="btn warn" disabled>
               <Loader2 size={13} className="spin" /> 正在暂停…
             </button>
@@ -591,11 +598,11 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           {running ? <b>{Math.round(percent)}%</b> : stopped ? <Square size={28} strokeWidth={2.2} /> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
-          <span className="download-hero-kicker">下载聊天</span>
+          <span className="download-hero-kicker">{planned ? "计划同步" : "下载聊天"}</span>
           <div className="download-hero-title">
             <h2>{task.chat || taskTitle(task)}</h2>
           </div>
-          {running ? (
+          {running && showTransfer ? (
             <div className="download-hero-configline">
               <span className="download-config-chip">并发 <b>{concurrent}</b> 个文件</span>
               <span className="download-config-chip">每文件 <b>{threads}</b> 线程</span>
@@ -605,11 +612,11 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           )}
           <div className="download-hero-info">
             <span>开始 <b>{dateTime(task.startedAt)}</b></span>
-            <span>峰值速度 <b>{rate(task.peakSpeed ?? 0)}</b></span>
+            {showTransfer && <span>峰值速度 <b>{rate(task.peakSpeed ?? 0)}</b></span>}
             {task.finishedAt ? <span>结束 <b>{dateTime(task.finishedAt)}</b></span> : null}
           </div>
         </div>
-        {running && (
+        {running && showTransfer && (
           <div className="download-hero-meter running">
             <span className="download-meter-label"><i />实时速度</span>
             <div className="download-meter-value"><b>{speed.value}</b><em>{speed.unit}</em></div>
@@ -626,21 +633,24 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         )}
       </section>
 
-      <section className={`stat-grid download-stats ${running ? "five" : "four"}`}>
-        {running && <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>}
+      <section className={`stat-grid download-stats ${showTransfer ? running ? "five" : "four" : "plan-summary-stats"}`}>
+        {!showTransfer && <div className="stat"><span>新增消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>}
+        {running && showTransfer && <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>}
+        {showTransfer && <>
         <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
         <div className="stat">
           <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
           <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
         </div>
         <div className="stat"><span>已下载 / 总媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
+        </>}
         <div className="stat">
           <span>{running ? "预计还需" : "任务耗时"}</span>
           <div><b>{running ? ((task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--") : fmtDuration(elapsed)}</b></div>
         </div>
       </section>
 
-      <section className="panel download-media-panel">
+      {showTransfer && <section className="panel download-media-panel">
         <div className="panel-head">
           <h3><ChartPie size={14} /> 本次媒体构成</h3>
           <span className="meta">已下载 {recordedCount.toLocaleString()} / {totalCount.toLocaleString()} 个</span>
@@ -661,9 +671,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
             );
           })}
         </div>
-      </section>
+      </section>}
 
-      {running && (
+      {running && showTransfer && (
         <section className="panel download-config-panel">
           <div className="panel-head">
             <h3><SlidersHorizontal size={14} /> 下载配置</h3>
@@ -677,7 +687,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         </section>
       )}
 
-      {running && (
+      {running && showTransfer && (
         <section className="panel download-active-panel">
           <div className="panel-head">
             <h3><Download size={14} /> 正在下载</h3>
@@ -726,15 +736,15 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         </section>
       )}
 
-      <section className="panel">
+      {showTransfer && <section className="panel">
         <div className="panel-head">
           <h3><Activity size={14} /> 速度曲线</h3>
           <span className="chart-legend"><i className="now" /> 实时 <i className="avg" /> 平均</span>
         </div>
         <TaskSpeedChart task={task} />
-      </section>
+      </section>}
 
-      <section className="panel">
+      {showTransfer && <section className="panel">
         <div className="panel-head">
           <h3><CheckCircle2 size={14} /> 最近完成</h3>
           {completed.length > 0 && (
@@ -767,7 +777,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
         ) : (
           <div className="download-empty"><CheckCircle2 size={14} /> {running ? "还没有完成的文件。" : "还没有完成记录。"}</div>
         )}
-      </section>
+      </section>}
 
       <section className="panel">
         <div className="panel-head">
@@ -781,9 +791,10 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
           <div><span>开始时间</span><b>{dateTimePrecise(task.startedAt)}</b></div>
           <div><span>结束时间</span><b>{task.finishedAt ? dateTimePrecise(task.finishedAt) : "进行中"}</b></div>
           <div><span>耗时</span><b>{fmtDuration(elapsed)}</b></div>
-          <div><span>已下载 / 总媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>
+          {planned && showTransfer && <div><span>新增消息</span><b>{(task.messages ?? 0).toLocaleString()} 条</b></div>}
+          {showTransfer && <div><span>已下载 / 总媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>}
           <div><span>任务 ID</span><b className="mono">{task.id}</b></div>
-          <div><span>峰值速度</span><b>{rate(task.peakSpeed ?? 0)}</b></div>
+          {showTransfer && <div><span>峰值速度</span><b>{rate(task.peakSpeed ?? 0)}</b></div>}
           <div className="wide"><span>结果</span><b className={failed ? "danger-text" : ""}>{result}</b></div>
         </div>
       </section>
@@ -955,6 +966,14 @@ export function TaskDetailView({ task, onBack, onOpenTask, toast }: { task: Task
 
 export function TasksPage({
   tasks,
+  boot,
+  tab,
+  onTabChange,
+  expandedPlan,
+  onExpandPlan,
+  onAccount,
+  onLibrary,
+  onRemote,
   focusTaskId = "",
   onFocusHandled,
   onRefresh,
@@ -963,6 +982,14 @@ export function TasksPage({
   toast,
 }: {
   tasks: TaskInfo[];
+  boot: Bootstrap | null;
+  tab: "records" | "plans";
+  onTabChange: (tab: "records" | "plans") => void;
+  expandedPlan: string;
+  onExpandPlan: (id: string) => void;
+  onAccount: () => void;
+  onLibrary: () => void;
+  onRemote: () => void;
   focusTaskId?: string;
   onFocusHandled?: () => void;
   onRefresh: () => void;
@@ -1023,6 +1050,7 @@ export function TasksPage({
 
   useEffect(() => {
     if (!focusTaskId) return;
+    onTabChange("records");
     void loadTask(focusTaskId);
     onFocusHandled?.();
     // The focus id is a one-shot navigation intent from another page.
@@ -1093,7 +1121,7 @@ export function TasksPage({
   }, [modalTask?.id, modalTask?.state, selectionVersion]);
 
   if (active) {
-    return <TaskDetailView key={active.id} task={active} onBack={() => { selection.current++; setActive(null); }} onOpenTask={(taskID) => void loadTask(taskID)} toast={toast} />;
+    return <TaskDetailView key={active.id} task={active} onBack={() => { selection.current++; setActive(null); }} onOpenTask={(taskID) => void loadTask(taskID)} onOpenPlans={(planId) => { selection.current++; setActive(null); onTabChange("plans"); if (planId) onExpandPlan(planId); }} toast={toast} />;
   }
 
   const modalMeta = modalTask ? kindMeta(modalTask.kind) : null;
@@ -1112,17 +1140,31 @@ export function TasksPage({
       <div className="page-head">
         <div>
           <h1>任务中心</h1>
-          <p>下载任务打开独立下载详情页；其他任务弹窗查看详情</p>
-        </div>
-        <div className="actions">
-          <button className="btn ghost" onClick={onRefresh}>
-            <RefreshCw size={13} /> 刷新状态
-          </button>
-          <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}>
-            <Trash2 size={13} /> 全部删除
-          </button>
         </div>
       </div>
+
+      <div className="task-center-nav">
+        <div className="tabs task-center-tabs" role="tablist" aria-label="任务中心" onKeyDown={(e) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+          e.preventDefault();
+          const next = e.key === "Home" ? "records" : e.key === "End" ? "plans" : tab === "records" ? "plans" : "records";
+          onTabChange(next);
+          e.currentTarget.querySelector<HTMLButtonElement>(`#task-tab-${next}`)?.focus();
+        }}>
+          <button id="task-tab-records" role="tab" type="button" aria-controls="task-records" aria-selected={tab === "records"} tabIndex={tab === "records" ? 0 : -1} className={tab === "records" ? "on" : ""} onClick={() => onTabChange("records")}><ListTodo size={15} /> 任务记录</button>
+          <button id="task-tab-plans" role="tab" type="button" aria-controls="task-plans" aria-selected={tab === "plans"} tabIndex={tab === "plans" ? 0 : -1} className={tab === "plans" ? "on" : ""} onClick={() => onTabChange("plans")}><CalendarClock size={15} /> 同步计划</button>
+        </div>
+        {tab === "records" && <div className="actions">
+          <button className="btn ghost" onClick={onRefresh}><RefreshCw size={13} /> 刷新状态</button>
+          <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}><Trash2 size={13} /> 全部删除</button>
+        </div>}
+      </div>
+
+      {tab === "plans" ? (
+        <div id="task-plans" role="tabpanel" aria-labelledby="task-tab-plans" className="task-center-content">
+          <SyncPlans boot={boot} expandedPlan={expandedPlan} onExpandPlan={onExpandPlan} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={(id) => void loadTask(id)} toast={toast} />
+        </div>
+      ) : <div id="task-records" role="tabpanel" aria-labelledby="task-tab-records" className="task-center-content">
 
       <section className="stat-grid">
         <div className="stat"><span>进行中</span><div><b className={running > 0 ? "accent" : ""}>{running}</b><em>个</em></div></div>
@@ -1237,6 +1279,8 @@ export function TasksPage({
           </table>
         )}
       </section>
+
+      </div>}
 
       {modalTask && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) { selection.current++; setModalTask(null); } }}>

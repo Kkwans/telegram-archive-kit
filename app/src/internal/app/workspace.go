@@ -20,6 +20,7 @@ import (
 	static "telegramarchivekit/assets"
 	"telegramarchivekit/internal/archive"
 	"telegramarchivekit/internal/media"
+	"telegramarchivekit/internal/platform"
 )
 
 type App struct {
@@ -53,8 +54,11 @@ func newApp() (*App, error) {
 	_ = a.loadSettings()
 	if root := strings.TrimSpace(os.Getenv("TAK_LIBRARY_ROOT")); root != "" {
 		a.Settings.LibraryRoot = root
+		a.Settings.ExpectedLibraryID = ""
 	}
-	a.migrateWorkspaceNames()
+	if a.Settings.ExpectedLibraryID == "" {
+		a.migrateWorkspaceNames()
+	}
 	return a, nil
 }
 
@@ -531,6 +535,10 @@ func (a *App) importResultJSON(src string) (WorkspaceMeta, bool, error) {
 // looked like a 20-40 second freeze. v9 can register/merge source data first and build
 // exactly once after synchronization.
 func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bool, error) {
+	return a.importResultJSONWithIdentity(src, buildNow, false)
+}
+
+func (a *App) importResultJSONWithIdentity(src string, buildNow, strict bool) (WorkspaceMeta, bool, error) {
 	if err := a.guardWritable(); err != nil {
 		return WorkspaceMeta{}, false, err
 	}
@@ -543,13 +551,24 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 		return WorkspaceMeta{}, false, err
 	}
 	chat := chatFromRaw(raw)
-	slug, existed := a.findWorkspaceByChat(chat)
-	if existed {
-		slug = a.migrateWorkspaceSlug(slug, chat)
+	var slug string
+	var existed bool
+	if strict {
+		slug, existed = a.planWorkspace(chat)
 	} else {
+		slug, existed = a.findWorkspaceByChat(chat)
+	}
+	if existed && !strict {
+		slug = a.migrateWorkspaceSlug(slug, chat)
+	} else if !existed {
 		slug = datedSlug(chat, rawLastTimestamp(raw))
 		if _, err := os.Stat(a.workspaceDir(slug)); err == nil {
 			slug = stableSlug(chat)
+		}
+		if strict {
+			if _, err := os.Stat(a.workspaceDir(slug)); !os.IsNotExist(err) {
+				return WorkspaceMeta{}, false, errors.New("目标聊天目录已被占用，请先核对档案库")
+			}
 		}
 	}
 	ws := a.workspaceDir(slug)
@@ -560,18 +579,30 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 	}
 
 	stamp := time.Now().Format("20060102-150405") + fmt.Sprintf("-%09d", time.Now().Nanosecond())
-	_ = copyFile(src, filepath.Join(ws, "source", "history", "import-"+stamp+".json"))
+	history := filepath.Join(ws, "source", "history", "import-"+stamp+".json")
+	if strict {
+		stage := sha1.Sum([]byte(src))
+		history = filepath.Join(ws, "source", "history", "plan-"+hex.EncodeToString(stage[:])+".json")
+	}
+	if !fileExists(history) {
+		_ = copyFile(src, history)
+	}
 
 	dst := a.sourcePath(slug)
 	var merged map[string]any
 	if _, err := os.Stat(dst); err == nil {
 		_, existingRoot, er := readRawExport(dst)
+		if strict && er != nil {
+			return WorkspaceMeta{}, existed, er
+		}
 		if er == nil {
 			merged = mergeExportRoots(existingRoot, incomingRoot)
-			old, _ := os.ReadFile(dst)
-			if len(old) > 0 {
-				history := filepath.Join(ws, "source", "history", "aggregate-"+stamp+".json")
-				_ = os.WriteFile(history, old, 0644)
+			if !strict {
+				old, _ := os.ReadFile(dst)
+				if len(old) > 0 {
+					history := filepath.Join(ws, "source", "history", "aggregate-"+stamp+".json")
+					_ = os.WriteFile(history, old, 0644)
+				}
 			}
 		}
 	}
@@ -582,7 +613,7 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 	if err != nil {
 		return WorkspaceMeta{}, existed, err
 	}
-	if err := os.WriteFile(dst, out, 0644); err != nil {
+	if err := platform.AtomicWriteFile(dst, out, 0644); err != nil {
 		return WorkspaceMeta{}, existed, err
 	}
 
@@ -621,8 +652,10 @@ func (a *App) importResultJSONMode(src string, buildNow bool) (WorkspaceMeta, bo
 	if err := a.writeWorkspaceMeta(slug, meta); err != nil {
 		return WorkspaceMeta{}, existed, err
 	}
-	a.Settings.LastWorkspaceSlug = slug
-	_ = a.saveSettings()
+	if !strict {
+		a.Settings.LastWorkspaceSlug = slug
+		_ = a.saveSettings()
+	}
 	if buildNow {
 		if _, err := a.buildWorkspace(slug); err != nil {
 			return WorkspaceMeta{}, existed, err
@@ -1044,6 +1077,10 @@ func (a *App) buildLibrary() error {
 }
 
 func (a *App) generateMissingJSON(slug string) (int, string, error) {
+	return a.generateMissingWithin(slug, nil)
+}
+
+func (a *App) generateMissingWithin(slug string, only map[string]bool) (int, string, error) {
 	if err := a.guardWritable(); err != nil {
 		return 0, "", err
 	}
@@ -1059,7 +1096,9 @@ func (a *App) generateMissingJSON(slug string) (int, string, error) {
 	}
 	missing := map[string]bool{}
 	for _, id := range arc.Missing {
-		missing[id] = true
+		if only == nil || only[id] {
+			missing[id] = true
+		}
 	}
 	if len(missing) == 0 {
 		return 0, "", nil
@@ -1089,6 +1128,9 @@ func (a *App) generateMissingJSON(slug string) (int, string, error) {
 		return 0, "", err
 	}
 	path := filepath.Join(work, "missing.json")
+	if only != nil {
+		path = filepath.Join(work, "planned-missing.json")
+	}
 	if err := os.WriteFile(path, out, 0644); err != nil {
 		return 0, "", err
 	}

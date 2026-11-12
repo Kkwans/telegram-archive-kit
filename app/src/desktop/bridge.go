@@ -25,11 +25,15 @@ import (
 // same-origin HTTP endpoint inside the WebView2 window: no port, no CORS, no
 // generated bindings and no WebView message channel to keep alive.
 type Bridge struct {
-	facade      *takapp.Facade
-	window      *application.WebviewWindow
-	profile     *ProfileService
-	online      *OnlineService
-	publication *webpublish.Controller
+	facade            *takapp.Facade
+	window            *application.WebviewWindow
+	profile           *ProfileService
+	online            *OnlineService
+	publication       *webpublish.Controller
+	syncPlans         *SyncPlanService
+	syncPlansError    error
+	remoteConnections *remoteConnections
+	archiveMu         sync.Mutex
 
 	mu      sync.Mutex
 	mountMu sync.Mutex
@@ -261,11 +265,36 @@ type apiParams struct {
 	Version             string              `json:"version"`
 	Refresh             bool                `json:"refresh"`
 	LibraryKey          string              `json:"libraryKey"`
+	NewRemoteMount      bool                `json:"newRemoteMount"`
 }
 
 func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	if strings.HasPrefix(method, "webPublish") {
 		return b.publicationRPC(method, raw)
+	}
+	if strings.HasPrefix(method, "syncPlan") {
+		if b.syncPlans == nil {
+			if b.syncPlansError != nil {
+				return nil, b.syncPlansError
+			}
+			return nil, errors.New("同步计划尚未初始化")
+		}
+		return b.syncPlans.RPC(ctx, method, raw)
+	}
+	if strings.HasPrefix(method, "remoteConnection") && b.remoteConnections != nil {
+		return b.remoteConnections.rpc(ctx, method, raw)
+	}
+	if archiveMutation(method) {
+		if !b.archiveMu.TryLock() {
+			return nil, takapp.ErrOperationRunning
+		}
+		defer b.archiveMu.Unlock()
+		if b.syncPlans != nil {
+			defer b.syncPlans.Wake()
+		}
+	}
+	if b.facade.ManagedRemoteUnavailable() && needsOpenLibrary(method) {
+		return nil, errors.New("请先重连远程档案库")
 	}
 	var p apiParams
 	if len(raw) > 0 {
@@ -414,6 +443,9 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 	case "exportChat":
 		return nil, b.facade.ExportChat(p.Slug, p.Dst)
 	case "switchLibrary":
+		if b.remoteConnections != nil {
+			return b.remoteConnections.switchLibrary(ctx, p.Root, p.NewRemoteMount)
+		}
 		if b.publication != nil {
 			return nil, b.publication.SwitchLibrary(func() error { return b.facade.SwitchLibrary(p.Root) })
 		}
@@ -435,6 +467,11 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.Diagnostics(), nil
 	case "remoteStatus":
 		if strings.TrimSpace(p.Root) != "" {
+			if b.remoteConnections != nil {
+				if err := b.remoteConnections.validateExplicitProbe(ctx, p.Root, p.NewRemoteMount); err != nil {
+					return nil, err
+				}
+			}
 			return b.facade.RemoteStatusFor(p.Root), nil
 		}
 		return b.facade.RemoteStatus(), nil
@@ -443,7 +480,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 	case "clearRemoteCache":
 		return b.facade.ClearRemoteCache()
 	case "rcloneMount":
-		return b.StartRcloneMount(p.Name, p.Path, p.Drive)
+		return b.StartRcloneMount(ctx, p.Name, p.Path, p.Drive)
 	case "sshMount":
 		return b.StartSSHMount(ctx, p.Name, p.Path)
 	case "sshMountInstall":
@@ -782,8 +819,21 @@ func (b *Bridge) quit() {
 			return
 		}
 	}
-	b.stopAllRcloneMounts()
+	if b.syncPlans != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		err := b.syncPlans.Close(ctx)
+		cancel()
+		if err != nil {
+			b.QueueNotice("同步计划正在安全停止，请稍后重试退出")
+			b.showWindow()
+			return
+		}
+	}
+	if b.remoteConnections != nil {
+		b.remoteConnections.close()
+	}
 	b.facade.Shutdown()
+	b.stopAllRcloneMounts()
 	if b.window != nil {
 		b.window.Hide()
 	}
@@ -791,6 +841,10 @@ func (b *Bridge) quit() {
 }
 
 func (b *Bridge) syncCurrent() (map[string]string, error) {
+	if !b.archiveMu.TryLock() {
+		return nil, takapp.ErrOperationRunning
+	}
+	defer b.archiveMu.Unlock()
 	slug, err := b.facade.SyncCurrentChat()
 	if err != nil {
 		b.QueueNotice("同步失败：" + err.Error())
@@ -798,6 +852,28 @@ func (b *Bridge) syncCurrent() (map[string]string, error) {
 	}
 	b.showWindow()
 	return map[string]string{"slug": slug}, nil
+}
+
+func archiveMutation(method string) bool {
+	switch method {
+	case "startImportJSON", "startImportOfficial", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
+		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
+		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "setSettings", "onlineExport",
+		"startLogin", "logoutTdl", "rcloneUnmount":
+		return true
+	}
+	return false
+}
+
+func needsOpenLibrary(method string) bool {
+	switch method {
+	case "startImportJSON", "startImportOfficial", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
+		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
+		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
+		"previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "openLibrary", "revealChat", "verifyChat":
+		return true
+	}
+	return false
 }
 
 func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {

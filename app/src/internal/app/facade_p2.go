@@ -452,6 +452,14 @@ func (f *Facade) ExportChat(slug, dstRoot string) error {
 }
 
 func (f *Facade) SwitchLibrary(root string) error {
+	return f.switchLibrary(context.Background(), root, "", "", "", false)
+}
+
+func (f *Facade) SwitchManagedLibrary(root string) error {
+	return f.switchLibrary(context.Background(), root, "", "", "", true)
+}
+
+func (f *Facade) switchLibrary(ctx context.Context, root, expectedID, previousRoot, previousID string, managed bool) error {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return errors.New("缺少档案库目录")
@@ -465,8 +473,8 @@ func (f *Facade) SwitchLibrary(root string) error {
 	f.taskMu.Lock()
 	defer f.taskMu.Unlock()
 	old := f.a.Settings.LibraryRoot
-	if old != "" && strings.EqualFold(filepath.Clean(old), root) && f.libLock != nil {
-		return nil
+	if previousRoot != "" && (!strings.EqualFold(filepath.Clean(previousRoot), filepath.Clean(old)) || previousID != f.a.Settings.ExpectedLibraryID) {
+		return ErrLibraryIdentity
 	}
 	if f.op != nil {
 		return ErrOperationRunning
@@ -476,30 +484,84 @@ func (f *Facade) SwitchLibrary(root string) error {
 			return ErrOperationRunning
 		}
 	}
-	lock, err := acquireSessionLock(root)
+	if expectedID != "" {
+		if id, err := ReadLibraryID(root); err != nil || id != expectedID {
+			return ErrLibraryIdentity
+		}
+	}
+	if old != "" && strings.EqualFold(filepath.Clean(old), root) && f.libLock != nil {
+		if managed {
+			id, err := registerLibraryIdentity(root, f.libLock)
+			if err != nil {
+				return err
+			}
+			expectedID = id
+		}
+		if expectedID != "" {
+			if err := f.libLock.addIdentity(expectedID); err != nil {
+				return err
+			}
+			if err := platform.ProbeDirectoryWrite(root); err != nil {
+				return fmt.Errorf("%w：%v", ErrLibraryReadOnly, err)
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := f.setLibraryIdentityLocked(expectedID); err != nil {
+				return err
+			}
+		}
+		f.remoteSuspended = false
+		return nil
+	}
+	lock, err := acquireSessionLockAt(root, f.libLock, expectedID)
 	if err != nil {
 		return err
 	}
 	defer func() { lock.release() }()
+	if expectedID != "" {
+		if err := platform.ProbeDirectoryWrite(root); err != nil {
+			return fmt.Errorf("%w：%v", ErrLibraryReadOnly, err)
+		}
+	}
 	candidate := appAtLibrary(f.a, root)
+	candidate.Settings.ExpectedLibraryID = expectedID
 	candidate.noteLibrary(old)
 	candidate.noteLibrary(root)
 	if err := candidate.ensureLibraryDirs(); err != nil {
 		return err
 	}
+	if managed {
+		id, readErr := ReadLibraryID(root)
+		if readErr != nil || f.libLock == nil || f.libLock.identity != id {
+			id, err = registerLibraryIdentity(root, lock)
+			if err != nil {
+				return err
+			}
+		}
+		candidate.Settings.ExpectedLibraryID = id
+	}
 	if remote, kind := platform.NetworkPathKind(root); remote {
 		candidate.Settings.LastRemoteRoot = root
 		candidate.Settings.LastRemoteKind = kind
 	}
-	if err := candidate.buildLibrary(); err != nil {
+	if expectedID == "" {
+		if err := candidate.buildLibrary(); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := candidate.saveSettings(); err != nil {
 		return err
 	}
 	oldLock := f.libLock
+	id, _ := ReadLibraryID(root)
+	lock.transferIdentityFrom(oldLock, id)
 	f.a.Settings = candidate.Settings
 	f.libLock = lock
+	f.remoteSuspended = false
 	lock = nil
 	oldLock.release()
 	return nil

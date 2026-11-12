@@ -178,6 +178,17 @@ func (s *OnlineService) ExportMessagesProgress(ctx context.Context, ns, proxy st
 }
 
 func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int, report func(ExportProgress)) (OnlineChat, []map[string]any, int, error) {
+	return s.scanMessages(ctx, ns, proxy, chat, timeout, minID, limit, report, nil)
+}
+
+type plannedMessageScan struct {
+	Account int64
+	Offset  int
+	Since   int64
+	Page    func(messages []map[string]any, next, high int, finished bool) error
+}
+
+func (s *OnlineService) scanMessages(ctx context.Context, ns, proxy string, chat OnlineChat, timeout time.Duration, minID, limit int, report func(ExportProgress), scan *plannedMessageScan) (OnlineChat, []map[string]any, int, error) {
 	baseID := minID
 	reportExport(report, ExportProgress{Stage: "连接 Telegram", Percent: 2})
 	ref := peerInputFromChat(chat)
@@ -205,28 +216,53 @@ func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, ch
 		NoUpdates:      true,
 		DialTimeout:    8 * time.Second,
 	})
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	runCtx := ctx
+	if scan == nil {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	out := make([]map[string]any, 0, 256)
 	mediaCount := 0
 	scanned := 0
 	highID := chat.LastMessageID
+	if scan != nil {
+		highID = minID
+	}
 	totalEstimate := 0
 	lastPercent := 2.0
 	err = client.Run(runCtx, func(ctx context.Context) error {
 		offset := 0
+		if scan != nil {
+			request, cancel := context.WithTimeout(ctx, 45*time.Second)
+			self, err := client.Self(request)
+			cancel()
+			if err != nil {
+				return err
+			}
+			if self.ID != scan.Account {
+				return errPlanAccount
+			}
+			offset = scan.Offset
+		}
 		pages := 0
 		for {
 			var res tg.MessagesMessagesClass
 			for {
 				var err error
-				res, err = client.API().MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+				request := ctx
+				cancel := func() {}
+				if scan != nil {
+					request, cancel = context.WithTimeout(ctx, 45*time.Second)
+				}
+				res, err = client.API().MessagesGetHistory(request, &tg.MessagesGetHistoryRequest{
 					Peer:     ref,
 					OffsetID: offset,
 					MinID:    minID,
 					Limit:    100,
 				})
+				cancel()
 				if err == nil {
 					break
 				}
@@ -241,6 +277,9 @@ func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, ch
 						Percent: lastPercent, Messages: scanned, Media: mediaCount,
 					})
 				}
+				if scan != nil {
+					return err
+				}
 				retry, waitErr := waitFlood(ctx, err)
 				if !retry {
 					return waitErr
@@ -248,10 +287,14 @@ func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, ch
 			}
 			msgs := historyMessages(res)
 			if len(msgs) == 0 {
+				if scan != nil {
+					return scan.Page(nil, offset, highID, true)
+				}
 				break
 			}
 			entities := historyEntities(res)
 			pageLowID := 0
+			reachedSince := false
 			for _, msg := range msgs {
 				id := messageID(msg)
 				if id == 0 {
@@ -266,6 +309,13 @@ func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, ch
 				raw, hasMedia, ok := convertOnlineMessage(msg, chat, entities)
 				if !ok {
 					continue
+				}
+				if scan != nil && scan.Since != 0 {
+					stamp, _ := strconv.ParseInt(fmt.Sprint(raw["date_unixtime"]), 10, 64)
+					if stamp > 0 && stamp < scan.Since {
+						reachedSince = true
+						continue
+					}
 				}
 				out = append(out, raw)
 				if hasMedia {
@@ -313,6 +363,19 @@ func (s *OnlineService) exportMessages(ctx context.Context, ns, proxy string, ch
 				Detail:  fmt.Sprintf("已读取 %d 条消息 · 发现 %d 个媒体", scanned, mediaCount),
 				Percent: lastPercent, Messages: scanned, Media: mediaCount,
 			})
+			if scan != nil {
+				finished := len(msgs) < 100 || pageLowID == 0 || reachedSince
+				if !finished && offset > 0 && pageLowID >= offset {
+					return errors.New("Telegram 历史读取游标没有推进")
+				}
+				if err := scan.Page(out, pageLowID, highID, finished); err != nil {
+					return err
+				}
+				out = out[:0]
+				if finished {
+					return nil
+				}
+			}
 			if limit > 0 && len(out) >= limit {
 				break
 			}

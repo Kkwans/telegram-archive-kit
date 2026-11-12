@@ -18,4 +18,9 @@ func DecodePublicationOfficialIndex(data []byte) ([]PublicationOfficialExport, e
 	return index.Exports, nil
 }
 
-func (f *Facade) PublicationRoot() string { return f.libraryRoot() }
+func (f *Facade) PublicationRoot() string {
+	if f.ManagedRemoteUnavailable() {
+		return ""
+	}
+	return f.libraryRoot()
+}

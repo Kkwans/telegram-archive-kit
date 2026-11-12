@@ -64,6 +64,7 @@ import Artplayer from "artplayer";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { RemoteConnections, type SavedRemoteConnection } from "./RemoteConnections";
 import { OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type {
   AccountInfo,
@@ -3222,7 +3223,13 @@ interface OfficialPreview {
   chats: ChatRow[];
 }
 
-export function Library({ ctx }: { ctx: PageCtx }) {
+interface LibrarySwitchOptions {
+  newRemoteMount?: boolean;
+  afterSwitch?: () => Promise<void>;
+  onError?: (message: string) => void;
+}
+
+export function Library({ ctx, remoteRequest = 0, onRemoteHandled }: { ctx: PageCtx; remoteRequest?: number; onRemoteHandled?: () => void }) {
   const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
   const history = boot?.history ?? [];
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
@@ -3231,7 +3238,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
-  const [pendingPublishSwitch, setPendingPublishSwitch] = useState("");
+  const [pendingPublishSwitch, setPendingPublishSwitch] = useState<{ root: string; options?: LibrarySwitchOptions } | null>(null);
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
   const [detailLibraryKey, setDetailLibraryKey] = useState("");
   const [detailMediaLoading, setDetailMediaLoading] = useState(false);
@@ -3245,6 +3252,13 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   detailApplySummary.current = ctx.applyMediaSummary;
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remoteMode, setRemoteMode] = useState<"saved" | "add">("saved");
+  const [remoteSave, setRemoteSave] = useState(false);
+  const [remoteLabel, setRemoteLabel] = useState("");
+  const [remoteSaveAuto, setRemoteSaveAuto] = useState(false);
+  const [remoteError, setRemoteError] = useState("");
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const remoteDialog = useRef<HTMLDivElement>(null);
   const [remotePath, setRemotePath] = useState("");
   const [remoteProbe, setRemoteProbe] = useState<RemoteStatus | null>(null);
   const [remoteTesting, setRemoteTesting] = useState(false);
@@ -3254,6 +3268,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
   const [rcloneSub, setRcloneSub] = useState("");
   const [rcloneDrive, setRcloneDrive] = useState("Z");
   const [rcloneBusy, setRcloneBusy] = useState(false);
+  const [stagedMountRoot, setStagedMountRoot] = useState("");
   const [sshOpen, setSSHOpen] = useState(false);
   const [sshAlias, setSSHAlias] = useState("");
   const [sshTarget, setSSHTarget] = useState("");
@@ -3318,6 +3333,12 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
   const openRemote = () => {
     setRemoteOpen(true);
+    setRemoteMode("saved");
+    setRemoteSave(false);
+    setRemoteSaveAuto(false);
+    setRemoteLabel("");
+    setRemoteError("");
+    setStagedMountRoot("");
     setRemotePath(remote?.remote ? remote.root : "");
     setRemoteProbe(null);
     setRemoteTools(null);
@@ -3331,6 +3352,48 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       setSSHAlias((current) => tools.sshAliases?.includes(current) ? current : tools.sshAliases?.[0] || "");
     }).catch(() => undefined);
   };
+  useEffect(() => {
+    if (!remoteRequest) return;
+    openRemote();
+    onRemoteHandled?.();
+  }, [remoteRequest]);
+
+  useEffect(() => {
+    if (!remoteOpen) return;
+    const previous = document.activeElement;
+    const focus = () => {
+      if (!document.body.classList.contains("glass-ready")) return;
+      observer.disconnect();
+      remoteDialog.current?.querySelector<HTMLButtonElement>(".remote-head button")?.focus({ preventScroll: true });
+    };
+    const observer = new MutationObserver(focus);
+    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    focus();
+    return () => {
+      observer.disconnect();
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [remoteOpen]);
+
+  const switchRemote = (root: string, newRemoteMount = false, onError = setRemoteError) => switchTo(root, false, {
+    newRemoteMount,
+    onError,
+    afterSwitch: async () => {
+      if (!remoteSave) {
+        setRemoteOpen(false);
+        return;
+      }
+      try {
+        await call<SavedRemoteConnection>("remoteConnectionSave", { root, label: remoteLabel.trim(), autoReconnect: remoteSaveAuto });
+        toast("已保存网络连接", "success");
+        setRemoteMode("saved");
+      } catch (e) {
+        const message = `已打开档案库，保存连接失败。${(e as Error).message}`;
+        onError(message);
+        toast(message, true);
+      }
+    },
+  });
   const installSSHMountTools = async () => {
     setSSHAction("install");
     setSSHError("");
@@ -3353,11 +3416,10 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       const root = await call<string>("sshMount", { name: sshAlias || sshTarget, path: sshDirectory }, controller.signal);
       sshRequest.current = null;
       setSSHAction("switch");
-      if (await switchTo(root)) {
-        setRemoteOpen(false);
-      } else {
+      if (await switchRemote(root, true, setSSHError) === "failed") {
+        setStagedMountRoot(root);
         setRemotePath(root);
-        setRemoteProbe(await call<RemoteStatus>("remoteStatus", { root }));
+        setRemoteProbe(await call<RemoteStatus>("remoteStatus", { root, newRemoteMount: true }));
       }
     } catch (error) {
       if (!controller.signal.aborted) setSSHError((error as Error).message);
@@ -3367,9 +3429,13 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     }
   };
   const closeRemote = () => {
-    if (sshAction && !sshRequest.current) return;
+    if ((sshAction && !sshRequest.current) || rcloneBusy || remoteTesting || connectionBusy || busy === "switch" || pendingPublishSwitch) return;
     sshRequest.current?.abort();
     setRemoteOpen(false);
+  };
+  const remoteConnected = () => {
+    refresh();
+    void call<RemoteStatus>("remoteStatus").then(setRemote).catch(() => undefined);
   };
   const mountRclone = async () => {
     if (!rcloneRemote) {
@@ -3377,14 +3443,17 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       return;
     }
     setRcloneBusy(true);
+    setRemoteError("");
     try {
       const mounted = await call<string>("rcloneMount", { name: rcloneRemote, path: rcloneSub, drive: rcloneDrive });
       setRemotePath(mounted);
+      setStagedMountRoot(mounted);
       setRcloneOpen(false);
-      const st = await call<RemoteStatus>("remoteStatus", { root: mounted });
+      const st = await call<RemoteStatus>("remoteStatus", { root: mounted, newRemoteMount: true });
       setRemoteProbe(st);
       toast(`rclone 已挂载到 ${mounted}`);
     } catch (e) {
+      setRemoteError((e as Error).message);
       toast((e as Error).message, true);
     } finally {
       setRcloneBusy(false);
@@ -3398,19 +3467,20 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     }
     setRemoteTesting(true);
     setRemoteProbe(null);
+    setRemoteError("");
     try {
-      const st = await call<RemoteStatus>("remoteStatus", { root });
+      const st = await call<RemoteStatus>("remoteStatus", { root, ...(root === stagedMountRoot ? { newRemoteMount: true } : {}) });
       setRemoteProbe(st);
     } catch (e) {
-      toast((e as Error).message, true);
+      setRemoteError((e as Error).message);
     } finally {
       setRemoteTesting(false);
     }
   };
   const useRemote = async () => {
     if (!remoteProbe?.reachable || !remoteProbe.writable) return;
-    await switchTo(remoteProbe.root);
-    setRemoteOpen(false);
+    setRemoteError("");
+    await switchRemote(remoteProbe.root, !!stagedMountRoot && stagedMountRoot === remotePath.trim());
   };
   const copyRemoteCommand = (cmd: string) => {
     navigator.clipboard?.writeText(cmd).then(() => toast("安装命令已复制")).catch(() => toast("复制失败", true));
@@ -3511,7 +3581,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
     }
   };
 
-  const switchTo = async (root: string, stopPublication = false) => {
+  const switchTo = async (root: string, stopPublication = false, options?: LibrarySwitchOptions): Promise<"switched" | "confirmation" | "failed"> => {
     setBusy("switch");
     try {
       if (stopPublication) {
@@ -3519,17 +3589,20 @@ export function Library({ ctx }: { ctx: PageCtx }) {
       } else {
         const publication = await call<{ requested: boolean }>("webPublishStatus");
         if (publication.requested) {
-          setPendingPublishSwitch(root);
-          return true;
+          setPendingPublishSwitch({ root, options });
+          return "confirmation";
         }
       }
-      await call("switchLibrary", { root });
+      await call("switchLibrary", { root, ...(options?.newRemoteMount ? { newRemoteMount: true } : {}) });
       toast("已切换档案库");
       refresh();
-      return true;
+      await options?.afterSwitch?.();
+      return "switched";
     } catch (e) {
-      toast((e as Error).message, true);
-      return false;
+      const message = (e as Error).message;
+      options?.onError?.(message);
+      toast(message, true);
+      return "failed";
     } finally {
       setBusy("");
     }
@@ -3886,16 +3959,25 @@ export function Library({ ctx }: { ctx: PageCtx }) {
 
       {remoteOpen && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeRemote(); }}>
-          <div className="modal remote-modal" role="dialog" aria-modal="true" aria-labelledby="remote-title">
+          <div ref={remoteDialog} className="modal remote-modal" role="dialog" aria-modal="true" aria-labelledby="remote-title" onKeyDown={(event) => {
+            if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
+            if (event.key === "Escape") { event.preventDefault(); closeRemote(); }
+            if (event.key !== "Tab") return;
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), [href], [tabindex='0']")).filter((item) => item.getClientRects().length > 0);
+            const first = items[0];
+            const last = items.at(-1);
+            if (event.shiftKey && event.target === first && last) { event.preventDefault(); last.focus(); }
+            if (!event.shiftKey && event.target === last && first) { event.preventDefault(); first.focus(); }
+          }}>
             <div className="remote-head">
               <div className="remote-title">
                 <span className="remote-title-icon"><Network size={18} /></span>
                 <div>
-                  <h2 id="remote-title">添加网络档案库</h2>
-                  <p>连接 SMB 共享、映射盘或 SSH 档案库。</p>
+                  <h2 id="remote-title">网络位置</h2>
+                  <p>连接 SMB 共享、SSH 或 rclone 档案库。</p>
                 </div>
               </div>
-              <button className="icon-btn" aria-label="关闭网络档案库设置" disabled={sshAction === "install" || sshAction === "switch"} onClick={closeRemote}>
+              <button className="icon-btn" aria-label="关闭网络位置" disabled={sshAction === "install" || sshAction === "switch" || rcloneBusy || remoteTesting || connectionBusy || busy === "switch" || !!pendingPublishSwitch} onClick={closeRemote}>
                 <X size={15} />
               </button>
             </div>
@@ -3920,35 +4002,57 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                 </div>
               )}
 
+              {remoteMode === "saved" ? (
+                <RemoteConnections onAdd={() => setRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy} toast={toast} />
+              ) : <>
+              <div className="remote-add-head">
+                <button type="button" className="btn sm ghost" disabled={!!sshAction || rcloneBusy || remoteTesting || busy === "switch"} onClick={() => setRemoteMode("saved")}><ChevronLeft size={14} /> 已保存的连接</button>
+                <h3>添加连接</h3>
+              </div>
+
+              <div className="remote-save-settings">
+                <label className="plan-check"><input type="checkbox" checked={remoteSave} disabled={!!sshAction || rcloneBusy || busy === "switch"} onChange={(e) => setRemoteSave(e.target.checked)} /> 保存此连接</label>
+                {remoteSave && <div className="remote-save-fields">
+                  <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={!!sshAction || rcloneBusy || busy === "switch"} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
+                  <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={!!sshAction || rcloneBusy || busy === "switch"} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>
+                </div>}
+              </div>
+
               <div className="remote-form">
                 <label htmlFor="remote-path-input">网络位置或盘符</label>
                 <div className="remote-path-row">
                   <input
                     id="remote-path-input"
                     value={remotePath}
-                    onChange={(e) => { setRemotePath(e.target.value); setRemoteProbe(null); }}
-                    onKeyDown={(e) => { if (e.key === "Enter") void testRemote(); }}
+                    disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch"}
+                    onChange={(e) => { setRemotePath(e.target.value); setRemoteProbe(null); setRemoteError(""); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !remoteTesting) void testRemote(); }}
                     placeholder="\\NAS\share\TG Library 或 Z:\TG Library"
                     spellCheck={false}
                   />
                   <button
                     className="btn ghost"
+                    disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch"}
                     onClick={async () => {
-                      const picked = await pickFolder("remote-library", "选择网络位置或盘符");
-                      if (picked) { setRemotePath(picked); setRemoteProbe(null); }
+                      try {
+                        const picked = await pickFolder("remote-library", "选择网络位置或盘符");
+                        if (picked) { setRemotePath(picked); setRemoteProbe(null); setRemoteError(""); }
+                      } catch (e) {
+                        setRemoteError((e as Error).message);
+                      }
                     }}
                   >
                     <FolderOpen size={13} /> 浏览…
                   </button>
                 </div>
                 <div className="remote-form-actions">
-                  <button className="btn" disabled={remoteTesting || !remotePath.trim()} onClick={() => void testRemote()}>
+                  <button className="btn" disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch" || !remotePath.trim()} onClick={() => void testRemote()}>
                     {remoteTesting ? <Loader2 size={13} className="spin" /> : <Wifi size={13} />}
                     {remoteTesting ? "正在测试…" : "测试连接"}
                   </button>
-                  <button className="btn primary" disabled={!remoteProbe || !remoteProbe.reachable || !remoteProbe.writable} onClick={() => void useRemote()}>
+                  <button className="btn primary" disabled={remoteTesting || rcloneBusy || !!sshAction || busy === "switch" || !remoteProbe || !remoteProbe.reachable || !remoteProbe.writable} onClick={() => void useRemote()}>
                     {remoteProbe?.reachable && remoteProbe.writable ? <CheckCircle2 size={13} /> : <WifiOff size={13} />}
-                    切换到此库
+                    {remoteSave ? "连接并保存" : "切换到此库"}
                   </button>
                 </div>
               </div>
@@ -3965,6 +4069,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                   </div>
                 </div>
               )}
+              {remoteError && <div className="plan-inline-notice" role="alert"><AlertTriangle size={15} /><span>{remoteError}</span></div>}
 
               <div className="remote-options-head">
                 <h3>没有挂载网络位置？</h3>
@@ -4033,7 +4138,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                           <input value={sshDirectory} onChange={(e) => setSSHDirectory(e.target.value)} disabled={Boolean(sshAction)} placeholder="留空使用 SSH 登录目录" spellCheck={false} />
                         </label>
                         <button type="submit" className="btn primary rclone-mount-btn" disabled={Boolean(sshAction) || !(sshAlias || sshTarget.trim())}>
-                          {sshAction && <Loader2 size={13} className="spin" />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : "连接并使用"}
+                          {sshAction && <Loader2 size={13} className="spin" />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "连接并使用"}
                         </button>
                       </div>
                       <p>使用已信任主机的密钥或 SSH Agent；客户端退出时断开。</p>
@@ -4075,6 +4180,7 @@ export function Library({ ctx }: { ctx: PageCtx }) {
                 </div>
               )}
               <p className="remote-note">SMB 连接使用 Windows 凭据，SSH 连接使用 OpenSSH 配置。远程库的缩略图与视频播放缓存保存在本机。</p>
+              </>}
             </div>
           </div>
         </div>,
@@ -4235,8 +4341,8 @@ export function Library({ ctx }: { ctx: PageCtx }) {
         title="停止网页部署并切换档案库？"
         message="当前网页地址会关闭，正在浏览的设备将断开。"
         confirmLabel="停止并切换"
-        onConfirm={() => { const root = pendingPublishSwitch; setPendingPublishSwitch(""); void switchTo(root, true); }}
-        onCancel={() => setPendingPublishSwitch("")}
+        onConfirm={() => { const pending = pendingPublishSwitch; setPendingPublishSwitch(null); if (pending) void switchTo(pending.root, true, pending.options); }}
+        onCancel={() => setPendingPublishSwitch(null)}
       />
       <ConfirmDialog
         open={pendingDelete.length > 0}

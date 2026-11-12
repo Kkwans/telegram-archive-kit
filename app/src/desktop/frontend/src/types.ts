@@ -268,6 +268,7 @@ export interface HomeStats {
 export interface TaskInfo {
   id: string;
   kind: string;
+  planId?: string;
   title: string;
   chat?: string;
   chatId?: string;

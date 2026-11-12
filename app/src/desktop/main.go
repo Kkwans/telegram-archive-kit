@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"io"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -45,8 +47,10 @@ func main() {
 		log.Fatal(err)
 	}
 	facade.SetLoginLauncher(newConPTYLauncher())
-	if err := facade.AcquireLibraryLock(); err != nil {
-		log.Printf("library lock: %v", err)
+	if _, expected := facade.CurrentLibrarySelection(); expected == "" {
+		if err := facade.AcquireLibraryLock(); err != nil {
+			log.Printf("library lock: %v", err)
+		}
 	}
 	defer facade.ReleaseLibraryLock()
 	bridge := NewBridge(facade)
@@ -77,6 +81,9 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: instanceID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if archiveStartupInTray(data.Args) {
+					return
+				}
 				bridge.QueueArgs(data.Args)
 				bridge.showWindow()
 			},
@@ -84,6 +91,16 @@ func main() {
 		Windows: windowsOpts,
 	})
 
+	bridge.remoteConnections = newRemoteConnections(bridge)
+	bridge.syncPlans, bridge.syncPlansError = NewSyncPlanService(facade.ConfigDir(), SyncPlanHooks{
+		CurrentLibraryID: facade.ActivePlanLibraryID,
+		Bind:             bridge.bindSyncPlan,
+		Check:            bridge.checkSyncPlan,
+		Execute:          bridge.executeSyncPlan,
+		DiscardWork:      bridge.discardPlanStage,
+		GetLaunchOnLogin: getArchiveLaunchOnLogin,
+		SetLaunchOnLogin: setArchiveLaunchOnLogin,
+	})
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:           "main",
 		Title:          "TelegramArchiveKit",
@@ -91,6 +108,7 @@ func main() {
 		Height:         820,
 		MinWidth:       1040,
 		MinHeight:      680,
+		Hidden:         archiveStartupInTray(os.Args[1:]),
 		Frameless:      true,
 		EnableFileDrop: true,
 		// Mica only works with a translucent background on Windows 11 22621+.
@@ -104,7 +122,9 @@ func main() {
 		},
 	})
 	bridge.Attach(win)
-	win.Show()
+	if !archiveStartupInTray(os.Args[1:]) {
+		win.Show()
+	}
 
 	win.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
 		files := e.Context().DroppedFiles()
@@ -150,9 +170,25 @@ func main() {
 	tray.SetMenu(menu)
 	tray.OnClick(func() { bridge.showWindow() })
 	tray.Show()
+	bridge.remoteConnections.start()
+	if bridge.syncPlans != nil {
+		bridge.syncPlans.Start()
+	}
+	defer func() {
+		if bridge.syncPlans != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+			defer cancel()
+			if err := bridge.syncPlans.Close(ctx); err != nil {
+				log.Printf("stop sync plans: %v", err)
+			}
+		}
+		bridge.remoteConnections.close()
+		facade.Shutdown()
+		bridge.stopAllRcloneMounts()
+	}()
 
 	if err := app.Run(); err != nil {
-		log.Fatal(err)
+		log.Print(err)
 	}
 }
 

@@ -559,6 +559,10 @@ func adaptiveTransferProfile(concurrent, threads, stallLevel int, enabled bool) 
 }
 
 func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass int, globalEngineRestarts *int, ui downloadUI) error {
+	return a.downloadMissingWithin(ctx, slug, jsonPath, pass, globalEngineRestarts, ui, nil)
+}
+
+func (a *App) downloadMissingWithin(ctx context.Context, slug, jsonPath string, pass int, globalEngineRestarts *int, ui downloadUI, only map[string]bool) error {
 	if err := a.guardWritable(); err != nil {
 		return err
 	}
@@ -579,6 +583,12 @@ func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass i
 	}
 	if pendingPlan.Total == 0 {
 		return nil
+	}
+	if only != nil {
+		basePlan = pendingPlan
+	}
+	generateMissing := func() (int, string, error) {
+		return a.generateMissingWithin(slug, only)
 	}
 	meta, _ := a.readWorkspaceMeta(slug)
 	chatName := meta.Chat.Name
@@ -601,7 +611,7 @@ func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass i
 	exhausted := map[string]bool{}
 	// Plan next work from the current filesystem, never from tdl's resume state.
 	advanceDeferred := func() (bool, error) {
-		_, missingPath, err := a.generateMissingJSON(slug)
+		_, missingPath, err := generateMissing()
 		if err != nil {
 			return false, err
 		}
@@ -699,7 +709,7 @@ func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass i
 		if diagnosis.State == "unauthorized" {
 			return false, fmt.Errorf("诊断发现授权已失效：%s", diagnosis.Message)
 		}
-		missing, pth, e := a.generateMissingJSON(slug)
+		missing, pth, e := generateMissing()
 		if e != nil {
 			return false, e
 		}
@@ -760,6 +770,10 @@ func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass i
 			return runErr
 		}
 		if failure.Kind == tdlFailureAuth || failure.Kind == tdlFailureContent {
+			return failure
+		}
+		if only != nil && failure.Kind == tdlFailureNetwork {
+			// The scheduler owns connection retries for an unattended run.
 			return failure
 		}
 		if failure.Stalled && len(failure.ActiveIDs) > 0 {
@@ -824,7 +838,7 @@ func (a *App) downloadMissing(ctx context.Context, slug, jsonPath string, pass i
 			}
 			return failure
 		}
-		missing, nextJSON, e := a.generateMissingJSON(slug)
+		missing, nextJSON, e := generateMissing()
 		if e != nil {
 			return e
 		}

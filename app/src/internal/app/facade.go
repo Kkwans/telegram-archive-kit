@@ -47,8 +47,9 @@ type Facade struct {
 	running bool
 	login   *loginSession
 
-	loginLaunch loginLauncher
-	libLock     *sessionLock
+	loginLaunch     loginLauncher
+	libLock         *sessionLock
+	remoteSuspended bool
 
 	taskMu          sync.Mutex
 	taskSaveMu      sync.Mutex
@@ -260,6 +261,9 @@ func (f *Facade) LibraryKey() string {
 }
 
 func (f *Facade) MediaLibrary(key string) (root string, remote bool, ok bool) {
+	if f.ManagedRemoteUnavailable() {
+		return "", false, false
+	}
 	f.mu.Lock()
 	root, lastRemote := f.a.Settings.LibraryRoot, f.a.Settings.LastRemoteRoot
 	f.mu.Unlock()
@@ -302,6 +306,9 @@ func (f *Facade) ListChats() []ChatDTO {
 
 // LibraryChats refreshes workspace metadata independently of fast task polling.
 func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
+	if f.ManagedRemoteUnavailable() {
+		return LibraryChatsDTO{}, errors.New("远程档案库等待重连")
+	}
 	f.mu.Lock()
 	root, current := f.a.Settings.LibraryRoot, f.a.Settings.LastWorkspaceSlug
 	f.mu.Unlock()

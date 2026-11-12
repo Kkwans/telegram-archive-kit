@@ -31,6 +31,10 @@ type RemoteStatusDTO struct {
 
 // RemoteStatus checks reachability without writing to the current library.
 func (f *Facade) RemoteStatus() RemoteStatusDTO {
+	if f.ManagedRemoteUnavailable() {
+		root, _ := f.CurrentLibrarySelection()
+		return RemoteStatusDTO{Root: root, Remote: true, Kind: "mapped", Error: "远程档案库等待重连", CacheLimitBytes: remoteCacheLimitBytes}
+	}
 	return f.remoteStatus(f.a.Settings.LibraryRoot, false)
 }
 

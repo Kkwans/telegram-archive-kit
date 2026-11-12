@@ -19,6 +19,8 @@ import (
 type TaskDTO struct {
 	ID                  string  `json:"id"`
 	Kind                string  `json:"kind"`
+	PlanID              string  `json:"planId,omitempty"`
+	PlanRunID           string  `json:"planRunId,omitempty"`
 	Title               string  `json:"title"`
 	Chat                string  `json:"chat,omitempty"`
 	ChatID              string  `json:"chatId,omitempty"`
@@ -470,26 +472,54 @@ func mergeTaskProgress(newer, older []TaskProgress) []TaskProgress {
 // sync uses it so downloads show up in the same persisted history as imports
 // and exports.
 func (f *Facade) createTask(kind, title, chat string) *backgroundTask {
+	return f.createTaskRecord(TaskDTO{Kind: kind, Title: title, Chat: chat})
+}
+
+func (f *Facade) createTaskRecord(dto TaskDTO) *backgroundTask {
 	f.taskMu.Lock()
 	f.taskSeq++
 	id := fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), f.taskSeq)
 	ctx, cancel := context.WithCancel(context.Background())
+	dto.ID, dto.State, dto.StartedAt = id, "running", time.Now().UnixMilli()
 	task := &backgroundTask{
-		dto: TaskDTO{
-			ID: id, Kind: kind, Title: title, Chat: chat, State: "running",
-			StartedAt: time.Now().UnixMilli(),
-		},
+		dto:         dto,
 		activeSince: time.Now(),
 		ctx:         ctx,
 		cancel:      cancel,
 	}
 	f.tasks = append([]*backgroundTask{task}, f.tasks...)
-	if len(f.tasks) > 50 {
-		f.tasks = f.tasks[:50]
-	}
+	f.tasks = retainTaskRecords(f.tasks)
 	f.taskMu.Unlock()
 	f.saveTasks()
 	return task
+}
+
+func retainTaskRecords(tasks []*backgroundTask) []*backgroundTask {
+	regular := 0
+	runs := make(map[string]map[string]bool)
+	out := tasks[:0]
+	for _, task := range tasks {
+		dto := task.snapshot()
+		if dto.PlanID == "" || dto.PlanRunID == "" {
+			regular++
+			if regular > 50 && dto.State != "running" && dto.State != "paused" {
+				continue
+			}
+		} else {
+			seen := runs[dto.PlanID]
+			if seen == nil {
+				seen = make(map[string]bool)
+				runs[dto.PlanID] = seen
+			}
+			if !seen[dto.PlanRunID] && len(seen) >= 30 && dto.State != "running" {
+				continue
+			}
+			seen[dto.PlanRunID] = true
+		}
+		out = append(out, task)
+	}
+	clear(tasks[len(out):])
+	return out
 }
 
 func (f *Facade) pausedTaskForSlug(slug string) *backgroundTask {
@@ -556,7 +586,7 @@ func (f *Facade) taskDetails() []TaskDetailDTO {
 // on a copy: writes back into the task record caused the composition to
 // oscillate between derived and raw values on every poll.
 func (f *Facade) displayTask(d *TaskDTO, allowSource bool) {
-	if d == nil || (d.Kind != "sync" && d.Kind != "sync-all") {
+	if d == nil || (d.Kind != "sync" && d.Kind != "sync-all" && d.Kind != "sync-plan") {
 		return
 	}
 	var src [4]int
@@ -830,10 +860,13 @@ func (f *Facade) TaskDetail(id string) (TaskDetailDTO, error) {
 				d.RecordsComplete = false
 			}
 		}
+		if d.Kind == "sync-plan" {
+			f.displayTask(&d.TaskDTO, false)
+		}
 		// Task records written by older builds do not carry the type-specific
 		// metadata. Recover it from the workspace on demand so the detail view
 		// still shows chat id, counts and media composition.
-		if d.Kind != "sync" && d.Kind != "sync-all" &&
+		if d.Kind != "sync" && d.Kind != "sync-all" && d.Kind != "sync-plan" &&
 			(d.ChatID == "" || d.Messages == 0 || d.Media == 0 || d.Images+d.Videos+d.Audio+d.Files == 0 ||
 				(d.TotalBytes == 0 && (d.Kind == "import-official" || d.Kind == "export"))) {
 			if meta, ok := f.a.workspaceMetaForTask(d.Slug, d.Chat); ok {

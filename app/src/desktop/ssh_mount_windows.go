@@ -47,13 +47,22 @@ func sshAliases() []string {
 }
 
 func (b *Bridge) StartSSHMount(ctx context.Context, target, directory string) (string, error) {
+	endpoint, err := sshEndpoint(target, directory)
+	if err != nil {
+		return "", err
+	}
+	root, _, err := b.mountSSH(ctx, endpoint, b.expectedMountID(endpoint), true)
+	return root, err
+}
+
+func sshEndpoint(target, directory string) (remoteEndpoint, error) {
 	target = strings.TrimSpace(target)
 	if !sshTargetPattern.MatchString(target) {
-		return "", errors.New("请输入 SSH 主机别名或 用户名@主机")
+		return remoteEndpoint{}, errors.New("请输入 SSH 主机别名或 用户名@主机")
 	}
 	directory = strings.TrimSpace(directory)
 	if strings.ContainsAny(directory, "\\\x00\r\n") {
-		return "", errors.New("请输入 NAS 上使用 / 分隔的目录路径")
+		return remoteEndpoint{}, errors.New("请输入 NAS 上使用 / 分隔的目录路径")
 	}
 	if directory != "" {
 		directory = path.Clean(directory)
@@ -62,17 +71,30 @@ func (b *Bridge) StartSSHMount(ctx context.Context, target, directory string) (s
 	if directory == "." {
 		directory = ""
 	}
+	return remoteEndpoint{Kind: "ssh", Name: target, Path: directory}, nil
+}
+
+func (b *Bridge) mountSSH(ctx context.Context, endpoint remoteEndpoint, expectedID string, checkLibraryFile bool) (string, *rcloneMount, error) {
 	ssh, err := exec.LookPath("ssh.exe")
 	if err != nil {
-		return "", errors.New("未检测到 Windows OpenSSH 客户端")
+		return "", nil, remoteError("missing_tools", "未检测到 Windows OpenSSH 客户端")
 	}
 	// rclone parses this as a space-separated argument list and starts ssh
 	// directly. The host never supplies options, and OpenSSH verifies the key.
-	sshCommand := `"` + ssh + `" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + target
-	return b.startRemoteMount(ctx, ":sftp:"+directory, "", true, []string{
+	sshCommand := `"` + ssh + `" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + endpoint.Name
+	var validate func(string) error
+	if checkLibraryFile {
+		validate = func(root string) error {
+			if info, err := os.Stat(filepath.Join(root, "library.json")); err != nil || !info.Mode().IsRegular() {
+				return errors.New("未能读取 library.json，请选择 NAS 上的档案库根目录")
+			}
+			return nil
+		}
+	}
+	return b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, true, []string{
 		"--config", "NUL", "--log-level", "ERROR", "--sftp-ssh", sshCommand,
 		"--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s",
-	})
+	}, validate)
 }
 
 func installMountTools(ctx context.Context) error {

@@ -197,6 +197,7 @@ type Settings struct {
 	ToastSeconds           int      `json:"toast_seconds,omitempty"`
 	LastRemoteRoot         string   `json:"last_remote_root,omitempty"`
 	LastRemoteKind         string   `json:"last_remote_kind,omitempty"`
+	ExpectedLibraryID      string   `json:"expected_library_id,omitempty"`
 }
 
 func DefaultSettings() Settings {
