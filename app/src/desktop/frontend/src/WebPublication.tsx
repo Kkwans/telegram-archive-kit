@@ -364,8 +364,8 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
         </section>
       </> : (
       <div className="publish-settings-panel">
-          <section className="panel publish-network">
-            <header className="panel-head"><h3><Wifi size={15} /> 访问网络</h3></header>
+          <section className="panel publish-network" aria-labelledby="publish-network-title">
+            <header className="panel-head"><h3 id="publish-network-title"><Wifi size={15} /> 访问网络</h3></header>
             <div className="publish-body">
               <div className="publish-network-fields">
                 <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={settingsLocked} /></div>
@@ -385,17 +385,17 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               </div>
               {!status.networkReady && <p className="publish-note publish-loading" role="status"><LoaderCircle size={14} className="spin" /> 正在检测访问网络…</p>}
               {draft.adapter && status.networkReady && matchingAdapters.length === 0 && <p className="publish-note" role="status">{draft.adapter === "auto" ? status.lanError || "连接 Wi-Fi 或网线后，部署会自动获取局域网地址。" : "所选网卡当前不可用，可切换到自动选择。"}</p>}
-              <small>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</small>
+              <p className="publish-access-note"><Shield size={14} aria-hidden="true" /><span>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</span></p>
             </div>
           </section>
-          <section className="panel publish-background">
-            <header className="panel-head"><h3><Monitor size={15} /> 后台运行</h3></header>
+          <section className="panel publish-background" aria-labelledby="publish-background-title">
+            <header className="panel-head"><h3 id="publish-background-title"><Monitor size={15} /> 后台运行</h3></header>
             <div className="publish-body publish-lifecycle">
               <PublicationSwitch label="退出客户端后继续部署" hint="从托盘退出后，网页仍可访问" checked={draft.keepOnExit} disabled={settingsLocked} onChange={(keepOnExit) => update({ keepOnExit })} />
               <PublicationSwitch label="登录 Windows 后自动部署" hint="恢复上次开启的部署" checked={draft.auto} disabled={settingsLocked} onChange={(auto) => update({ auto })} />
               <div className="publish-recovery">
                 <PublicationSwitch label="故障时自动重启" hint={status.requested ? "停止部署后可更改重启设置" : "后台进程异常退出时尝试恢复"} checked={draft.restartOnFailure} disabled={restartLocked} onChange={(restartOnFailure) => update({ restartOnFailure })} />
-                {draft.restartOnFailure && <label className="publish-limit"><span>上限</span><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={restartLocked} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></label>}
+                {draft.restartOnFailure && <label className="publish-limit"><span>重启上限</span><span className="publish-limit-control"><input type="number" aria-label="重启上限" min={1} max={10} value={draft.restartLimit || ""} disabled={restartLocked} onChange={(event) => update({ restartLimit: Number(event.target.value) })} /><span>次 · 间隔 5 秒</span></span></label>}
                 {!validLimit && <p className="publish-note" role="status">重启上限须在 1 到 10 次之间</p>}
               </div>
             </div>

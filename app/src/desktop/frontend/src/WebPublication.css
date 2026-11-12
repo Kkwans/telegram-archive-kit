@@ -76,25 +76,30 @@
 .publish-page .publish-chat-button[aria-pressed=true] .publish-chat-indicator { padding: 0; background: transparent; }
 .publish-page .publish-chat-button:focus-visible { outline-offset: 1px; }
 
-/* Settings occupy their content height; labels and all three controls share a baseline. */
+/* The settings page is one centered measure, shared by its heading, form and actions. */
+.publish-page.publish-page-settings {
+  max-width: 660px;
+}
+.publish-page.publish-page-settings > :is(.publish-heading, .publish-settings-panel, .publish-footer, .publish-settings-lock) {
+  width: 100%;
+  min-width: 0;
+}
 .publish-page .publish-settings-panel {
   --publish-control-column: min(260px, 47%);
   display: block;
   width: 100%;
-  max-width: 660px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-.publish-page.publish-page-settings > :is(.publish-heading, .publish-footer, .publish-settings-lock) { max-width: 660px; }
 .publish-page .publish-settings-panel > section { border: 0; border-radius: 0; background: transparent; }
 .publish-page .publish-settings-panel > section + section { border-top: 1px solid var(--line); }
 .publish-page .publish-settings-panel > section > .panel-head {
-  min-height: 39px;
-  padding: 10px 16px;
+  min-height: 44px;
+  padding: 16px 16px 8px;
   border-bottom: 0;
 }
-.publish-page .publish-settings-panel .publish-body { padding: 0 16px 10px; gap: 0; }
+.publish-page .publish-settings-panel .publish-body { padding: 0 16px 12px; gap: 0; }
 .publish-page .publish-network-fields { display: block; }
 .publish-page .publish-network-fields .field {
   display: grid;
@@ -107,6 +112,7 @@
 .publish-page .publish-network-fields .field + .field { border-top: 1px solid var(--line); }
 .publish-page .publish-network-fields .field > :is(span, label) { margin: 0; font-size: 12.5px; font-weight: 650; line-height: 18px; color: var(--text); }
 .publish-page .publish-network-fields .field > small { grid-column: 2; }
+.publish-page .publish-network-fields .field > :is(.ui-select, .publish-port-control) { width: 100%; min-width: 0; justify-self: end; }
 .publish-page .publish-network-fields :is(.ui-select-btn, input[type=number], .publish-port-control .btn) {
   box-sizing: border-box;
   height: 36px;
@@ -125,23 +131,35 @@
 .publish-page .publish-network-switches .publish-switch,
 .publish-page .publish-lifecycle .publish-switch {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--publish-control-column);
-  min-height: 47px;
-  padding-block: 6px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  min-height: 52px;
+  padding-block: 8px;
+  gap: 16px;
 }
-.publish-page .publish-settings-panel .publish-switch-track { width: 36px; justify-self: start; }
+.publish-page .publish-settings-panel .publish-switch-track { width: 36px; justify-self: end; }
 .publish-page .publish-switch-copy { gap: 2px; }
 .publish-page .publish-switch-copy b { font-size: 12.5px; line-height: 1.5; }
 .publish-page .publish-switch-copy small { font-size: 11.5px; line-height: 1.5; }
-.publish-page .publish-network > .publish-body > small { display: block; border-top: 1px solid var(--line); padding-top: 8px; line-height: 1.5; }
+.publish-page .publish-access-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.publish-page .publish-access-note > svg { flex: none; margin-top: 2px; }
+.publish-page .publish-settings-panel > .publish-background > .panel-head { padding-top: 20px; }
 .publish-page .publish-network > .publish-body > .publish-port-result { margin-block: 6px; }
 .publish-page .publish-network > .publish-body > .publish-note { padding-block: 6px; }
-.publish-page .publish-limit { gap: 8px; padding-bottom: 12px; font-variant-numeric: tabular-nums; }
+.publish-page .publish-limit { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding: 4px 0 8px; font-variant-numeric: tabular-nums; }
+.publish-page .publish-limit-control { display: flex; align-items: center; justify-self: end; gap: 8px; }
 .publish-page .publish-limit input { height: 30px; width: 60px; }
-.publish-page.publish-page-settings > .publish-footer,
-.publish-page.publish-page-settings > .publish-settings-lock { width: 100%; }
 .publish-page .publish-footer { padding: 10px 12px; gap: 8px; }
+.publish-page.publish-page-settings > .publish-footer { padding-inline: 16px; }
 .publish-page .publish-footer > span { font-size: 12px; }
 
 /* Diagnostics stay attached to the port, with compact, distinct process actions. */
@@ -205,7 +223,6 @@
   .publish-page .publish-heading-action .btn { padding-inline: 8px; gap: 4px; }
   .publish-page .publish-network-fields .field { grid-template-columns: minmax(0, 1fr); }
   .publish-page .publish-network-fields .field > small { grid-column: 1; }
-  .publish-page .publish-settings-panel .publish-switch { grid-template-columns: minmax(0, 1fr) 36px; }
   .publish-page .publish-status-head { gap: 10px; }
   .publish-page .publish-endpoint { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
   .publish-page .publish-endpoint-actions { grid-column: 2; grid-row: 1; }
