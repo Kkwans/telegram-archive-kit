@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -10,14 +11,59 @@ type SyncPlanSchedule struct {
 	Frequency string `json:"frequency"`
 	Time      string `json:"time"`
 	Weekday   int    `json:"weekday"`
+	Weekdays  []int  `json:"weekdays,omitempty"`
+}
+
+func (s SyncPlanSchedule) days() (uint8, error) {
+	if s.Frequency == "daily" {
+		return 0x7f, nil
+	}
+	days := s.Weekdays
+	if days == nil {
+		days = []int{s.Weekday}
+	}
+	if len(days) == 0 {
+		return 0, errors.New("请选择至少一个执行日")
+	}
+	var mask uint8
+	for _, day := range days {
+		if day < 0 || day > 6 {
+			return 0, errors.New("请选择有效的星期")
+		}
+		mask |= 1 << day
+	}
+	return mask, nil
+}
+
+func (s SyncPlanSchedule) normalized() SyncPlanSchedule {
+	if s.Frequency == "daily" {
+		s.Weekday, s.Weekdays = 0, nil
+		return s
+	}
+	if s.Weekdays != nil {
+		s.Weekdays = slices.Clone(s.Weekdays)
+		slices.Sort(s.Weekdays)
+		s.Weekdays = slices.Compact(s.Weekdays)
+		s.Weekday = s.Weekdays[0]
+		if len(s.Weekdays) == 1 {
+			s.Weekdays = nil
+		}
+	}
+	return s
+}
+
+func (s SyncPlanSchedule) equal(other SyncPlanSchedule) bool {
+	a, _ := s.days()
+	b, _ := other.days()
+	return s.Frequency == other.Frequency && s.Time == other.Time && a == b
 }
 
 func (s SyncPlanSchedule) clock() (time.Time, error) {
 	if s.Frequency != "daily" && s.Frequency != "weekly" {
 		return time.Time{}, errors.New("请选择每天或每周执行")
 	}
-	if s.Weekday < 0 || s.Weekday > 6 {
-		return time.Time{}, errors.New("请选择有效的星期")
+	if _, err := s.days(); err != nil {
+		return time.Time{}, err
 	}
 	clock, err := time.Parse("15:04", s.Time)
 	if err != nil || clock.Format("15:04") != s.Time {
@@ -81,9 +127,10 @@ func syncPlanSlots(s SyncPlanSchedule, eligible time.Time, last string, now time
 	if err != nil {
 		return
 	}
+	days, _ := s.days()
 	today := syncCivilDay(now)
 	matches := func(day time.Time) bool {
-		return s.Frequency == "daily" || int(day.Weekday()) == s.Weekday
+		return days&(1<<day.Weekday()) != 0
 	}
 	slot := func(day time.Time) syncSlot {
 		return syncSlot{day.Format(time.DateOnly), syncWallTime(day, clock, now.Location())}

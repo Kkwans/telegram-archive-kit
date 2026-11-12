@@ -316,6 +316,7 @@ func cloneSyncCheckpoint(c SyncPlanCheckpoint) SyncPlanCheckpoint {
 }
 
 func cloneSyncPlan(p SyncPlan) SyncPlan {
+	p.Schedule.Weekdays = slices.Clone(p.Schedule.Weekdays)
 	p.MediaKinds = slices.Clone(p.MediaKinds)
 	p.Targets = slices.Clone(p.Targets)
 	return p

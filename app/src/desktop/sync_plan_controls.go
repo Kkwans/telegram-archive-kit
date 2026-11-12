@@ -128,9 +128,7 @@ func normalizeSyncPlanDraft(d *syncPlanDraft) error {
 	if _, err := d.Schedule.clock(); err != nil {
 		return err
 	}
-	if d.Schedule.Frequency == "daily" {
-		d.Schedule.Weekday = 0
-	}
+	d.Schedule = d.Schedule.normalized()
 	switch d.FirstScope {
 	case "":
 		d.FirstScope = "30d"
@@ -291,7 +289,7 @@ func (s *SyncPlanService) save(ctx context.Context, d syncPlanDraft, runNow bool
 			}
 		}
 	}
-	if d.Schedule != record.Schedule {
+	if !d.Schedule.equal(record.Schedule) {
 		record.EligibleAt, record.LastSlot = now, ""
 	} else if d.Enabled && !record.Enabled {
 		record.EligibleAt = now

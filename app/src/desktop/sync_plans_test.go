@@ -56,6 +56,34 @@ func TestSyncPlanPreviewSchedule(t *testing.T) {
 	}
 }
 
+func TestSyncPlanWeeklyMultipleDays(t *testing.T) {
+	loc := time.FixedZone("local", 8*60*60)
+	monday := time.Date(2026, 11, 16, 20, 0, 0, 0, loc)
+	thursday := monday.AddDate(0, 0, 3)
+	schedule := SyncPlanSchedule{Frequency: "weekly", Time: "20:00", Weekdays: []int{4, 1}}
+	due, next := syncPlanSlots(schedule, monday.AddDate(0, 0, -7), "", monday.Add(time.Minute))
+	if !due.at.Equal(monday) || !next.at.Equal(thursday) {
+		t.Fatalf("Monday due=%v next=%v, want %v and %v", due, next, monday, thursday)
+	}
+	due, next = syncPlanSlots(schedule, monday.AddDate(0, 0, -7), due.day, thursday.Add(time.Minute))
+	if !due.at.Equal(thursday) || !next.at.Equal(monday.AddDate(0, 0, 7)) {
+		t.Fatalf("Thursday due=%v next=%v", due, next)
+	}
+	due, _ = syncPlanSlots(schedule, monday.AddDate(0, 0, -7), due.day, thursday.Add(time.Hour))
+	if !due.at.IsZero() {
+		t.Fatalf("Thursday was queued twice: %v", due)
+	}
+	legacy := SyncPlanSchedule{Frequency: "weekly", Time: "20:00", Weekday: 0}
+	_, next = syncPlanSlots(legacy, monday, "", monday)
+	if !next.at.Equal(monday.AddDate(0, 0, 6)) || !legacy.equal(SyncPlanSchedule{Frequency: "weekly", Time: "20:00", Weekdays: []int{0}}) {
+		t.Fatalf("legacy Sunday should retain its schedule: %v", next)
+	}
+	schedule.Weekdays = []int{}
+	if _, err := schedule.clock(); err == nil {
+		t.Fatal("weekly schedule accepted an empty selection")
+	}
+}
+
 func syncTestHooks(execute SyncPlanHooks) SyncPlanHooks {
 	execute.CurrentLibraryID = func() string { return "fixture-library" }
 	execute.Bind = func(_ context.Context, inputs []SyncPlanTargetInput) (SyncPlanBinding, error) {
