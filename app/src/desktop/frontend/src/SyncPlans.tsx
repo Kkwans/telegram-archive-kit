@@ -1,5 +1,5 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime, duration } from "./format";
 import { call } from "./rpc";
@@ -8,7 +8,8 @@ import type { Bootstrap, OnlineChat, OnlineChats } from "./types";
 import "./SyncPlans.css";
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
-const WEEKDAY_OPTIONS = [1, 2, 3, 4, 5, 6, 0].map((day) => ({ value: String(day), label: `星期${WEEKDAYS[day]}` }));
+const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const CHAT_PAGE_SIZE = 30;
 const FREQUENCY_OPTIONS = [{ value: "daily", label: "每天" }, { value: "weekly", label: "每周" }];
 const SCOPE_OPTIONS = [
   { value: "30d", label: "最近 30 天" },
@@ -27,7 +28,7 @@ const MEDIA = [
 
 type MediaKind = typeof MEDIA[number]["kind"];
 type FirstScope = "30d" | "now" | "all";
-type Schedule = { frequency: "daily" | "weekly"; time: string; weekday?: number };
+type Schedule = { frequency: "daily" | "weekly"; time: string; weekday?: number; weekdays?: number[] };
 type PlanState = "idle" | "paused" | "queued" | "running" | "retrying" | "blocked" | "failed" | "stopping" | "stopped" | "succeeded";
 
 interface Target {
@@ -121,12 +122,15 @@ const ACTION_MESSAGES: Record<PlanAction, string> = {
 };
 
 function draftFromPlan(plan?: Plan): Draft {
-  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "30d", mediaKinds: [], includeHistory: false };
+  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "30d", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: false };
   return { id: plan.id, name: plan.name, schedule: plan.schedule, targets: plan.targets ?? [], enabled: plan.enabled, firstScope: plan.firstScope || "30d", mediaKinds: plan.mediaKinds ?? [], includeHistory: plan.includeHistory };
 }
 
 function scheduleText(schedule: Schedule) {
-  return `${schedule.frequency === "weekly" ? `每周${WEEKDAYS[schedule.weekday ?? 1]}` : "每天"} ${schedule.time}`;
+  if (schedule.frequency === "daily") return `每天 ${schedule.time}`;
+  const days = schedule.weekdays ?? [schedule.weekday ?? 1];
+  const names = WEEKDAY_ORDER.filter((day) => days.includes(day)).map((day) => WEEKDAYS[day]);
+  return names.length ? `每周${names.join("、")} ${schedule.time}` : "请选择执行日";
 }
 
 function when(value: string | undefined, fallback: string) {
@@ -483,10 +487,11 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
 function TargetTable({ targets, onOpenTask }: { targets: Target[]; onOpenTask: (id: string) => void }) {
   if (!targets.length) return null;
   return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
-    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-time-col" /><col className="plan-target-task-col" /></colgroup>
-    <thead><tr><th scope="col">聊天与结果</th><th scope="col" className="num">消息</th><th scope="col" className="num">媒体</th><th scope="col" className="num">缺失</th><th scope="col">上次成功</th><th scope="col">任务记录</th></tr></thead>
+    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-status-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-time-col" /><col className="plan-target-task-col" /></colgroup>
+    <thead><tr><th scope="col">聊天</th><th scope="col">状态</th><th scope="col" className="num">消息</th><th scope="col" className="num">媒体</th><th scope="col" className="num">缺失</th><th scope="col">上次成功</th><th scope="col">任务记录</th></tr></thead>
     <tbody>{targets.map((target) => <tr key={target.peer}>
-      <td><div className="plan-target-name"><b>{target.name || target.peer}</b>{target.state && <Status state={target.state} />}</div>{target.message && <small>{target.message}</small>}</td>
+      <td><div className="plan-target-name"><b>{target.name || target.peer}</b></div>{target.message && <small>{target.message}</small>}</td>
+      <td>{target.state ? <Status state={target.state} /> : "—"}</td>
       <td className="num">{target.addedMessages?.toLocaleString() ?? "—"}</td>
       <td className="num">{target.addedMedia?.toLocaleString() ?? "—"}</td>
       <td className={`num ${target.missing ? "warn" : ""}`}>{target.missing?.toLocaleString() ?? "—"}</td>
@@ -506,10 +511,12 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   onSave: (draft: Draft, run: boolean) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(() => draftFromPlan(plan));
-  const [mediaEnabled, setMediaEnabled] = useState(() => !!plan?.mediaKinds?.length);
+  const [mediaEnabled, setMediaEnabled] = useState(() => !plan || !!plan.mediaKinds?.length);
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [onlySelected, setOnlySelected] = useState(false);
+  const [chatPage, setChatPage] = useState(1);
+  const chatList = useRef<HTMLDivElement>(null);
   const [chats, setChats] = useState<OnlineChat[]>([]);
   const [loading, setLoading] = useState(false);
   const [chatError, setChatError] = useState("");
@@ -525,25 +532,27 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   const canFetchChats = hasSession && boundLibraryOpen && !libraryChanged;
   const libraryLabel = plan?.libraryLabel || initialLibrary.root || "尚未打开档案库";
   const selected = useMemo(() => new Set(draft.targets.map(({ peer }) => peer)), [draft.targets]);
-  const { frequency, time, weekday } = draft.schedule;
+  const { frequency, time, weekday, weekdays } = draft.schedule;
   const validTime = /^\d{2}:\d{2}$/.test(time);
-  const previewWeekday = frequency === "weekly" ? weekday ?? 1 : undefined;
-  const previewKey = `${frequency}/${time}/${previewWeekday ?? ""}`;
+  const selectedDays = useMemo(() => weekdays ?? [weekday ?? 1], [weekdays, weekday]);
+  const previewDays = frequency === "weekly" ? selectedDays : undefined;
+  const validDays = frequency === "daily" || selectedDays.length > 0;
+  const previewKey = `${frequency}/${time}/${previewDays?.join(",") ?? ""}`;
   const preview = schedulePreview?.key === previewKey ? schedulePreview : null;
 
   useEffect(() => {
-    if (!draft.enabled || !validTime) return;
+    if (!draft.enabled || !validTime || !validDays) return;
     const controller = new AbortController();
     const { signal } = controller;
     const timer = window.setTimeout(() => {
-      void call<{ nextRunAt: string }>("syncPlanPreviewSchedule", { schedule: { frequency, time, weekday: previewWeekday } }, signal).then((result) => {
+      void call<{ nextRunAt: string }>("syncPlanPreviewSchedule", { schedule: { frequency, time, weekdays: previewDays } }, signal).then((result) => {
         if (!signal.aborted) setSchedulePreview({ key: previewKey, nextRunAt: result.nextRunAt });
       }).catch((e: Error) => {
         if (!signal.aborted) setSchedulePreview({ key: previewKey, error: e.message });
       });
     }, 220);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [draft.enabled, frequency, time, previewWeekday, validTime, previewKey]);
+  }, [draft.enabled, frequency, time, previewDays, validTime, validDays, previewKey]);
 
   useEffect(() => {
     if (!canFetchChats) { setChats([]); setLoading(false); setChatError(""); return; }
@@ -579,10 +588,18 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   const visible = useMemo(() => allChats.filter((chat) =>
     (!onlySelected || selected.has(chat.peer)) && (type === "all" || chat.type === type) && (!queryValue || `${chat.name} ${chat.username ?? ""} ${chat.peer}`.toLowerCase().includes(queryValue))
   ), [allChats, onlySelected, selected, type, queryValue]);
+  const pages = Math.max(1, Math.ceil(visible.length / CHAT_PAGE_SIZE));
+  const page = Math.min(chatPage, pages);
+  const firstChat = (page - 1) * CHAT_PAGE_SIZE;
+  const pageChats = visible.slice(firstChat, firstChat + CHAT_PAGE_SIZE);
+  const filtered = !!query || type !== "all" || onlySelected;
+  useLayoutEffect(() => {
+    if (chatList.current) chatList.current.scrollTop = 0;
+  }, [page, queryValue, type, onlySelected]);
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
   const toggle = (chat: (typeof allChats)[number]) => setDraft((prev) => ({ ...prev, targets: prev.targets.some(({ peer }) => peer === chat.peer) ? prev.targets.filter(({ peer }) => peer !== chat.peer) : [...prev.targets, { peer: chat.peer, slug: chat.localSlug, name: chat.name }] }));
-  const canSave = !libraryChanged && !!draft.name.trim() && validTime && draft.targets.length > 0 && (!mediaEnabled || draft.mediaKinds.length > 0) && (!!plan || hasSession);
+  const canSave = !libraryChanged && !!draft.name.trim() && validTime && validDays && draft.targets.length > 0 && (!mediaEnabled || draft.mediaKinds.length > 0) && (!!plan || hasSession);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -592,7 +609,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
     setError("");
     setSaveAndRun(run);
     try {
-      await onSave({ ...draft, schedule: { frequency, time, weekday: previewWeekday }, mediaKinds: mediaEnabled ? draft.mediaKinds : [], includeHistory: mediaEnabled && draft.includeHistory }, run);
+      await onSave({ ...draft, schedule: { frequency, time, weekdays: previewDays }, mediaKinds: mediaEnabled ? draft.mediaKinds : [], includeHistory: mediaEnabled && draft.includeHistory }, run);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -613,17 +630,17 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
           <div className="plan-form-section">
             <div className="plan-field-heading"><h2>归档对象</h2><span className="plan-selected-count" aria-live="polite">已选 <b>{draft.targets.length}</b> 个</span></div>
             <div className="plan-chat-toolbar">
-              <label className="task-search"><Search size={14} /><input type="search" aria-label="搜索聊天" placeholder="搜索名称、用户名或 ID" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-              <Select value={type} options={CHAT_TYPES} ariaLabel="按聊天类型筛选" onChange={setType} disabled={saving} />
-              <button type="button" className="btn sm plan-pick" aria-pressed={onlySelected} onClick={() => setOnlySelected((value) => !value)}><ListFilter size={14} /> 仅看已选</button>
+              <label className="task-search"><Search size={14} /><input type="search" aria-label="搜索聊天" placeholder="搜索名称、用户名或 ID" value={query} onChange={(event) => { setQuery(event.target.value); setChatPage(1); }} /></label>
+              <Select value={type} options={CHAT_TYPES} ariaLabel="按聊天类型筛选" onChange={(value) => { setType(value); setChatPage(1); }} disabled={saving} />
+              <button type="button" className="btn sm plan-pick" aria-pressed={onlySelected} onClick={() => { setOnlySelected((value) => !value); setChatPage(1); }}><ListFilter size={14} /> 仅看已选</button>
               <button type="button" className="icon-btn" aria-label="刷新聊天" title="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
             </div>
             {!hasSession && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>登录 Telegram 后可读取聊天列表。</span><button type="button" className="btn sm ghost" onClick={onAccount}>前往登录 <ArrowUpRight size={12} /></button></div>}
             {libraryChanged && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>编辑期间切换了档案库。请返回后为当前档案库新建计划。</span></div>}
             {!boundLibraryOpen && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>打开此计划绑定的档案库后，可添加聊天。</span></div>}
             {chatError && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{chatError}</span></div>}
-            <div className="plan-chat-list" aria-label="可选择的聊天">
-              {loading && !visible.length ? <div className="plan-loading" role="status" aria-label="正在读取聊天">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div> : visible.length ? visible.map((chat) => {
+            <div className="plan-chat-list" aria-label="可选择的聊天" ref={chatList}>
+              {loading && !visible.length ? <div className="plan-loading" role="status" aria-label="正在读取聊天">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div> : pageChats.length ? pageChats.map((chat) => {
                 const checked = selected.has(chat.peer);
                 const ChatIcon = chat.type === "channel" ? Megaphone : chat.type === "group" ? UsersRound : MessageCircle;
                 return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={(event) => {
@@ -637,7 +654,17 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                 </button>;
               }) : <p className="plan-chat-empty">{!hasSession ? "登录后选择要同步的聊天。" : onlySelected ? "没有符合条件的已选聊天。" : "没有找到符合条件的聊天。"}</p>}
             </div>
-            {(loading || query || type !== "all" || onlySelected) && <div className="plan-chat-list-footer"><span>{loading ? "正在刷新聊天…" : `${visible.length} 个结果`}</span>{(query || type !== "all" || onlySelected) && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); }}>清除筛选</button>}</div>}
+            {(loading || filtered || pages > 1) && <div className="plan-chat-list-footer">
+              <span aria-live="polite">{loading ? "正在刷新聊天…" : pages > 1 ? `${firstChat + 1}–${firstChat + pageChats.length} / ${visible.length.toLocaleString()} 个聊天` : `${visible.length} 个结果`}</span>
+              <div className="plan-chat-list-actions">
+                {filtered && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); setChatPage(1); }}>清除筛选</button>}
+                {pages > 1 && <div className="plan-chat-pagination" aria-label="聊天列表分页">
+                  <button type="button" className="icon-btn" aria-label="上一页聊天" title="上一页聊天" disabled={page <= 1} onClick={() => setChatPage(page - 1)}><ChevronLeft size={15} /></button>
+                  <span aria-label={`第 ${page} 页，共 ${pages} 页`}>{page} / {pages}</span>
+                  <button type="button" className="icon-btn" aria-label="下一页聊天" title="下一页聊天" disabled={page >= pages} onClick={() => setChatPage(page + 1)}><ChevronRight size={15} /></button>
+                </div>}
+              </div>
+            </div>}
           </div>
           <div className="plan-scope-section">
             <div><h3>首次归档范围</h3><p>仅用于未归档的聊天。已有归档从上次位置继续。</p></div>
@@ -648,14 +675,23 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
         <section className="panel plan-form-panel plan-settings-panel">
           <div className="plan-form-section plan-schedule-section">
             <div className="plan-field-heading"><h2>运行时间</h2></div>
-            <div className={`plan-schedule-fields ${frequency}`}>
+            <div className="plan-schedule-fields">
               <div className="field"><span>重复</span><Select ariaLabel="重复频率" value={frequency} options={FREQUENCY_OPTIONS} disabled={saving} onChange={(value) => set("schedule", { ...draft.schedule, frequency: value as Schedule["frequency"] })} /></div>
-              {frequency === "weekly" && <div className="field"><span>星期</span><Select ariaLabel="运行星期" value={String(weekday ?? 1)} options={WEEKDAY_OPTIONS} disabled={saving} onChange={(value) => set("schedule", { ...draft.schedule, weekday: Number(value) })} /></div>}
               <label className="field"><span>时间</span><input type="time" required value={time} onChange={(event) => set("schedule", { ...draft.schedule, time: event.target.value })} /></label>
             </div>
+            {frequency === "weekly" && <div className="field plan-weekdays">
+              <span id="plan-weekday-label">执行日</span>
+              <div role="group" aria-labelledby="plan-weekday-label">
+                {WEEKDAY_ORDER.map((day) => {
+                  const checked = selectedDays.includes(day);
+                  return <button type="button" className="btn sm plan-pick" key={day} aria-label={`星期${WEEKDAYS[day]}`} aria-pressed={checked}
+                    onClick={() => set("schedule", { ...draft.schedule, weekdays: WEEKDAY_ORDER.filter((item) => item === day ? !checked : selectedDays.includes(item)) })}>周{WEEKDAYS[day]}</button>;
+                })}
+              </div>
+            </div>}
             <div className="plan-schedule-preview" aria-live="polite">
               <span><Clock size={14} /> 下次运行</span>
-              <b title={preview?.error}>{!draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
+              <b title={preview?.error}>{!validDays ? "至少选择一个执行日" : !draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
               <small>本机时间</small>
             </div>
           </div>
@@ -668,9 +704,9 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
             {mediaEnabled && <>
               <div className="plan-media-options" role="group" aria-label="媒体类型">{MEDIA.map(({ kind, label, icon: Icon }) => {
                 const checked = draft.mediaKinds.includes(kind);
-                return <button className="btn sm plan-pick" type="button" aria-pressed={checked} key={kind}
+                return <button className="btn sm plan-pick plan-media-option" type="button" aria-pressed={checked} key={kind}
                   onClick={() => set("mediaKinds", checked ? draft.mediaKinds.filter((entry) => entry !== kind) : [...draft.mediaKinds, kind])}>
-                  <Icon size={14} /> {label}<Check className="plan-pick-check" size={12} />
+                  <span><Icon size={14} /> {label}</span>
                 </button>;
               })}</div>
               {draft.mediaKinds.length === 0 && <p className="plan-field-hint" role="status">请选择至少一种媒体类型。</p>}
@@ -690,8 +726,8 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
       <div className="plan-editor-summary"><b>已选 {draft.targets.length} 个聊天</b><span>{scheduleText(draft.schedule)} · {mediaText(mediaEnabled ? draft.mediaKinds : [])}</span></div>
       <div className="plan-row-actions">
         <button type="button" className="btn ghost" disabled={saving} onClick={onCancel}>取消</button>
-        <button type="submit" className="btn primary" value="save" disabled={saving || !canSave}>{saving && !saveAndRun && <Loader2 size={13} className="spin" />} 保存计划</button>
-        <button type="submit" className="btn" value="run" disabled={saving || !canSave || !hasSession}>{saving && saveAndRun ? <Loader2 size={13} className="spin" /> : <Play size={13} />} 保存并运行</button>
+        <button type="submit" className="btn" value="save" disabled={saving || !canSave}>{saving && !saveAndRun && <Loader2 size={13} className="spin" />} 保存计划</button>
+        <button type="submit" className="btn primary" value="run" disabled={saving || !canSave || !hasSession}>{saving && saveAndRun ? <Loader2 size={13} className="spin" /> : <Play size={13} />} 保存并运行</button>
       </div>
     </footer>
   </form>;

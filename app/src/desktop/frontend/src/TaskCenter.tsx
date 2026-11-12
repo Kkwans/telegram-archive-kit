@@ -165,6 +165,10 @@ function taskInfoCards(task: TaskDetail): TaskInfoCard[] {
   } else if (task.kind === "import-json") {
     if (task.filesTotal) add("文件", `${task.filesDone ?? 0} / ${task.filesTotal} 个`);
     add("源目录", task.source || "", { mono: true, wide: true });
+  } else if (task.kind === "sync-plan") {
+    add("归档结果", content);
+    const downloaded = task.bytes ?? 0;
+    if (downloaded > 0) add("已下载", bytes(downloaded));
   } else if (task.detail) {
     add("任务说明", task.detail, { wide: true });
   }
@@ -327,7 +331,7 @@ interface DownloadConfigDraft {
   reconnectTimeout: string;
 }
 
-export function TaskDetailView({ task, onBack, fromPlan, onOpenTask, onOpenPlans, toast }: { task: TaskDetail; onBack: () => void; fromPlan: boolean; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void }) {
+export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
@@ -538,10 +542,10 @@ export function TaskDetailView({ task, onBack, fromPlan, onOpenTask, onOpenPlans
     <>
       <div className="page-head download-detail-head">
         <button className="btn" onClick={onBack}>
-          <ArrowLeft size={14} /> {fromPlan ? "返回本轮记录" : "返回任务中心"}
+          <ArrowLeft size={14} /> 返回任务中心
         </button>
         <div className="actions">
-          {planned && !fromPlan && <button className="btn ghost" onClick={() => onOpenPlans(task.planId, task.planRunId)}><CalendarClock size={13} /> 查看同步计划</button>}
+          {planned && <button className="btn ghost" onClick={() => onOpenPlans(task.planId, task.planRunId)}><CalendarClock size={13} /> 查看同步计划</button>}
           {!planned && running && !pausing && (
             <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
@@ -1005,20 +1009,36 @@ export function TasksPage({
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<TaskDetail | null>(null);
-  const [taskFromPlan, setTaskFromPlan] = useState(false);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
+  const [modalFromPlan, setModalFromPlan] = useState(false);
   const [selectionVersion, setSelectionVersion] = useState(0);
   const selection = useRef(0);
   const [clearConfirm, setClearConfirm] = useState(false);
   const modalRef = useRef<HTMLDialogElement>(null);
+  const planTaskModalRef = useRef<HTMLDivElement>(null);
+  const closeModal = () => { selection.current++; setModalTask(null); };
 
   useLayoutEffect(() => {
     if (!modalTask) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const dialog = modalRef.current;
+    const nativeDialog = modalFromPlan ? null : modalRef.current;
+    const dialog = nativeDialog ?? planTaskModalRef.current;
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? []).filter((element) => element.getClientRects().length > 0);
-    dialog?.showModal();
-    focusable()[0]?.focus({ preventScroll: true });
+    const root = modalFromPlan ? document.getElementById("root") : null;
+    const priorInert = root?.inert ?? false;
+    if (root) root.inert = true;
+    nativeDialog?.showModal();
+    const focusClose = () => focusable()[0]?.focus({ preventScroll: true });
+    const focusWhenReady = () => {
+      if (!document.body.classList.contains("glass-ready") || document.body.classList.contains("glass-capturing")) return;
+      observer?.disconnect();
+      focusClose();
+    };
+    const observer = modalFromPlan ? new MutationObserver(focusWhenReady) : null;
+    if (observer) {
+      observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+      focusWhenReady();
+    } else focusClose();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -1036,10 +1056,12 @@ export function TasksPage({
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      dialog?.close();
+      observer?.disconnect();
+      nativeDialog?.close();
+      if (root) root.inert = priorInert;
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     };
-  }, [modalTask?.id]);
+  }, [modalTask?.id, modalFromPlan]);
 
   useEffect(() => () => { selection.current++; }, []);
 
@@ -1063,12 +1085,12 @@ export function TasksPage({
     const known = tasks.find((task) => task.id === taskID);
     const show = (detail: TaskDetail) => {
       setSelectionVersion(version);
-      if (kindMeta(detail.kind).group === "download") {
+      if (!fromPlan && kindMeta(detail.kind).group === "download") {
         setModalTask(null);
-        setTaskFromPlan(fromPlan);
         setActive(detail);
       } else {
         setActive(null);
+        setModalFromPlan(fromPlan);
         setModalTask(detail);
       }
     };
@@ -1157,9 +1179,9 @@ export function TasksPage({
   }, [modalTask?.id, modalTask?.state, selectionVersion]);
 
   if (active) {
-    return <TaskDetailView key={active.id} task={active} fromPlan={taskFromPlan}
+    return <TaskDetailView key={active.id} task={active}
       onBack={() => { selection.current++; setActive(null); }}
-      onOpenTask={(taskID) => void loadTask(taskID, taskFromPlan)}
+      onOpenTask={(taskID) => void loadTask(taskID)}
       onOpenPlans={(planId, runId) => {
         selection.current++;
         setActive(null);
@@ -1179,6 +1201,84 @@ export function TasksPage({
   const modalShowMedia = Boolean(modalTask && ((modalTask.media ?? 0) > 0 || modalMedia.some((part) => part.value > 0)));
   const modalChatLabel = modalTask ? taskChatIdLabel(modalTask) : "";
   const modalShowError = Boolean(modalTask?.error) && (modalTask?.state === "failed" || modalTask?.state === "partial");
+  const modalContents = modalTask && <>
+    <div className="task-modal-head task-info-head">
+      <div className="task-info-heading">
+        <div className="task-info-title-row">
+          <h2 id="task-modal-title">{modalHeading}</h2>
+          {modalMeta && (
+            <span className={`kind-chip group-${modalMeta.group}`}>
+              {ModalIcon && <ModalIcon size={11} />} {modalMeta.label}
+            </span>
+          )}
+        </div>
+        <div className="task-info-sub">
+          <span className={`task-state ${modalTask.state}`}>
+            {modalTask.state === "running" ? <Loader2 size={12} className="spin" /> : modalTask.state === "done" ? <CheckCircle2 size={12} /> : modalTask.state === "partial" ? <AlertTriangle size={12} /> : modalTask.state === "paused" ? <Pause size={12} /> : modalTask.state === "stopped" ? <Square size={12} /> : <XCircle size={12} />}
+            {statusLabel(modalTask.state)}
+          </span>
+          {modalChatLabel && <span className="mono">{modalChatLabel}</span>}
+          {modalTask.mode && <span className="task-info-mode">{modeLabel(modalTask.mode)}</span>}
+          {modalChat && modalChat !== modalHeading && <b>{modalChat}</b>}
+        </div>
+      </div>
+      <button className="icon-btn" aria-label="关闭任务详情" onClick={closeModal}>
+        <X size={15} />
+      </button>
+    </div>
+
+    <div className={`task-info-progress-card ${modalTask.state}`}>
+      <div className="task-info-percent">
+        <b>{modalPercent}</b><em>%</em>
+      </div>
+      <div className="task-info-progress-main">
+        <div className="task-info-detail">{modalTask.detail || statusLabel(modalTask.state)}</div>
+        <div className="task-info-bar">
+          <i className={modalTask.state} style={{ width: `${modalTask.state === "running" ? Math.max(1, modalPercent) : modalPercent}%` }} />
+        </div>
+        <div className="task-info-times">
+          <span>开始 <b>{dateTime(modalTask.startedAt)}</b></span>
+          <span>结束 <b>{modalTask.finishedAt ? dateTime(modalTask.finishedAt) : modalTask.state === "running" ? "进行中" : "—"}</b></span>
+          <span>耗时 <b><TaskElapsed state={modalTask.state} elapsedMs={modalTask.elapsedMs} startedAt={modalTask.startedAt} finishedAt={modalTask.finishedAt} /></b></span>
+        </div>
+      </div>
+    </div>
+
+    {(modalCards.length > 0 || modalShowMedia) && (
+      <div className="task-info-grid">
+        {modalCards.map((card) => (
+          <div key={card.label} className={`task-info-card ${card.wide ? "wide" : ""}`}>
+            <span>{card.label}</span>
+            <b className={card.mono ? "mono" : ""}>{card.mono ? wrapPath(card.value) : card.value}</b>
+          </div>
+        ))}
+        {modalShowMedia && (
+          <div className="task-info-card wide task-media-card">
+            <span>媒体构成</span>
+            <div className="task-media-grid">
+              {modalMedia.map((part) => (
+                <div key={part.label}>
+                  <em>{part.label}</em>
+                  <b>{part.value.toLocaleString()}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
+    {modalShowError && (
+      <div className="task-info-error" role="alert">
+        <AlertTriangle size={14} />
+        <span>{modalTask.error}</span>
+      </div>
+    )}
+
+    <div className="modal-actions">
+      <button className="btn ghost" onClick={closeModal}><X size={12} /> 关闭</button>
+    </div>
+  </>;
 
   return (
     <div className="task-center-workspace">
@@ -1334,106 +1434,27 @@ export function TasksPage({
 
       </div>}
 
-      {modalTask && createPortal(
-          <dialog
-            ref={modalRef}
-            className="task-modal task-info-modal"
-            aria-modal="true"
-            aria-labelledby="task-modal-title"
-            onCancel={(event) => {
-              event.preventDefault();
-              selection.current++;
-              setModalTask(null);
-            }}
-            onMouseDown={(event) => {
-              if (event.target !== event.currentTarget) return;
-              const rect = event.currentTarget.getBoundingClientRect();
-              if (event.clientX < rect.left || event.clientX > rect.right ||
-                  event.clientY < rect.top || event.clientY > rect.bottom) {
-                selection.current++;
-                setModalTask(null);
-              }
-            }}
-          >
-            <div className="task-modal-head task-info-head">
-              <div className="task-info-heading">
-                <div className="task-info-title-row">
-                  <h2 id="task-modal-title">{modalHeading}</h2>
-                  {modalMeta && (
-                    <span className={`kind-chip group-${modalMeta.group}`}>
-                      {ModalIcon && <ModalIcon size={11} />} {modalMeta.label}
-                    </span>
-                  )}
-                </div>
-                <div className="task-info-sub">
-                  <span className={`task-state ${modalTask.state}`}>
-                    {modalTask.state === "running" ? <Loader2 size={12} className="spin" /> : modalTask.state === "done" ? <CheckCircle2 size={12} /> : modalTask.state === "partial" ? <AlertTriangle size={12} /> : modalTask.state === "paused" ? <Pause size={12} /> : modalTask.state === "stopped" ? <Square size={12} /> : <XCircle size={12} />}
-                    {statusLabel(modalTask.state)}
-                  </span>
-                  {modalChatLabel && <span className="mono">{modalChatLabel}</span>}
-                  {modalTask.mode && <span className="task-info-mode">{modeLabel(modalTask.mode)}</span>}
-                  {modalChat && modalChat !== modalHeading && <b>{modalChat}</b>}
-                </div>
-              </div>
-              <button className="icon-btn" aria-label="关闭任务详情" onClick={() => { selection.current++; setModalTask(null); }}>
-                <X size={15} />
-              </button>
-            </div>
-
-            <div className={`task-info-progress-card ${modalTask.state}`}>
-              <div className="task-info-percent">
-                <b>{modalPercent}</b><em>%</em>
-              </div>
-              <div className="task-info-progress-main">
-                <div className="task-info-detail">{modalTask.detail || statusLabel(modalTask.state)}</div>
-                <div className="task-info-bar">
-                  <i className={modalTask.state} style={{ width: `${modalTask.state === "running" ? Math.max(1, modalPercent) : modalPercent}%` }} />
-                </div>
-                <div className="task-info-times">
-                  <span>开始 <b>{dateTime(modalTask.startedAt)}</b></span>
-                  <span>结束 <b>{modalTask.finishedAt ? dateTime(modalTask.finishedAt) : modalTask.state === "running" ? "进行中" : "—"}</b></span>
-                  <span>耗时 <b><TaskElapsed state={modalTask.state} elapsedMs={modalTask.elapsedMs} startedAt={modalTask.startedAt} finishedAt={modalTask.finishedAt} /></b></span>
-                </div>
-              </div>
-            </div>
-
-            {(modalCards.length > 0 || modalShowMedia) && (
-              <div className="task-info-grid">
-                {modalCards.map((card) => (
-                  <div key={card.label} className={`task-info-card ${card.wide ? "wide" : ""}`}>
-                    <span>{card.label}</span>
-                    <b className={card.mono ? "mono" : ""}>{card.mono ? wrapPath(card.value) : card.value}</b>
-                  </div>
-                ))}
-                {modalShowMedia && (
-                  <div className="task-info-card wide task-media-card">
-                    <span>媒体构成</span>
-                    <div className="task-media-grid">
-                      {modalMedia.map((part) => (
-                        <div key={part.label}>
-                          <em>{part.label}</em>
-                          <b>{part.value.toLocaleString()}</b>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {modalShowError && (
-              <div className="task-info-error" role="alert">
-                <AlertTriangle size={14} />
-                <span>{modalTask.error}</span>
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="btn ghost" onClick={() => { selection.current++; setModalTask(null); }}><X size={12} /> 关闭</button>
-            </div>
-          </dialog>,
-        document.body
-      )}
+      {modalTask && createPortal(modalFromPlan ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeModal();
+        }}>
+          <div ref={planTaskModalRef} className="modal task-modal task-info-modal plan-task-modal"
+            role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
+            {modalContents}
+          </div>
+        </div>
+      ) : (
+        <dialog ref={modalRef} className="task-modal task-info-modal" aria-modal="true" aria-labelledby="task-modal-title"
+          onCancel={(event) => { event.preventDefault(); closeModal(); }}
+          onMouseDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (event.clientX < rect.left || event.clientX > rect.right ||
+                event.clientY < rect.top || event.clientY > rect.bottom) closeModal();
+          }}>
+          {modalContents}
+        </dialog>
+      ), document.body)}
 
       <ConfirmDialog
         open={clearConfirm}

@@ -679,7 +679,7 @@ func (b *Bridge) OnlineChats(timeout int) (OnlineChatsDTO, error) {
 	}
 	if !info.HasSessionFile {
 		if cached := b.online.Cached(ns); cached != nil {
-			cached.Error = "当前 namespace 没有会话，显示上次在线快照"
+			cached.Error = "当前 Telegram 会话不可用，显示上次保存的聊天列表"
 			b.annotateOnlineLocal(cached)
 			return *cached, nil
 		}
