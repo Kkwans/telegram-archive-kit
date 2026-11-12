@@ -162,6 +162,31 @@ func TestSyncPlanConflictAndPause(t *testing.T) {
 	}
 }
 
+func TestSyncPlanFailedRunKeepsPreviousSuccess(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	successAt := now
+	hooks := SyncPlanHooks{Execute: func(_ context.Context, _ SyncPlan, target SyncPlanTarget, _ SyncPlanCheckpoint, _ func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
+		if now.After(successAt) {
+			return SyncPlanTargetResult{}, errors.New("test failure")
+		}
+		return SyncPlanTargetResult{Cursor: target.Cursor + 1}, nil
+	}}
+	s := syncTestService(t, t.TempDir(), &now, hooks)
+	if err := s.save(t.Context(), syncTestDraft(), true); err != nil {
+		t.Fatal(err)
+	}
+	syncTestRun(t, s)
+	now = now.Add(time.Hour)
+	if err := s.control("syncPlanRunNow", s.snapshot().Plans[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	syncTestRun(t, s)
+	run := s.snapshot().Runs[0]
+	if run.State != "failed" || !run.Targets[0].LastSuccessAt.Equal(successAt) {
+		t.Fatalf("latest run should be failed with the previous success at %s: %+v", successAt, run)
+	}
+}
+
 func TestSyncPlanRetryKeepsCheckpointAndCompletedTargets(t *testing.T) {
 	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
 	var workID string

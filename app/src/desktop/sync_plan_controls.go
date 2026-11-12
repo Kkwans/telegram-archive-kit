@@ -373,7 +373,10 @@ func (s *syncPlanDiskState) enqueue(index int, trigger string, scheduled time.Ti
 				continue
 			}
 		}
-		entry := SyncPlanRunTarget{Peer: target.Peer, Name: target.Name, Slug: target.Slug, State: "queued", Cursor: target.Cursor}
+		entry := SyncPlanRunTarget{
+			Peer: target.Peer, Name: target.Name, Slug: target.Slug, State: "queued", Cursor: target.Cursor,
+			LastSuccessAt: target.LastSuccessAt,
+		}
 		if checkpoint, ok := p.Work[target.Peer]; ok && checkpoint.Stage != "" {
 			entry.updateCheckpoint(checkpoint)
 		}
