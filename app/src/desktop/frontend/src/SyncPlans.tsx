@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime, duration } from "./format";
+import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type { Bootstrap, OnlineChat, OnlineChats } from "./types";
@@ -16,11 +17,7 @@ const SCOPE_OPTIONS = [
   { value: "now", label: "从现在开始" },
   { value: "all", label: "全部历史" },
 ];
-const CHAT_TYPES = [
-  { value: "all", label: "全部类型" }, { value: "private", label: "私聊" },
-  { value: "group", label: "群组" }, { value: "channel", label: "频道" }, { value: "bot", label: "机器人" },
-];
-const CHAT_LABELS = new Map(CHAT_TYPES.map((type) => [type.value, type.label]));
+const ARCHIVE_FILTERS = ONLINE_CHAT_FILTERS.map(({ key, label }) => ({ value: key, label: key === "all" ? "全部聊天" : label }));
 const MEDIA = [
   { kind: "image", label: "图片", icon: Image }, { kind: "video", label: "视频", icon: Video },
   { kind: "audio", label: "音频", icon: Music }, { kind: "file", label: "文件", icon: FileText },
@@ -513,11 +510,12 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   const [draft, setDraft] = useState(() => draftFromPlan(plan));
   const [mediaEnabled, setMediaEnabled] = useState(() => !plan || !!plan.mediaKinds?.length);
   const [query, setQuery] = useState("");
-  const [type, setType] = useState("all");
+  const [filter, setFilter] = useState<OnlineChatFilter>("all");
+  const [folderId, setFolderId] = useState<number | null>(null);
   const [onlySelected, setOnlySelected] = useState(false);
   const [chatPage, setChatPage] = useState(1);
   const chatList = useRef<HTMLDivElement>(null);
-  const [chats, setChats] = useState<OnlineChat[]>([]);
+  const [online, setOnline] = useState<OnlineChats | null>(null);
   const [loading, setLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const [error, setError] = useState("");
@@ -555,14 +553,14 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   }, [draft.enabled, frequency, time, previewDays, validTime, validDays, previewKey]);
 
   useEffect(() => {
-    if (!canFetchChats) { setChats([]); setLoading(false); setChatError(""); return; }
+    if (!canFetchChats) { setOnline(null); setLoading(false); setChatError(""); return; }
     const controller = new AbortController();
     const { signal } = controller;
     let live = false;
     setLoading(true);
     setChatError("");
     void call<OnlineChats | null>("onlineChatsCached", undefined, signal).then((cached) => {
-      if (!signal.aborted && !live && cached?.chats?.length) setChats(cached.chats);
+      if (!signal.aborted && !live && cached?.chats?.length) setOnline(cached);
     }).catch(() => undefined);
     void Promise.resolve().then(async () => {
       if (signal.aborted) return;
@@ -570,7 +568,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
         const next = await call<OnlineChats>("onlineChats", { timeout: 35 }, signal);
         if (signal.aborted) return;
         live = true;
-        if (!next.error || next.chats?.length) setChats(next.chats ?? []);
+        if (!next.error || next.chats?.length) setOnline(next);
         if (next.error) setChatError(next.error);
       } catch (e) {
         if (!signal.aborted) setChatError((e as Error).message);
@@ -581,21 +579,36 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
     return () => controller.abort();
   }, [canFetchChats, refreshSeq]);
 
-  const allChats = useMemo(() => {
+  const allChats = useMemo<Array<Omit<OnlineChat, "id" | "hasPhoto"> & { id?: number }>>(() => {
+    const chats = online?.chats ?? [];
     const known = new Set(chats.map((chat) => chat.peer));
     return [...chats, ...draft.targets.filter((target) => !known.has(target.peer)).map((target) => ({ peer: target.peer, name: target.name || target.peer, type: "", username: "", localSlug: target.slug }))];
-  }, [chats, draft.targets]);
+  }, [online?.chats, draft.targets]);
+  const activeFolder = online?.folders?.find((folder) => folder.id === folderId);
+  const folderPeers = useMemo(() => activeFolder ? new Set(activeFolder.peers) : null, [activeFolder]);
+  const filterOptions = useMemo(() => [
+    ...ARCHIVE_FILTERS,
+    ...(online?.folders ?? []).map((folder) => ({ value: `folder:${folder.id}`, label: `分组 · ${folder.title}` })),
+  ], [online?.folders]);
   const visible = useMemo(() => allChats.filter((chat) =>
-    (!onlySelected || selected.has(chat.peer)) && (type === "all" || chat.type === type) && (!queryValue || `${chat.name} ${chat.username ?? ""} ${chat.peer}`.toLowerCase().includes(queryValue))
-  ), [allChats, onlySelected, selected, type, queryValue]);
+    (!onlySelected || selected.has(chat.peer)) &&
+    (folderPeers ? folderPeers.has(chat.peer) : matchesOnlineChatFilter(chat, filter)) &&
+    matchesOnlineChatSearch(chat, queryValue)
+  ), [allChats, onlySelected, selected, filter, folderPeers, queryValue]);
   const pages = Math.max(1, Math.ceil(visible.length / CHAT_PAGE_SIZE));
   const page = Math.min(chatPage, pages);
   const firstChat = (page - 1) * CHAT_PAGE_SIZE;
   const pageChats = visible.slice(firstChat, firstChat + CHAT_PAGE_SIZE);
-  const filtered = !!query || type !== "all" || onlySelected;
+  const filtered = !!query || filter !== "all" || !!activeFolder || onlySelected;
   useLayoutEffect(() => {
     if (chatList.current) chatList.current.scrollTop = 0;
-  }, [page, queryValue, type, onlySelected]);
+  }, [page, queryValue, filter, activeFolder?.id, onlySelected]);
+
+  const changeFilter = (value: string) => {
+    setFolderId(online?.folders?.find((folder) => value === `folder:${folder.id}`)?.id ?? null);
+    setFilter(ONLINE_CHAT_FILTERS.find(({ key }) => key === value)?.key ?? "all");
+    setChatPage(1);
+  };
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
   const toggle = (chat: (typeof allChats)[number]) => setDraft((prev) => ({ ...prev, targets: prev.targets.some(({ peer }) => peer === chat.peer) ? prev.targets.filter(({ peer }) => peer !== chat.peer) : [...prev.targets, { peer: chat.peer, slug: chat.localSlug, name: chat.name }] }));
@@ -625,13 +638,13 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
         <label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus={!plan} required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label>
         <div className="field plan-editor-library"><span>目标档案库</span><div className="plan-library-value"><Database size={14} /><b title={libraryLabel}>{libraryLabel}</b></div></div>
       </div>
-      <div className={`plan-editor-grid${mediaEnabled ? "" : " messages-only"}`}>
+      <div className="plan-editor-grid">
         <section className="panel plan-form-panel plan-chat-panel">
           <div className="plan-form-section">
             <div className="plan-field-heading"><h2>归档对象</h2><span className="plan-selected-count" aria-live="polite">已选 <b>{draft.targets.length}</b> 个</span></div>
             <div className="plan-chat-toolbar">
               <label className="task-search"><Search size={14} /><input type="search" aria-label="搜索聊天" placeholder="搜索名称、用户名或 ID" value={query} onChange={(event) => { setQuery(event.target.value); setChatPage(1); }} /></label>
-              <Select value={type} options={CHAT_TYPES} ariaLabel="按聊天类型筛选" onChange={(value) => { setType(value); setChatPage(1); }} disabled={saving} />
+              <Select value={activeFolder ? `folder:${activeFolder.id}` : filter} options={filterOptions} ariaLabel="筛选归档对象" onChange={changeFilter} disabled={saving} />
               <button type="button" className="btn sm plan-pick" aria-pressed={onlySelected} onClick={() => { setOnlySelected((value) => !value); setChatPage(1); }}><ListFilter size={14} /> 仅看已选</button>
               <button type="button" className="icon-btn" aria-label="刷新聊天" title="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
             </div>
@@ -648,8 +661,8 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                   if (onlySelected && checked) event.currentTarget.closest(".plan-form-section")?.querySelector<HTMLButtonElement>(".plan-pick")?.focus();
                 }}>
                   <span className="plan-chat-symbol"><ChatIcon size={15} /></span>
-                  <span className="plan-chat-identity"><b title={chat.name}>{chat.name}</b><span className="plan-chat-username">{CHAT_LABELS.get(chat.type) || chat.type || "聊天"}{chat.username ? ` · @${chat.username}` : ""}</span></span>
-                  {chat.localSlug && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}
+                  <span className="plan-chat-identity"><b title={chat.name}>{chat.name}</b><span className="plan-chat-username">{onlineChatTypeMeta(chat.type).label}{chat.username ? ` · @${chat.username}` : ""}</span></span>
+                  {(chat.archivedLocally || chat.localSlug) && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}
                   <span className="plan-chat-selected" aria-hidden="true">{checked && <><Check size={12} />已选</>}</span>
                 </button>;
               }) : <p className="plan-chat-empty">{!hasSession ? "登录后选择要同步的聊天。" : onlySelected ? "没有符合条件的已选聊天。" : "没有找到符合条件的聊天。"}</p>}
@@ -657,7 +670,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
             {(loading || filtered || pages > 1) && <div className="plan-chat-list-footer">
               <span aria-live="polite">{loading ? "正在刷新聊天…" : pages > 1 ? `${firstChat + 1}–${firstChat + pageChats.length} / ${visible.length.toLocaleString()} 个聊天` : `${visible.length} 个结果`}</span>
               <div className="plan-chat-list-actions">
-                {filtered && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); setType("all"); setOnlySelected(false); setChatPage(1); }}>清除筛选</button>}
+                {filtered && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); changeFilter("all"); setOnlySelected(false); }}>清除筛选</button>}
                 {pages > 1 && <div className="plan-chat-pagination" aria-label="聊天列表分页">
                   <button type="button" className="icon-btn" aria-label="上一页聊天" title="上一页聊天" disabled={page <= 1} onClick={() => setChatPage(page - 1)}><ChevronLeft size={15} /></button>
                   <span aria-label={`第 ${page} 页，共 ${pages} 页`}>{page} / {pages}</span>
@@ -665,11 +678,6 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                 </div>}
               </div>
             </div>}
-          </div>
-          <div className="plan-scope-section">
-            <div><h3>首次归档范围</h3><p>仅用于未归档的聊天。已有归档从上次位置继续。</p></div>
-            <Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} />
-            {draft.firstScope === "all" && <p className="plan-field-hint" role="status"><AlertCircle size={14} /> 将读取所选未归档聊天的全部历史。</p>}
           </div>
         </section>
         <section className="panel plan-form-panel plan-settings-panel">
@@ -720,6 +728,11 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
           </div>
         </section>
       </div>
+      <section className="panel plan-scope-section" aria-labelledby="plan-scope-heading">
+        <div><h2 id="plan-scope-heading">首次归档范围</h2><p>仅用于未归档的聊天。已有归档从上次位置继续。</p></div>
+        <Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} />
+        {draft.firstScope === "all" && <p className="plan-field-hint" role="status"><AlertCircle size={14} /> 将读取所选未归档聊天的全部历史。</p>}
+      </section>
     </fieldset>
     <footer className="panel plan-editor-footer">
       {error && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error}</span></div>}

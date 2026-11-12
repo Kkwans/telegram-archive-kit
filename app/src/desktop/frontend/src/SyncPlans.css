@@ -145,12 +145,11 @@
 #task-plans .plan-library-value { display: flex; align-items: center; gap: 8px; min-width: 0; height: 35px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
 #task-plans .plan-library-value > svg { flex: 0 0 auto; color: var(--muted); }
 #task-plans .plan-library-value > b { min-width: 0; color: var(--muted); font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#task-plans .plan-editor-grid { align-items: stretch; }
-#task-plans .plan-editor-grid.messages-only { align-items: start; }
+#task-plans .plan-editor-grid { align-items: start; }
 #task-plans .plan-form-panel { padding: 14px var(--editor-pad); min-width: 0; gap: 12px; }
 #task-plans .plan-field-heading h2 { margin: 0; font-size: 16px; font-weight: 670; }
 #task-plans .plan-selected-count { padding: 2px 7px; border-radius: 5px; background: var(--accent-soft); color: var(--text); }
-#task-plans .plan-chat-toolbar { grid-template-columns: minmax(80px,1fr) 106px auto 32px; gap: 6px; }
+#task-plans .plan-chat-toolbar { grid-template-columns: minmax(80px,1fr) 128px auto 32px; gap: 6px; }
 #task-plans .plan-chat-toolbar > .task-search, #task-plans .plan-chat-toolbar :is(.ui-select-btn, .btn, .icon-btn) { height: 34px; }
 #task-plans .plan-chat-toolbar .ui-select-btn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #task-plans .plan-chat-toolbar > .icon-btn { width: 32px; }
@@ -168,8 +167,8 @@
 #task-plans .plan-chat-pagination { font-variant-numeric: tabular-nums; white-space: nowrap; }
 #task-plans .plan-chat-pagination .icon-btn { width: 28px; height: 28px; }
 #task-plans .plan-chat-pagination .icon-btn:disabled { opacity: .5; cursor: not-allowed; }
-#task-plans .plan-scope-section { display: grid; grid-template-columns: minmax(0,1fr) 124px; gap: 8px 12px; align-items: center; padding-top: 11px; border-top: 1px solid var(--line); }
-#task-plans .plan-scope-section h3 { margin: 0; font-size: 13px; }
+#task-plans .plan-scope-section { display: grid; grid-template-columns: minmax(0,1fr) 148px; gap: 8px 12px; align-items: center; padding: 10px var(--editor-pad); }
+#task-plans .plan-scope-section h2 { margin: 0; font-size: 14px; }
 #task-plans .plan-scope-section p { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
 #task-plans .plan-field-hint { display: flex; gap: 6px; align-items: center; grid-column: 1 / -1; margin: 0; color: var(--warn); font-size: 12px; }
 #task-plans .plan-scope-section .plan-field-hint { color: var(--warn); }
@@ -188,7 +187,7 @@
 #task-plans .plan-media-option > span { display: inline-flex; align-items: center; gap: 5px; }
 #task-plans :is(.plan-weekdays, .plan-media-options) .plan-pick[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 #task-plans .plan-media-option[aria-pressed="true"] svg { color: var(--accent); }
-#task-plans .plan-history-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 3px; font-size: 12px; }
+#task-plans .plan-history-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
 #task-plans .plan-history-toggle .switch { flex: none; }
 #task-plans .plan-editor-footer { flex: 0 0 auto; gap: 8px 12px; padding: 10px 14px; }
 #task-plans .plan-editor-summary { display: flex; flex: 1 1 175px; flex-direction: column; align-items: flex-start; gap: 2px; }

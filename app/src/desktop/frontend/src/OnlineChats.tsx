@@ -18,17 +18,7 @@ import { Select } from "./Select";
 import { OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type { PageCtx } from "./pages";
 import type { OnlineChat, OnlineChats } from "./types";
-
-const TYPE_META: Record<string, { label: string; tone: string }> = {
-  private: { label: "私聊", tone: "private" },
-  bot: { label: "机器人", tone: "bot" },
-  group: { label: "群组", tone: "group" },
-  channel: { label: "频道", tone: "channel" },
-};
-
-function typeMeta(type: string) {
-  return TYPE_META[type] ?? { label: type || "会话", tone: "other" };
-}
+import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
 
 function initials(name: string): string {
   const chars = Array.from(name.trim());
@@ -63,15 +53,6 @@ function fullWhen(seconds?: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const FILTERS = [
-  { key: "all", label: "全部" },
-  { key: "private", label: "私聊" },
-  { key: "group", label: "群组" },
-  { key: "channel", label: "频道" },
-  { key: "archived", label: "归档夹" },
-  { key: "local", label: "本地已有" },
-] as const;
-
 const OnlineChatRow = memo(function OnlineChatRow({
   chat: c,
   selected,
@@ -83,7 +64,7 @@ const OnlineChatRow = memo(function OnlineChatRow({
   today: string;
   onSelect: (peer: string) => void;
 }) {
-  const meta = typeMeta(c.type);
+  const meta = onlineChatTypeMeta(c.type);
   return (
     <button
       role="option"
@@ -167,7 +148,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [data, setData] = useState<OnlineChats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
+  const [filter, setFilter] = useState<OnlineChatFilter>("all");
   const [folderId, setFolderId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("recent");
@@ -242,11 +223,11 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const counts = useMemo(
     () => ({
       all: chats.length,
-      private: chats.filter((c) => c.type === "private" || c.type === "bot").length,
-      group: chats.filter((c) => c.type === "group").length,
-      channel: chats.filter((c) => c.type === "channel").length,
-      archived: chats.filter((c) => c.archived).length,
-      local: chats.filter((c) => c.archivedLocally).length,
+      private: chats.filter((c) => matchesOnlineChatFilter(c, "private")).length,
+      group: chats.filter((c) => matchesOnlineChatFilter(c, "group")).length,
+      channel: chats.filter((c) => matchesOnlineChatFilter(c, "channel")).length,
+      archived: chats.filter((c) => matchesOnlineChatFilter(c, "archived")).length,
+      local: chats.filter((c) => matchesOnlineChatFilter(c, "local")).length,
     }),
     [chats]
   );
@@ -262,29 +243,14 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   useEffect(() => {
     if (!ctx.onlineRequest) return;
     setFolderId(null);
-    setFilter(ctx.onlineRequest.filter as (typeof FILTERS)[number]["key"]);
+    setFilter(ONLINE_CHAT_FILTERS.find(({ key }) => key === ctx.onlineRequest?.filter)?.key ?? "all");
   }, [ctx.onlineRequest?.seq]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = chats.filter((c) => {
-      if (activeFolder) {
-        if (!folderPeers.has(c.peer)) return false;
-      } else {
-        if (filter === "archived" && !c.archived) return false;
-        if (filter === "private" && c.type !== "private" && c.type !== "bot") return false;
-        if (filter === "group" && c.type !== "group") return false;
-        if (filter === "channel" && c.type !== "channel") return false;
-        if (filter === "local" && !c.archivedLocally) return false;
-      }
-      if (!q) return true;
-      return (
-        c.name.toLowerCase().includes(q) ||
-        (c.username || "").toLowerCase().includes(q) ||
-        String(c.id).includes(q) ||
-        (c.lastMessage || "").toLowerCase().includes(q)
-      );
-    });
+    const list = chats.filter((c) =>
+      (activeFolder ? folderPeers.has(c.peer) : matchesOnlineChatFilter(c, filter)) && matchesOnlineChatSearch(c, q)
+    );
     if (sort === "name") {
       return [...list].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
     }
@@ -370,7 +336,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
               {query && <button className="online-search-clear" onClick={() => setQuery("")} aria-label="清除搜索">×</button>}
             </label>
             <div className="tabs-pill online-tabs" role="group" aria-label="在线聊天筛选">
-              {FILTERS.map((f) => (
+              {ONLINE_CHAT_FILTERS.map((f) => (
                 <button
                   key={f.key}
                   className={!activeFolder && filter === f.key ? "on" : ""}
@@ -450,7 +416,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                     <div>
                       <h2>{selected.name}</h2>
                       <p>
-                        <span className={`online-type ${typeMeta(selected.type).tone}`}>{typeMeta(selected.type).label}</span>
+                        <span className={`online-type ${onlineChatTypeMeta(selected.type).tone}`}>{onlineChatTypeMeta(selected.type).label}</span>
                         <span className="online-detail-id">ID {selected.id}</span>
                       </p>
                       {selected.username && <p className="online-detail-username">@{selected.username}</p>}
