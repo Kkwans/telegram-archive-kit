@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, Images, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime, duration } from "./format";
 import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
@@ -119,7 +119,7 @@ const ACTION_MESSAGES: Record<PlanAction, string> = {
 };
 
 function draftFromPlan(plan?: Plan): Draft {
-  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "30d", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: false };
+  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "all", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: false };
   return { id: plan.id, name: plan.name, schedule: plan.schedule, targets: plan.targets ?? [], enabled: plan.enabled, firstScope: plan.firstScope || "30d", mediaKinds: plan.mediaKinds ?? [], includeHistory: plan.includeHistory };
 }
 
@@ -326,13 +326,14 @@ export function SyncPlans({ boot, location, onNavigate, onAccount, onLibrary, on
 
   if (editor) return <PlanEditor plan={editor === "new" ? undefined : editor} boot={boot} currentLibraryId={data?.currentLibraryId} saving={busy === "save"} onAccount={onAccount} onCancel={closeEditor} onSave={save} />;
   if (location) return <section className="plan-subpage">
-    <button type="button" className="plan-back" onClick={closePlan}><ArrowLeft size={15} /> 返回同步计划</button>
     {errorNotice}
     {selectedPlan ? <PlanDetails plan={selectedPlan} runs={runsByPlan.get(selectedPlan.id) ?? []} location={location} busy={!!busy}
-      onNavigate={onNavigate} onEdit={() => setEditor(selectedPlan)} onAct={(action) => void act(selectedPlan, action)}
-      onDelete={() => setConfirmDelete(selectedPlan)} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={onOpenTask} /> :
-      data ? <div className="panel task-empty"><p>该同步计划已不存在。</p></div> :
+      onNavigate={onNavigate} onBack={closePlan} onEdit={() => setEditor(selectedPlan)} onAct={(action) => void act(selectedPlan, action)}
+      onDelete={() => setConfirmDelete(selectedPlan)} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={onOpenTask} /> : <>
+      <header className="plan-detail-title-line"><button type="button" className="icon-btn plan-page-back" onClick={closePlan} aria-label="返回同步计划" title="返回同步计划"><ArrowLeft size={17} /></button><h1 id="sync-plan-heading" tabIndex={-1}>同步计划</h1></header>
+      {data ? <div className="panel task-empty"><p>该同步计划已不存在。</p></div> :
         !error && <div className="panel plan-loading" role="status" aria-label="正在读取同步计划"><div><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div></div>}
+    </>}
     {deletion}
   </section>;
 
@@ -394,12 +395,13 @@ function runTargets(run: PlanRun, runs: PlanRun[]) {
   return targets.map((target) => recovered.has(target.peer) ? { ...target, lastSuccessAt: recovered.get(target.peer) } : target);
 }
 
-function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, onDelete, onAccount, onLibrary, onRemote, onOpenTask }: {
+function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, onAct, onDelete, onAccount, onLibrary, onRemote, onOpenTask }: {
   plan: Plan;
   runs: PlanRun[];
   location: SyncPlanLocation;
   busy: boolean;
   onNavigate: (location: SyncPlanLocation) => void;
+  onBack: () => void;
   onEdit: () => void;
   onAct: (action: PlanAction) => void;
   onDelete: () => void;
@@ -409,7 +411,9 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
   onOpenTask: (id: string) => void;
 }) {
   const latest = runs[0];
-  const visible = location.failedOnly ? runs.filter((run) => run.state === "failed") : runs;
+  const hasRunChoice = runs.length > 1;
+  const failedOnly = hasRunChoice && !!location.failedOnly;
+  const visible = failedOnly ? runs.filter((run) => run.state === "failed") : runs;
   const run = visible.find((item) => item.id === location.runId) ?? visible[0];
   const action = planRunAction(plan, latest);
   const currentReason = plan.blockedReason !== latest?.blockedReason ? plan.blockedReason : undefined;
@@ -430,7 +434,10 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
 
   return <>
     <header className="plan-detail-heading">
-      <div className="plan-detail-title"><h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
+      <div className="plan-detail-title"><div className="plan-detail-title-line">
+        <button type="button" className="icon-btn plan-page-back" onClick={onBack} aria-label="返回同步计划" title="返回同步计划"><ArrowLeft size={17} /></button>
+        <h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
+      </div>
         <p><Database size={14} /> {plan.libraryLabel || "档案库"} <span>·</span> {plan.targets?.length ?? 0} 个聊天 <span>·</span> {scheduleText(plan.schedule)}</p>
         <p>{mediaText(plan.mediaKinds ?? [])}{plan.includeHistory && " · 补齐历史缺失媒体"}
           <span aria-hidden="true">·</span><span className="plan-next-slot"><CalendarClock size={13} /> 下次运行 <b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></span></p>
@@ -445,12 +452,13 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
       <AlertCircle size={16} /><span>{plan.message || REASONS[currentReason]}</span>
       {currentRecovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { if (run) selectRun(run.id); currentRecovery.open(); }}>{currentRecovery.label} <ArrowUpRight size={13} /></button>}
     </div>}
-    <div className="plan-history-heading"><h2>运行历史</h2>{!!runs.length && <span aria-live="polite">{location.failedOnly ? `${visible.length} / ` : ""}{runs.length} 轮</span>}</div>
-    {runs.length ? <div className="plan-history">
-      <aside className="panel plan-run-nav" aria-label="运行记录">
-        <div className="tabs-pill plan-run-filter" role="group" aria-label="筛选运行记录">
-          <button type="button" aria-pressed={!location.failedOnly} className={!location.failedOnly ? "on" : ""} onClick={() => filterRuns(false)}>全部结果</button>
-          <button type="button" aria-pressed={!!location.failedOnly} className={location.failedOnly ? "on" : ""} onClick={() => filterRuns(true)}>仅失败</button>
+    <div className="plan-history-heading"><h2>运行历史</h2>{!!runs.length && <span aria-live="polite">{failedOnly ? `${visible.length} / ` : ""}{runs.length} 轮</span>}</div>
+    {runs.length ? <div className={`plan-history${hasRunChoice ? "" : " plan-history-single"}`}>
+      {hasRunChoice && <aside className="panel plan-run-nav" aria-label="运行记录">
+        <h3>运行记录</h3>
+        <div className="plan-run-filter" role="group" aria-label="筛选运行记录">
+          <button type="button" aria-pressed={!failedOnly} onClick={() => filterRuns(false)}>全部运行</button>
+          <button type="button" aria-pressed={failedOnly} onClick={() => filterRuns(true)}>失败运行</button>
         </div>
         <div className="plan-run-options">
           {visible.map((item) => <button key={item.id} type="button" className="plan-run-option" aria-pressed={run?.id === item.id} onClick={() => selectRun(item.id)}>
@@ -458,9 +466,9 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
           </button>)}
         </div>
         {!!run && <div className="plan-run-compact"><Select ariaLabel="选择运行记录" options={visible.map((item) => ({ value: item.id, label: `${runDate(item)} · ${STATES[item.state]?.label ?? item.state}` }))} value={run.id} onChange={selectRun} /></div>}
-      </aside>
+      </aside>}
       {run ? <section className="panel plan-run-result" aria-label="本轮运行结果">
-        <header><div><h3>{runDate(run)}</h3><p>{runTrigger(run)}{elapsed > 0 && ` · 耗时 ${duration(elapsed).replace(/h/g, " 小时").replace(/m/g, " 分").replace(/s/g, " 秒")}`}</p></div>
+        <header><div><h3>本轮运行结果</h3><p><time>{runDate(run)}</time> · {runTrigger(run)}{elapsed > 0 && ` · 耗时 ${duration(elapsed).replace(/h/g, " 小时").replace(/m/g, " 分").replace(/s/g, " 秒")}`}</p></div>
           <Status state={run.state} label={run.state === "failed" && failedCount ? `${failedCount} 个聊天失败` : undefined} />
         </header>
         {(message || run.retryAt) && <div className="plan-inline-notice plan-run-notice" role="status">
@@ -710,10 +718,16 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
             </div>
           </div>
           <div className="plan-form-section plan-content-section">
-            <div className="plan-field-heading"><h2>同步内容</h2></div>
-            <div className="plan-content-choice" role="group" aria-label="同步内容">
-              <button type="button" aria-pressed={!mediaEnabled} onClick={() => setMediaEnabled(false)}><MessageCircle size={15} /> 仅消息</button>
-              <button type="button" aria-pressed={mediaEnabled} onClick={() => setMediaEnabled(true)}><Images size={15} /> 消息与媒体</button>
+            <div className="plan-field-heading"><h2 id="plan-content-heading">同步内容</h2></div>
+            <div className="plan-content-choice" role="radiogroup" aria-labelledby="plan-content-heading">
+              <label className="plan-content-option">
+                <input type="radio" name="plan-content" value="messages" checked={!mediaEnabled} onChange={() => setMediaEnabled(false)} />
+                <span><b>仅消息</b><small>保存聊天消息</small></span>
+              </label>
+              <label className="plan-content-option">
+                <input type="radio" name="plan-content" value="media" checked={mediaEnabled} onChange={() => setMediaEnabled(true)} />
+                <span><b>消息与媒体</b><small>同时下载所选媒体</small></span>
+              </label>
             </div>
             {mediaEnabled && <>
               <div className="plan-media-options" role="group" aria-label="媒体类型">{MEDIA.map(({ kind, label, icon: Icon }) => {
