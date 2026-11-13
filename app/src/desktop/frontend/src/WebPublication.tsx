@@ -77,14 +77,14 @@ function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose
 
 function PublicationSwitch({ label, hint, checked, disabled, onChange, className = "" }: {
   label: string;
-  hint: string;
+  hint?: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (value: boolean) => void;
   className?: string;
 }) {
   return <label className={`publish-switch ${className}`}>
-    <span className="publish-switch-copy"><b>{label}</b><small>{hint}</small></span>
+    <span className="publish-switch-copy"><b>{label}</b>{hint && <small>{hint}</small>}</span>
     <input className="publish-control-input" type="checkbox" role="switch" aria-label={label} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
     <span className="publish-switch-track" aria-hidden="true" />
   </label>;
@@ -365,7 +365,9 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
       </> : (
       <div className="publish-settings-panel">
           <section className="panel publish-network" aria-labelledby="publish-network-title">
-            <header className="panel-head"><h3 id="publish-network-title"><Wifi size={15} /> 访问网络</h3></header>
+            <header className="panel-head"><Wifi size={16} aria-hidden="true" /><div><h3 id="publish-network-title">访问网络</h3>
+              <p>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</p>
+            </div></header>
             <div className="publish-body">
               <div className="publish-network-fields">
                 <div className="field"><span>局域网网卡</span><Select value={draft.adapter} options={adapters} onChange={(adapter) => update({ adapter })} ariaLabel="局域网网卡" disabled={settingsLocked} /></div>
@@ -380,12 +382,11 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               </div>
               {diagnosticPort !== undefined && <PortDiagnostics port={diagnosticPort} check={check} blocked={diagnosticPort === blockedPort} ending={ending} onEnd={(owner) => setConfirmOwner({ port: diagnosticPort, owner })} onClose={diagnosticPort !== blockedPort ? () => { setManualPort(undefined); portCheckButton.current?.focus(); } : undefined} />}
               <div className="publish-network-switches">
-                <PublicationSwitch label="允许局域网 IPv6" hint={!draft.adapter ? "启用局域网后可设置" : status.networkReady && matchingAdapters.length > 0 && !matchingAdapters.some((adapter) => adapter.ipv6) ? "当前网卡暂时没有可用的 IPv6 地址" : "为同一局域网的设备提供 IPv6 访问地址"} checked={draft.lanIPv6} disabled={settingsLocked || !draft.adapter} onChange={(lanIPv6) => update({ lanIPv6 })} />
-                <PublicationSwitch label="允许 Tailscale 访问" hint={(draft.tailscale && status.tailError) || "使用本机 Tailscale 地址"} checked={draft.tailscale} disabled={settingsLocked} onChange={(tailscale) => update({ tailscale })} />
+                <PublicationSwitch label="允许局域网 IPv6" hint={!draft.adapter ? "启用局域网后可设置" : status.networkReady && matchingAdapters.length > 0 && !matchingAdapters.some((adapter) => adapter.ipv6) ? "当前网卡暂时没有可用的 IPv6 地址" : undefined} checked={draft.lanIPv6} disabled={settingsLocked || !draft.adapter} onChange={(lanIPv6) => update({ lanIPv6 })} />
+                <PublicationSwitch label="允许 Tailscale 访问" hint={draft.tailscale ? status.tailError : undefined} checked={draft.tailscale} disabled={settingsLocked} onChange={(tailscale) => update({ tailscale })} />
               </div>
               {!status.networkReady && <p className="publish-note publish-loading" role="status"><LoaderCircle size={14} className="spin" /> 正在检测访问网络…</p>}
               {draft.adapter && status.networkReady && matchingAdapters.length === 0 && <p className="publish-note" role="status">{draft.adapter === "auto" ? status.lanError || "连接 Wi-Fi 或网线后，部署会自动获取局域网地址。" : "所选网卡当前不可用，可切换到自动选择。"}</p>}
-              <p className="publish-access-note"><Shield size={14} aria-hidden="true" /><span>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</span></p>
             </div>
           </section>
           <section className="panel publish-background" aria-labelledby="publish-background-title">
