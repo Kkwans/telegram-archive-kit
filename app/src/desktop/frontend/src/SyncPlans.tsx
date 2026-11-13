@@ -156,7 +156,6 @@ const RUN_ACTIONS = {
   stop: { label: "停止本次", icon: Square },
   run: { label: "立即运行", icon: Play },
 };
-const HISTORY_FILTERS = [{ value: "all", label: "全部结果" }, { value: "failed", label: "仅失败" }];
 
 function planRunAction(plan: Plan, latest?: PlanRun): RunAction {
   if (latest && (plan.activeRunId ? latest.state === "blocked" : latest.state === "failed" || latest.state === "stopped")) return "retry";
@@ -424,8 +423,7 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
   const failedCount = targets.filter((target) => target.state === "failed").length;
   const elapsed = run?.startedAt && run.finishedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : 0;
   const selectRun = (runId: string) => onNavigate({ ...location, runId });
-  const filterRuns = (value: string) => {
-    const failedOnly = value === "failed";
+  const filterRuns = (failedOnly: boolean) => {
     const next = failedOnly && run?.state !== "failed" ? runs.find((item) => item.state === "failed") : run;
     onNavigate({ ...location, failedOnly, runId: next?.id ?? location.runId });
   };
@@ -434,7 +432,8 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
     <header className="plan-detail-heading">
       <div className="plan-detail-title"><h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
         <p><Database size={14} /> {plan.libraryLabel || "档案库"} <span>·</span> {plan.targets?.length ?? 0} 个聊天 <span>·</span> {scheduleText(plan.schedule)}</p>
-        <p>{mediaText(plan.mediaKinds ?? [])}{plan.includeHistory && " · 补齐历史缺失媒体"}</p>
+        <p>{mediaText(plan.mediaKinds ?? [])}{plan.includeHistory && " · 补齐历史缺失媒体"}
+          <span aria-hidden="true">·</span><span className="plan-next-slot"><CalendarClock size={13} /> 下次运行 <b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></span></p>
       </div>
       <div className="plan-row-actions">
         <button id={`sync-plan-edit-${plan.id}`} type="button" className="btn" disabled={busy || !!plan.activeRunId} onClick={onEdit}><Pencil size={14} /> 编辑计划</button>
@@ -446,34 +445,39 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onEdit, onAct, on
       <AlertCircle size={16} /><span>{plan.message || REASONS[currentReason]}</span>
       {currentRecovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { if (run) selectRun(run.id); currentRecovery.open(); }}>{currentRecovery.label} <ArrowUpRight size={13} /></button>}
     </div>}
-    <div className="plan-history-heading"><h2>运行历史</h2><span><CalendarClock size={15} /> 下次运行 <b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></span></div>
-    {runs.length ? <div className="panel plan-history">
-      <aside className="plan-run-nav" aria-label="运行记录">
-        <div className="plan-run-filter"><span aria-live="polite">共 {visible.length} 轮</span><Select ariaLabel="筛选运行记录"
-          options={HISTORY_FILTERS} value={location.failedOnly ? "failed" : "all"} onChange={filterRuns} /></div>
+    <div className="plan-history-heading"><h2>运行历史</h2>{!!runs.length && <span aria-live="polite">{location.failedOnly ? `${visible.length} / ` : ""}{runs.length} 轮</span>}</div>
+    {runs.length ? <div className="plan-history">
+      <aside className="panel plan-run-nav" aria-label="运行记录">
+        <div className="tabs-pill plan-run-filter" role="group" aria-label="筛选运行记录">
+          <button type="button" aria-pressed={!location.failedOnly} className={!location.failedOnly ? "on" : ""} onClick={() => filterRuns(false)}>全部结果</button>
+          <button type="button" aria-pressed={!!location.failedOnly} className={location.failedOnly ? "on" : ""} onClick={() => filterRuns(true)}>仅失败</button>
+        </div>
         <div className="plan-run-options">
           {visible.map((item) => <button key={item.id} type="button" className="plan-run-option" aria-pressed={run?.id === item.id} onClick={() => selectRun(item.id)}>
-            <span><time>{runDate(item)}</time><Status state={item.state} /></span><small>{runTrigger(item)}</small>
+            <time>{runDate(item)}</time><span><small>{runTrigger(item)}{item === latest && " · 最新"}</small><Status state={item.state} /></span>
           </button>)}
         </div>
         {!!run && <div className="plan-run-compact"><Select ariaLabel="选择运行记录" options={visible.map((item) => ({ value: item.id, label: `${runDate(item)} · ${STATES[item.state]?.label ?? item.state}` }))} value={run.id} onChange={selectRun} /></div>}
       </aside>
-      {run ? <section className="plan-run-result" aria-label="本轮运行结果">
+      {run ? <section className="panel plan-run-result" aria-label="本轮运行结果">
         <header><div><h3>{runDate(run)}</h3><p>{runTrigger(run)}{elapsed > 0 && ` · 耗时 ${duration(elapsed).replace(/h/g, " 小时").replace(/m/g, " 分").replace(/s/g, " 秒")}`}</p></div>
           <Status state={run.state} label={run.state === "failed" && failedCount ? `${failedCount} 个聊天失败` : undefined} />
         </header>
+        {(message || run.retryAt) && <div className="plan-inline-notice plan-run-notice" role="status">
+          <AlertCircle size={16} /><span>{message}{run.retryAt && ` 下次重试 ${when(run.retryAt, "待排程")}。`}</span>
+          {recovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { selectRun(run.id); recovery.open(); }}>{recovery.label} <ArrowUpRight size={13} /></button>}
+        </div>}
         {!!targets.length && <dl className="plan-run-totals" aria-label="本轮汇总">
           {([{ field: "addedMessages", label: "新增消息", unit: "条" }, { field: "addedMedia", label: "新增媒体", unit: "个" }, { field: "missing", label: "剩余缺失", unit: "个" }] as const).map(({ field, label, unit }) => {
             const total = targets.reduce((sum, target) => sum + (target[field] ?? 0), 0);
             return <div key={field}><dt>{label}</dt><dd className={field === "missing" && total > 0 ? "warn" : undefined}>{total.toLocaleString()} <span>{unit}</span></dd></div>;
           })}
         </dl>}
-        {(message || run.retryAt) && <div className="plan-inline-notice plan-run-notice" role="status">
-          <AlertCircle size={16} /><span>{message}{run.retryAt && ` 下次重试 ${when(run.retryAt, "待排程")}。`}</span>
-          {recovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { selectRun(run.id); recovery.open(); }}>{recovery.label} <ArrowUpRight size={13} /></button>}
-        </div>}
-        {targets.length ? <TargetTable targets={targets} onOpenTask={(id) => { selectRun(run.id); onOpenTask(id); }} /> : <p className="plan-run-empty muted">本轮还没有逐聊天结果。</p>}
-      </section> : <div className="plan-run-empty task-empty"><p>没有失败的运行记录</p></div>}
+        {targets.length ? <>
+          <div className="plan-results-heading"><h4>聊天结果</h4><span>{targets.length.toLocaleString()} 个聊天</span></div>
+          <TargetTable targets={targets} onOpenTask={(id) => { selectRun(run.id); onOpenTask(id); }} />
+        </> : <p className="plan-run-empty muted">本轮还没有逐聊天结果。</p>}
+      </section> : <div className="panel plan-run-empty task-empty"><p>没有失败的运行记录</p><button type="button" className="btn sm" onClick={() => filterRuns(false)}>查看全部结果</button></div>}
     </div> : <>
       <div className="panel task-empty"><p>计划尚未运行</p><span>运行后可在这里查看逐聊天结果与任务详情。</span></div>
       <TargetTable targets={plan.targets ?? []} onOpenTask={onOpenTask} />
@@ -485,7 +489,7 @@ function TargetTable({ targets, onOpenTask }: { targets: Target[]; onOpenTask: (
   if (!targets.length) return null;
   return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
     <colgroup><col className="plan-target-chat-col" /><col className="plan-target-status-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-time-col" /><col className="plan-target-task-col" /></colgroup>
-    <thead><tr><th scope="col">聊天</th><th scope="col">状态</th><th scope="col" className="num">消息</th><th scope="col" className="num">媒体</th><th scope="col" className="num">缺失</th><th scope="col">上次成功</th><th scope="col">任务记录</th></tr></thead>
+    <thead><tr><th scope="col">聊天</th><th scope="col">状态</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col" className="num">缺失</th><th scope="col">上次成功</th><th scope="col">任务记录</th></tr></thead>
     <tbody>{targets.map((target) => <tr key={target.peer}>
       <td><div className="plan-target-name"><b>{target.name || target.peer}</b></div>{target.message && <small>{target.message}</small>}</td>
       <td>{target.state ? <Status state={target.state} /> : "—"}</td>
