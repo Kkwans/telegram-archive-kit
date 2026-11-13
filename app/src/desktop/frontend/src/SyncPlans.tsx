@@ -433,20 +433,33 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
   };
 
   return <>
-    <header className="plan-detail-heading">
-      <div className="plan-detail-title"><div className="plan-detail-title-line">
+    <header className="panel plan-detail-heading">
+      <div className="plan-detail-title-line">
         <button type="button" className="icon-btn plan-page-back" onClick={onBack} aria-label="返回同步计划" title="返回同步计划"><ArrowLeft size={17} /></button>
         <h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
       </div>
-        <p><Database size={14} /> {plan.libraryLabel || "档案库"} <span>·</span> {plan.targets?.length ?? 0} 个聊天 <span>·</span> {scheduleText(plan.schedule)}</p>
-        <p>{mediaText(plan.mediaKinds ?? [])}{plan.includeHistory && " · 补齐历史缺失媒体"}
-          <span aria-hidden="true">·</span><span className="plan-next-slot"><CalendarClock size={13} /> 下次运行 <b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></span></p>
-      </div>
-      <div className="plan-row-actions">
+      <div className="plan-row-actions plan-detail-actions">
         <button id={`sync-plan-edit-${plan.id}`} type="button" className="btn" disabled={busy || !!plan.activeRunId} onClick={onEdit}><Pencil size={14} /> 编辑计划</button>
         <PlanRunButton primary action={action} disabled={busy || plan.state === "stopping"} onAct={onAct} />
         <PlanMoreActions plan={plan} action={action} busy={busy} onAct={onAct} onDelete={onDelete} />
       </div>
+      <dl className="plan-detail-facts">
+        <div>
+          <dt><Database size={14} /> 目标档案库</dt>
+          <dd title={plan.libraryLabel}>{plan.libraryLabel || "档案库"}</dd>
+          <dd>{plan.targets?.length ?? 0} 个聊天</dd>
+        </div>
+        <div>
+          <dt><CalendarClock size={14} /> 运行时间</dt>
+          <dd>{scheduleText(plan.schedule)}</dd>
+          <dd>{plan.enabled ? `下次运行 ${when(plan.nextRunAt, "待排程")}` : "定时运行已暂停"}</dd>
+        </div>
+        <div>
+          <dt><MessageCircle size={14} /> 同步内容</dt>
+          <dd>{mediaText(plan.mediaKinds ?? [])}</dd>
+          {plan.includeHistory && <dd>补齐历史缺失媒体</dd>}
+        </div>
+      </dl>
     </header>
     {currentReason && <div className="plan-inline-notice plan-run-notice" role="status">
       <AlertCircle size={16} /><span>{plan.message || REASONS[currentReason]}</span>

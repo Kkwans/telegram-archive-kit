@@ -60,21 +60,25 @@
 .plan-more-menu > .danger { color: var(--danger); }
 
 .plan-subpage { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.plan-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.plan-detail-title { flex: 1 1 275px; min-width: 0; }
+#task-plans .plan-detail-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 13px 16px; padding: 14px 16px; overflow: visible; }
 .plan-detail-title-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .plan-detail-title-line h1 { min-width: 0; }
 #task-plans .plan-page-back { width: 34px; height: 34px; flex: none; background: var(--surface); }
 #task-plans .plan-page-back:hover { background: var(--surface-3); }
 .plan-subpage h1 { margin: 0; color: var(--text); font-size: 25px; line-height: 1.25; font-weight: 700; letter-spacing: -.015em; overflow-wrap: anywhere; }
-.plan-detail-title h1:focus { outline: none; }
-.plan-detail-title p { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; margin: 6px 0 0; padding-left: 44px; color: var(--muted); overflow-wrap: anywhere; font-size: 13px; }
-.plan-detail-title p + p { margin-top: 3px; font-size: 12px; }
-.plan-detail-title svg { flex: none; }
-.plan-next-slot { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.plan-next-slot b { color: var(--text); font-variant-numeric: tabular-nums; }
-.plan-detail-heading .plan-row-actions { margin-left: auto; }
-.plan-history-heading { display: flex; align-items: baseline; gap: 10px; margin-top: 10px; }
+.plan-detail-title-line h1:focus { outline: none; }
+.plan-detail-heading .plan-row-actions { justify-content: flex-end; }
+.plan-detail-facts { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); margin: 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.plan-detail-facts > div { min-width: 0; padding-inline: 14px; }
+.plan-detail-facts > div:first-child { padding-left: 0; }
+.plan-detail-facts > div:last-child { padding-right: 0; }
+.plan-detail-facts > div + div { border-left: 1px solid var(--line); }
+.plan-detail-facts dt { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.plan-detail-facts dt svg { flex: none; }
+.plan-detail-facts dd { margin: 3px 0 0; color: var(--text); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.plan-detail-facts dd[title] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-detail-facts dd + dd { color: var(--muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.plan-history-heading { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
 .plan-history-heading h2 { margin: 0; font-size: 16px; font-weight: 680; }
 .plan-history-heading > span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .plan-history { display: grid; grid-template-columns: 196px minmax(0,1fr); gap: 12px; align-items: start; }
@@ -321,7 +325,11 @@ dialog.task-info-modal::backdrop { background: #11182766; }
   #task-plans .plan-row > .plan-next-run { grid-column: 1 / -1; grid-row: 2; }
   #task-plans .plan-row > .plan-last-run { grid-column: 1 / -1; grid-row: 3; padding-left: 44px; }
   #task-plans .plan-editor-identity { grid-template-columns: minmax(0,1fr); }
-  #task-plans .plan-detail-title p { padding-left: 0; }
+  #task-plans .plan-detail-heading { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  #task-plans .plan-detail-actions { justify-content: flex-start; }
+  #task-plans .plan-detail-facts { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  #task-plans .plan-detail-facts > div { padding-inline: 0; }
+  #task-plans .plan-detail-facts > div + div { border-left: 0; border-top: 1px solid var(--line); padding-top: 8px; }
   #task-plans .plan-run-nav { grid-template-columns: minmax(0,1fr); }
   #task-plans .plan-chat-toolbar { grid-template-columns: minmax(80px,1fr) auto 32px; }
   #task-plans .plan-chat-toolbar > .task-search { grid-column: 1 / -1; }
