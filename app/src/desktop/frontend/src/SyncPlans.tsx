@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, Images, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime, duration } from "./format";
 import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
@@ -634,7 +634,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
 
   return <form className="plan-editor plan-subpage" onSubmit={(event) => void submit(event)}>
     <header className="plan-editor-title">
-      <button type="button" className="plan-back" disabled={saving} onClick={onCancel}><ArrowLeft size={15} /> {plan ? "返回计划详情" : "返回同步计划"}</button>
+      <button type="button" className="icon-btn plan-editor-back" aria-label={plan ? "返回计划详情" : "返回同步计划"} title={plan ? "返回计划详情" : "返回同步计划"} disabled={saving} onClick={onCancel}><ArrowLeft size={17} /></button>
       <h1>{plan ? "编辑同步计划" : "新建同步计划"}</h1>
     </header>
     <fieldset className="plan-editor-fields" disabled={saving}>
@@ -642,6 +642,12 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
         <label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus={!plan} required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label>
         <div className="field plan-editor-library"><span>目标档案库</span><div className="plan-library-value"><Database size={14} /><b title={libraryLabel}>{libraryLabel}</b></div></div>
       </div>
+      {(!hasSession || libraryChanged || !boundLibraryOpen || chatError) && <div className="plan-editor-notices">
+        {!hasSession && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>登录 Telegram 后可读取聊天列表。</span><button type="button" className="btn sm ghost" onClick={onAccount}>前往登录 <ArrowUpRight size={12} /></button></div>}
+        {libraryChanged && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>编辑期间切换了档案库。请返回后为当前档案库新建计划。</span></div>}
+        {!boundLibraryOpen && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>打开此计划绑定的档案库后，可添加聊天。</span></div>}
+        {chatError && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{chatError}</span></div>}
+      </div>}
       <div className="plan-editor-grid">
         <section className="panel plan-form-panel plan-chat-panel">
           <div className="plan-form-section">
@@ -652,12 +658,8 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
               <button type="button" className="btn sm plan-pick" aria-pressed={onlySelected} onClick={() => { setOnlySelected((value) => !value); setChatPage(1); }}><ListFilter size={14} /> 仅看已选</button>
               <button type="button" className="icon-btn" aria-label="刷新聊天" title="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
             </div>
-            {!hasSession && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>登录 Telegram 后可读取聊天列表。</span><button type="button" className="btn sm ghost" onClick={onAccount}>前往登录 <ArrowUpRight size={12} /></button></div>}
-            {libraryChanged && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>编辑期间切换了档案库。请返回后为当前档案库新建计划。</span></div>}
-            {!boundLibraryOpen && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>打开此计划绑定的档案库后，可添加聊天。</span></div>}
-            {chatError && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{chatError}</span></div>}
             <div className="plan-chat-list" aria-label="可选择的聊天" ref={chatList}>
-              {loading && !visible.length ? <div className="plan-loading" role="status" aria-label="正在读取聊天">{[0, 1, 2].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div> : pageChats.length ? pageChats.map((chat) => {
+              {loading && !visible.length ? <div className="plan-loading plan-chat-skeleton" role="status" aria-label="正在读取聊天">{[0, 1, 2, 3, 4].map((i) => <div key={i}><span className="plan-chat-symbol skeleton-block" /><span className="plan-chat-identity"><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></span></div>)}</div> : pageChats.length ? pageChats.map((chat) => {
                 const checked = selected.has(chat.peer);
                 const ChatIcon = chat.type === "channel" ? Megaphone : chat.type === "group" ? UsersRound : MessageCircle;
                 return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={(event) => {
@@ -671,7 +673,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                 </button>;
               }) : <p className="plan-chat-empty">{!hasSession ? "登录后选择要同步的聊天。" : onlySelected ? "没有符合条件的已选聊天。" : "没有找到符合条件的聊天。"}</p>}
             </div>
-            {(loading || filtered || pages > 1) && <div className="plan-chat-list-footer">
+            <div className="plan-chat-list-footer">
               <span aria-live="polite">{loading ? "正在刷新聊天…" : pages > 1 ? `${firstChat + 1}–${firstChat + pageChats.length} / ${visible.length.toLocaleString()} 个聊天` : `${visible.length} 个结果`}</span>
               <div className="plan-chat-list-actions">
                 {filtered && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); changeFilter("all"); setOnlySelected(false); }}>清除筛选</button>}
@@ -681,7 +683,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                   <button type="button" className="icon-btn" aria-label="下一页聊天" title="下一页聊天" disabled={page >= pages} onClick={() => setChatPage(page + 1)}><ChevronRight size={15} /></button>
                 </div>}
               </div>
-            </div>}
+            </div>
           </div>
         </section>
         <section className="panel plan-form-panel plan-settings-panel">
@@ -691,16 +693,16 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
               <div className="field"><span>重复</span><Select ariaLabel="重复频率" value={frequency} options={FREQUENCY_OPTIONS} disabled={saving} onChange={(value) => set("schedule", { ...draft.schedule, frequency: value as Schedule["frequency"] })} /></div>
               <label className="field"><span>时间</span><input type="time" required value={time} onChange={(event) => set("schedule", { ...draft.schedule, time: event.target.value })} /></label>
             </div>
-            {frequency === "weekly" && <div className="field plan-weekdays">
+            <div className="field plan-weekdays">
               <span id="plan-weekday-label">执行日</span>
-              <div role="group" aria-labelledby="plan-weekday-label">
+              {frequency === "daily" ? <div className="plan-daily-days">周一至周日</div> : <div role="group" aria-labelledby="plan-weekday-label">
                 {WEEKDAY_ORDER.map((day) => {
                   const checked = selectedDays.includes(day);
                   return <button type="button" className="btn sm plan-pick" key={day} aria-label={`星期${WEEKDAYS[day]}`} aria-pressed={checked}
                     onClick={() => set("schedule", { ...draft.schedule, weekdays: WEEKDAY_ORDER.filter((item) => item === day ? !checked : selectedDays.includes(item)) })}>周{WEEKDAYS[day]}</button>;
                 })}
-              </div>
-            </div>}
+              </div>}
+            </div>
             <div className="plan-schedule-preview" aria-live="polite">
               <span><Clock size={14} /> 下次运行</span>
               <b title={preview?.error}>{!validDays ? "至少选择一个执行日" : !draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
@@ -709,9 +711,9 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
           </div>
           <div className="plan-form-section plan-content-section">
             <div className="plan-field-heading"><h2>同步内容</h2></div>
-            <div className="plan-content-choice tabs-pill" role="group" aria-label="同步内容">
-              <button type="button" aria-pressed={!mediaEnabled} className={!mediaEnabled ? "on" : ""} onClick={() => setMediaEnabled(false)}>仅消息</button>
-              <button type="button" aria-pressed={mediaEnabled} className={mediaEnabled ? "on" : ""} onClick={() => setMediaEnabled(true)}>消息与媒体</button>
+            <div className="plan-content-choice" role="group" aria-label="同步内容">
+              <button type="button" aria-pressed={!mediaEnabled} onClick={() => setMediaEnabled(false)}><MessageCircle size={15} /> 仅消息</button>
+              <button type="button" aria-pressed={mediaEnabled} onClick={() => setMediaEnabled(true)}><Images size={15} /> 消息与媒体</button>
             </div>
             {mediaEnabled && <>
               <div className="plan-media-options" role="group" aria-label="媒体类型">{MEDIA.map(({ kind, label, icon: Icon }) => {

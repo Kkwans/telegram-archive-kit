@@ -1283,25 +1283,20 @@ export function TasksPage({
   return (
     <div className="task-center-workspace">
       <div className="page-head">
-        <div>
-          <h1>任务中心</h1>
+        <div className="task-center-tabs" role="tablist" aria-label="任务中心" onKeyDown={(e) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+          e.preventDefault();
+          const next = e.key === "Home" ? "records" : e.key === "End" ? "plans" : tab === "records" ? "plans" : "records";
+          onTabChange(next);
+          e.currentTarget.querySelector<HTMLButtonElement>(`#task-tab-${next}`)?.focus();
+        }}>
+          <button id="task-tab-records" role="tab" type="button" aria-controls="task-records" aria-selected={tab === "records"} tabIndex={tab === "records" ? 0 : -1} className={tab === "records" ? "on" : ""} onClick={() => onTabChange("records")}><ListTodo size={15} /> 任务记录</button>
+          <button id="task-tab-plans" role="tab" type="button" aria-controls="task-plans" aria-selected={tab === "plans"} tabIndex={tab === "plans" ? 0 : -1} className={tab === "plans" ? "on" : ""} onClick={() => onTabChange("plans")}><CalendarClock size={15} /> 同步计划</button>
         </div>
-        <div className="task-head-actions">
-          {tab === "records" && <div className="task-record-actions actions">
-            <button className="btn ghost" onClick={onRefresh}><RefreshCw size={13} /> 刷新状态</button>
-            <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}><Trash2 size={13} /> 全部删除</button>
-          </div>}
-          <div className="task-center-tabs" role="tablist" aria-label="任务中心" onKeyDown={(e) => {
-            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
-            e.preventDefault();
-            const next = e.key === "Home" ? "records" : e.key === "End" ? "plans" : tab === "records" ? "plans" : "records";
-            onTabChange(next);
-            e.currentTarget.querySelector<HTMLButtonElement>(`#task-tab-${next}`)?.focus();
-          }}>
-            <button id="task-tab-records" role="tab" type="button" aria-controls="task-records" aria-selected={tab === "records"} tabIndex={tab === "records" ? 0 : -1} className={tab === "records" ? "on" : ""} onClick={() => onTabChange("records")}><ListTodo size={15} /> 任务记录</button>
-            <button id="task-tab-plans" role="tab" type="button" aria-controls="task-plans" aria-selected={tab === "plans"} tabIndex={tab === "plans" ? 0 : -1} className={tab === "plans" ? "on" : ""} onClick={() => onTabChange("plans")}><CalendarClock size={15} /> 同步计划</button>
-          </div>
-        </div>
+        {tab === "records" && <div className="task-record-actions actions">
+          <button className="btn ghost" onClick={onRefresh}><RefreshCw size={13} /> 刷新状态</button>
+          <button className="btn danger" disabled={tasks.every((t) => t.state === "running")} onClick={() => setClearConfirm(true)}><Trash2 size={13} /> 全部删除</button>
+        </div>}
       </div>
 
       {tab === "plans" ? (
