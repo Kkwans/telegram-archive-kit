@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   AtSign,
+  Bookmark,
   ChartPie,
   CloudDownload,
   Fingerprint,
@@ -3383,8 +3384,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const showRemoteMode = (mode: typeof remoteMode) => {
     setRemoteMode(mode);
     requestAnimationFrame(() => {
-      const selector = mode === "add" ? ".remote-method.selected" : ".saved-connections-head > button";
-      remoteDialog.current?.querySelector<HTMLButtonElement>(selector)?.focus({ preventScroll: true });
+      const selector = mode === "add" ? "#remote-title" : ".saved-connections-head > button";
+      remoteDialog.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
     });
   };
 
@@ -3986,7 +3987,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
             <div className="remote-head">
               <div className="remote-title">
                 {remoteMode === "add" && <button type="button" className="icon-btn remote-header-action" aria-label="返回已保存的连接" title="返回已保存的连接" disabled={remoteFormBusy} onClick={() => showRemoteMode("saved")}><ChevronLeft size={16} /></button>}
-                <h2 id="remote-title">{remoteMode === "saved" ? "网络位置" : "添加网络连接"}</h2>
+                <h2 id="remote-title" tabIndex={-1}>{remoteMode === "saved" ? "网络位置" : "添加网络连接"}</h2>
               </div>
               <button type="button" className="icon-btn remote-header-action" aria-label="关闭网络位置" disabled={sshAction === "install" || sshAction === "switch" || rcloneBusy || remoteTesting || connectionBusy || busy === "switch" || !!pendingPublishSwitch} onClick={closeRemote}>
                 <X size={16} />
@@ -3997,7 +3998,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <div className={`remote-current ${remote.remote ? "is-remote" : ""} ${remote.reachable ? "" : "is-offline"}`}>
                   <span className="remote-current-icon"><Database size={16} /></span>
                   <div>
-                    <b>{remote.remote ? "当前为远程档案库" : "当前为本地档案库"}</b>
+                    <b>当前档案库</b>
                     <span title={remote.root}>{remote.root}</span>
                   </div>
                   <em>{pathKindLabel(remote.kind)}</em>
@@ -4154,7 +4155,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>
                 </div>}
                 <div className="remote-connect-footer">
-                  <label className="plan-check remote-save-toggle"><input type="checkbox" checked={remoteSave} disabled={remoteFormBusy} onChange={(e) => setRemoteSave(e.target.checked)} /> 保存此连接</label>
+                  <button type="button" className="btn remote-save-toggle" aria-pressed={remoteSave} disabled={remoteFormBusy} onClick={() => setRemoteSave((value) => !value)}><Bookmark size={14} /> 保存此连接</button>
                   <div className="remote-form-actions">
                     {!sshOpen && !rcloneOpen && <>
                       <button type="button" className="btn" disabled={remoteFormBusy || !remotePath.trim()} onClick={() => void testRemote()}>
