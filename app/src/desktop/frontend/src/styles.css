@@ -223,8 +223,9 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(160, 175, 2
 .footer span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .footer .spacer { flex: 1; }
 .toast-stack {
-  position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 500;
-  width: min(520px, calc(100vw - 40px)); display: flex; flex-direction: column; gap: 8px;
+  position: fixed; top: calc(var(--main-inset-top, 48px) + 16px);
+  left: calc(50% + var(--main-inset-left, 0px) / 2); transform: translateX(-50%); z-index: 500;
+  width: min(520px, calc(100vw - var(--main-inset-left, 0px) - 40px)); display: flex; flex-direction: column; gap: 8px;
   pointer-events: none;
 }
 .toast-item {
@@ -1720,23 +1721,6 @@ html[data-theme="dark"] .palette {
 .side.collapsed .chat-item:hover .avatar { transform: scale(1.08); box-shadow: 0 4px 12px rgba(31, 59, 120, .2); }
 .side.collapsed .side-foot { display: none; }
 .side.collapsed .side-empty { display: none; }
-.side-tip {
-  position: fixed; left: 76px; z-index: 95; width: 252px;
-  display: flex; flex-direction: column; gap: 3px; padding: 11px 13px;
-  border: 1px solid var(--line-strong); border-radius: 11px;
-  background: var(--surface); color: var(--muted); font-size: 11.5px; line-height: 1.55;
-  box-shadow: 0 16px 44px rgba(15, 22, 40, 0.2);
-  animation: side-tip-in .15s ease; pointer-events: none;
-}
-.side-tip::before {
-  content: ""; position: absolute; left: -5px; top: 18px; width: 9px; height: 9px;
-  background: var(--surface); border-left: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong);
-  transform: rotate(45deg);
-}
-.side-tip b { color: var(--text); font-size: 12.5px; font-weight: 650; }
-.side-tip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.side-tip em { font-style: normal; color: var(--warn); }
-@keyframes side-tip-in { from { opacity: 0; transform: translateX(-5px) scale(.98); } to { opacity: 1; transform: none; } }
 
 /* ===================== Bulk management ===================== */
 .bulk-bar {
@@ -1925,13 +1909,17 @@ html[data-theme="dark"] .palette {
 .side.collapsed .side-head { display: none; }
 .side.collapsed .chat-list { padding-top: 8px; }
 .app-tip {
-  position: fixed; z-index: 250; transform: translateX(-50%);
-  padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line-strong);
-  background: var(--surface); color: var(--text); box-shadow: 0 8px 22px rgba(15, 22, 40, .18);
-  font-size: 11px; white-space: nowrap; pointer-events: none;
-  animation: tip-in .12s ease;
+  position: fixed; z-index: 110000; inset: auto; margin: 0;
+  width: max-content; max-width: min(380px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px); overflow: hidden;
+  padding: 7px 11px; border: 0; border-radius: 8px;
+  background: #23304a; color: #f4f7ff; box-shadow: 0 4px 14px #10192e38;
+  font-size: 12px; line-height: 1.5; text-align: start;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  pointer-events: none; visibility: hidden;
 }
-@keyframes tip-in { from { opacity: 0; transform: translate(-50%, -2px); } to { opacity: 1; transform: translate(-50%, 0); } }
+:root[data-theme="dark"] .app-tip { background: #dfe8fa; color: #192540; box-shadow: 0 4px 14px #060b1666; }
+.app-tip strong { display: block; margin-bottom: 3px; font-weight: 650; }
 
 /* task table */
 .task-table th, .task-table td { text-align: left; vertical-align: middle; }

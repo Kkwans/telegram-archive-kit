@@ -165,7 +165,7 @@ function planRunAction(plan: Plan, latest?: PlanRun): RunAction {
 function PlanRunButton({ action, primary, disabled, onAct }: { action: RunAction; primary?: boolean; disabled: boolean; onAct: (action: PlanAction) => void }) {
   const { label, icon: Icon } = RUN_ACTIONS[action];
   return <button type="button" className={`btn ${action === "stop" ? "stop-action" : primary ? "primary" : "sm"}`}
-    title={action === "retry" ? "重试最近一轮的失败项" : undefined} disabled={disabled} onClick={() => onAct(action)}>
+    data-tip={action === "retry" ? "重试最近一轮的失败项" : undefined} disabled={disabled} onClick={() => onAct(action)}>
     <Icon size={14} /> {action === "retry" && !primary ? "重试" : label}
   </button>;
 }
@@ -343,7 +343,7 @@ export function SyncPlans({ boot, location, onNavigate, onAccount, onLibrary, on
     {selectedPlan ? <PlanDetails plan={selectedPlan} runs={runsByPlan.get(selectedPlan.id) ?? []} location={location} busy={!!busy}
       onNavigate={onNavigate} onBack={closePlan} onEdit={() => setEditor(selectedPlan)} onAct={(action) => void act(selectedPlan, action)}
       onDelete={() => setConfirmDelete(selectedPlan)} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={onOpenTask} /> : <>
-      <header className="plan-detail-title-line"><button type="button" className="icon-btn plan-page-back" onClick={closePlan} aria-label="返回同步计划" title="返回同步计划"><ArrowLeft size={17} /></button><h1 id="sync-plan-heading" tabIndex={-1}>同步计划</h1></header>
+      <header className="plan-detail-title-line"><button type="button" className="icon-btn plan-page-back" onClick={closePlan} aria-label="返回同步计划" data-tip="返回同步计划"><ArrowLeft size={17} /></button><h1 id="sync-plan-heading" tabIndex={-1}>同步计划</h1></header>
       {data ? <div className="panel task-empty"><p>该同步计划已不存在。</p></div> :
         !error && <div className="panel plan-loading" role="status" aria-label="正在读取同步计划"><div><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div></div>}
     </>}
@@ -366,7 +366,7 @@ export function SyncPlans({ boot, location, onNavigate, onAccount, onLibrary, on
           <div className="plan-row">
             <button id={`sync-plan-open-${plan.id}`} type="button" className="plan-row-title" onClick={() => openPlan(plan)}>
               <span className="plan-row-icon"><CalendarClock size={17} /></span>
-              <span className="plan-row-name"><b title={plan.name}>{plan.name}</b><span className="plan-row-meta" title={plan.libraryLabel}>{plan.targets?.length ?? 0} 个聊天 · {scheduleText(plan.schedule)}{plan.libraryLabel && ` · ${plan.libraryLabel}`}</span></span>
+              <span className="plan-row-name"><b data-tip={plan.name}>{plan.name}</b><span className="plan-row-meta" data-tip={plan.libraryLabel}>{plan.targets?.length ?? 0} 个聊天 · {scheduleText(plan.schedule)}{plan.libraryLabel && ` · ${plan.libraryLabel}`}</span></span>
             </button>
             <Status state={plan.state} />
             <div className="plan-row-time plan-next-run"><span className="plan-time-label">下次运行</span><b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></div>
@@ -462,7 +462,7 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
       <dl className="plan-detail-meta">
         <div>
           <dt><Database size={15} aria-hidden="true" />目标档案库</dt>
-          <dd className="plan-detail-library" title={plan.libraryLabel}>{plan.libraryLabel || "档案库"}</dd>
+          <dd className="plan-detail-library" data-tip={plan.libraryLabel}>{plan.libraryLabel || "档案库"}</dd>
           <dd>{plan.targets?.length ?? 0} 个聊天</dd>
         </div>
         <div>
@@ -671,13 +671,13 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
 
   return <form className="plan-editor plan-subpage" onSubmit={(event) => void submit(event)}>
     <header className="plan-editor-title">
-      <button type="button" className="icon-btn plan-editor-back" aria-label={plan ? "返回计划详情" : "返回同步计划"} title={plan ? "返回计划详情" : "返回同步计划"} disabled={saving} onClick={onCancel}><ArrowLeft size={17} /></button>
+      <button type="button" className="icon-btn plan-editor-back" aria-label={plan ? "返回计划详情" : "返回同步计划"} data-tip={plan ? "返回计划详情" : "返回同步计划"} disabled={saving} onClick={onCancel}><ArrowLeft size={17} /></button>
       <h1>{plan ? "编辑同步计划" : "新建同步计划"}</h1>
     </header>
     <fieldset className="plan-editor-fields" disabled={saving}>
       <div className="panel plan-editor-identity">
         <label className="field plan-name-field"><span>计划名称</span><input type="text" autoFocus={!plan} required value={draft.name} maxLength={80} onChange={(event) => set("name", event.target.value)} placeholder="例如：每日频道归档" /></label>
-        <div className="field plan-editor-library"><span>目标档案库</span><div className="plan-library-value"><Database size={14} /><b title={libraryLabel}>{libraryLabel}</b></div></div>
+        <div className="field plan-editor-library"><span>目标档案库</span><div className="plan-library-value"><Database size={14} /><b data-tip={libraryLabel}>{libraryLabel}</b></div></div>
       </div>
       {(!hasSession || libraryChanged || !boundLibraryOpen || chatError) && <div className="plan-editor-notices">
         {!hasSession && <div className="plan-inline-notice" role="status"><AlertCircle size={15} /><span>登录 Telegram 后可读取聊天列表。</span><button type="button" className="btn sm ghost" onClick={onAccount}>前往登录 <ArrowUpRight size={12} /></button></div>}
@@ -693,7 +693,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
               <label className="task-search"><Search size={14} /><input type="search" aria-label="搜索聊天" placeholder="搜索名称、用户名或 ID" value={query} onChange={(event) => { setQuery(event.target.value); setChatPage(1); }} /></label>
               <Select value={activeFolder ? `folder:${activeFolder.id}` : filter} options={filterOptions} ariaLabel="筛选归档对象" onChange={changeFilter} disabled={saving} />
               <button type="button" className="btn sm plan-pick" aria-pressed={onlySelected} onClick={() => { setOnlySelected((value) => !value); setChatPage(1); }}><ListFilter size={14} /> 仅看已选</button>
-              <button type="button" className="icon-btn" aria-label="刷新聊天" title="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
+              <button type="button" className="icon-btn" aria-label="刷新聊天" data-tip="刷新聊天" disabled={!canFetchChats || loading} onClick={() => setRefreshSeq((value) => value + 1)}><RefreshCw size={14} className={loading ? "spin" : ""} /></button>
             </div>
             <div className="plan-chat-list" aria-label="可选择的聊天" ref={chatList}>
               {loading && !visible.length ? <div className="plan-loading plan-chat-skeleton" role="status" aria-label="正在读取聊天">{[0, 1, 2, 3, 4].map((i) => <div key={i}><span className="plan-chat-symbol skeleton-block" /><span className="plan-chat-identity"><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></span></div>)}</div> : pageChats.length ? pageChats.map((chat) => {
@@ -704,7 +704,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                   if (onlySelected && checked) event.currentTarget.closest(".plan-form-section")?.querySelector<HTMLButtonElement>(".plan-pick")?.focus();
                 }}>
                   <span className="plan-chat-symbol"><ChatIcon size={15} /></span>
-                  <span className="plan-chat-identity"><b title={chat.name}>{chat.name}</b><span className="plan-chat-username">{onlineChatTypeMeta(chat.type).label}{chat.username ? ` · @${chat.username}` : ""}</span></span>
+                  <span className="plan-chat-identity"><b data-tip={chat.name}>{chat.name}</b><span className="plan-chat-username">{onlineChatTypeMeta(chat.type).label}{chat.username ? ` · @${chat.username}` : ""}</span></span>
                   {(chat.archivedLocally || chat.localSlug) && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}
                   <span className="plan-chat-selected" aria-hidden="true">{checked && <><Check size={12} />已选</>}</span>
                 </button>;
@@ -715,9 +715,9 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
               <div className="plan-chat-list-actions">
                 {filtered && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); changeFilter("all"); setOnlySelected(false); }}>清除筛选</button>}
                 {pages > 1 && <div className="plan-chat-pagination" aria-label="聊天列表分页">
-                  <button type="button" className="icon-btn" aria-label="上一页聊天" title="上一页聊天" disabled={page <= 1} onClick={() => setChatPage(page - 1)}><ChevronLeft size={15} /></button>
+                  <button type="button" className="icon-btn" aria-label="上一页聊天" data-tip="上一页聊天" disabled={page <= 1} onClick={() => setChatPage(page - 1)}><ChevronLeft size={15} /></button>
                   <span aria-label={`第 ${page} 页，共 ${pages} 页`}>{page} / {pages}</span>
-                  <button type="button" className="icon-btn" aria-label="下一页聊天" title="下一页聊天" disabled={page >= pages} onClick={() => setChatPage(page + 1)}><ChevronRight size={15} /></button>
+                  <button type="button" className="icon-btn" aria-label="下一页聊天" data-tip="下一页聊天" disabled={page >= pages} onClick={() => setChatPage(page + 1)}><ChevronRight size={15} /></button>
                 </div>}
               </div>
             </div>
@@ -742,7 +742,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
             </div>
             <div className="plan-schedule-preview" aria-live="polite">
               <span><Clock size={14} /> 下次运行</span>
-              <b title={preview?.error}>{!validDays ? "至少选择一个执行日" : !draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
+              <b data-tip={preview?.error}>{!validDays ? "至少选择一个执行日" : !draft.enabled ? "计划已暂停" : !validTime ? "请选择时间" : preview?.error ? "暂时无法计算" : preview?.nextRunAt ? when(preview.nextRunAt, "待排程") : "正在计算…"}</b>
               <small>本机时间</small>
             </div>
           </div>

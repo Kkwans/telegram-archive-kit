@@ -552,7 +552,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
             </button>
           )}
           {!planned && task.slug && (
-            <button className="btn ghost" disabled={!!busyAction} onClick={() => void rebuild()} title="重新生成数据、网页与缺失的视频封面">
+            <button className="btn ghost" disabled={!!busyAction} onClick={() => void rebuild()} data-tip="重新生成数据、网页与缺失的视频封面">
               {busyAction === "rebuild" ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
               重建网页
             </button>
@@ -612,7 +612,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
               <span className="download-config-chip">每文件 <b>{threads}</b> 线程</span>
             </div>
           ) : (
-            <p className={`download-hero-desc ${failed ? "bad" : warning ? "warn" : ""}`} title={result}>{displayResult}</p>
+            <p className={`download-hero-desc ${failed ? "bad" : warning ? "warn" : ""}`} data-tip={result}>{displayResult}</p>
           )}
           <div className="download-hero-info">
             <span>开始 <b>{dateTime(task.startedAt)}</b></span>
@@ -712,7 +712,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
               {Array.from({ length: Math.max(active.length, concurrent) }, (_, index) => active[index] ?? null).map((file, index) => (
                 file ? (
                   <tr key={`${file.id || file.name}-${index}`}>
-                    <td className="col-file" title={file.name}>{file.name}</td>
+                    <td className="col-file" data-tip={file.name}>{file.name}</td>
                     <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
                     <td className="col-progress">
                       <div className="progress-inline">
@@ -770,7 +770,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
             <tbody>
               {recent.map((file, index) => (
                 <tr key={`${file.id || file.name}-${index}`}>
-                  <td className="col-file" title={file.name}>{file.name}</td>
+                  <td className="col-file" data-tip={file.name}>{file.name}</td>
                   <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
                   <td className="col-size">{bytes(file.expected || file.transferred)}</td>
                   <td className="col-elapsed">{file.elapsedMs > 0 ? fmtDuration(file.elapsedMs) : "--"}</td>
@@ -928,7 +928,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
                   <tbody>
                     {pageRecords.map((file, index) => (
                       <tr key={`${file.id || file.name}-${index}`}>
-                        <td className="col-file" title={file.name}>{file.name}</td>
+                        <td className="col-file" data-tip={file.name}>{file.name}</td>
                         <td className="col-kind center"><span className={`kind-chip ${mediaGroup(file.kind)}`}>{fileKindLabel(file.kind)}</span></td>
                         <td className="col-size">{bytes(file.expected || file.transferred)}</td>
                         <td className="col-elapsed">{file.elapsedMs > 0 ? fmtDuration(file.elapsedMs) : "--"}</td>
@@ -1376,7 +1376,7 @@ export function TasksPage({
                         void openTask(t);
                       }
                     }}
-                    title="点击查看任务详情"
+                    data-tip="点击查看任务详情"
                   >
                     <td className="task-col-state">
                       <span className={`task-state ${t.state}`}>
@@ -1389,16 +1389,16 @@ export function TasksPage({
                     </td>
                     <td className="task-main">
                       <div className="task-title-line">
-                        <b title={taskTitle(t)}>
+                        <b data-tip={taskTitle(t)}>
                           <button className="task-title-btn" onClick={(e) => { e.stopPropagation(); void openTask(t); }}>
                             {taskTitle(t)}
                           </button>
                         </b>
                         {t.state === "done" && noNewMedia(t) && <span className="task-note">无新增</span>}
                       </div>
-                      {(t.error || t.detail) && <span className={t.error && (t.state === "failed" || t.state === "partial") ? "err" : ""} title={t.error || t.detail}>{t.error || t.detail}</span>}
+                      {(t.error || t.detail) && <span className={t.error && (t.state === "failed" || t.state === "partial") ? "err" : ""} data-tip={t.error || t.detail}>{t.error || t.detail}</span>}
                     </td>
-                    <td className="task-chat" title={t.chat || undefined}>{t.chat || "—"}</td>
+                    <td className="task-chat" data-tip={t.chat || undefined}>{t.chat || "—"}</td>
                     <td className="muted task-started"><time>{dateTime(t.startedAt)}</time></td>
                     <td className="task-duration"><TaskElapsed state={t.state} elapsedMs={t.elapsedMs} startedAt={t.startedAt} finishedAt={t.finishedAt} /></td>
                     <td>
@@ -1410,7 +1410,7 @@ export function TasksPage({
                     <td className="task-col-actions">
                       <button
                         className="icon-btn danger"
-                        title={t.state === "running" ? "进行中的任务不能删除记录" : "删除任务记录（不删除下载文件）"}
+                        data-tip={t.state === "running" ? "进行中的任务不能删除记录" : "删除任务记录（不删除下载文件）"}
                         aria-label={`删除任务记录 ${t.title}`}
                         disabled={t.state === "running"}
                         onClick={(e) => { e.stopPropagation(); removeRecord(t); }}

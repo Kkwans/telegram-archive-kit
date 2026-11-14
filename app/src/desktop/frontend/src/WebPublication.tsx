@@ -60,14 +60,14 @@ function PortDiagnostics({ check, port, blocked, ending, onCheck, onEnd, onClose
       </div>
       {(onCheck || onClose) && <div className="publish-port-actions">
         {onCheck && <button className="btn sm ghost" disabled={!result || ending} onClick={onCheck}><RefreshCw size={13} /> 重新检查</button>}
-        {onClose && <button className="btn sm ghost publish-icon-button" disabled={ending} onClick={onClose} aria-label="关闭端口检查" title="关闭端口检查"><X size={14} /></button>}
+        {onClose && <button className="btn sm ghost publish-icon-button" disabled={ending} onClick={onClose} aria-label="关闭端口检查" data-tip="关闭端口检查"><X size={14} /></button>}
       </div>}
     </div>
     {!!result?.owners?.length && <ul className="publish-port-owners">
       {result.owners.map((owner) => <li key={owner.pid}>
         <div className="publish-port-owner">
-          <b title={owner.path}>{owner.name} <small>PID {owner.pid}</small></b>
-          <small title={owner.addresses.join(" · ")}>{owner.addresses.join(" · ")}</small>
+          <b data-tip={owner.path}>{owner.name} <small>PID {owner.pid}</small></b>
+          <small data-tip={owner.addresses.join(" · ")}>{owner.addresses.join(" · ")}</small>
         </div>
         {owner.canEnd ? <button className="btn sm ghost publish-end-process" disabled={ending} onClick={() => onEnd(owner)}>解除占用</button> : <small className="publish-owner-reason">{owner.reason}</small>}
       </li>)}
@@ -93,7 +93,7 @@ function PublicationSwitch({ label, hint, checked, disabled, onChange, className
 function ChatIdentity({ chat }: { chat: Chat }) {
   return <>
     <span className="publish-chat-avatar" aria-hidden="true">{Array.from(chat.name.trim())[0] || "·"}</span>
-    <span className="publish-chat-copy"><b title={chat.name}>{chat.name}</b><small>{chat.ready ? `${chat.messages.toLocaleString()} 条消息` : "需先生成网页"}</small></span>
+    <span className="publish-chat-copy"><b data-tip={chat.name}>{chat.name}</b><small>{chat.ready ? `${chat.messages.toLocaleString()} 条消息` : "需先生成网页"}</small></span>
   </>;
 }
 
@@ -295,7 +295,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
         <div className="publish-status-head">
           <div className="publish-status-title">
             <h2>访问地址</h2>
-            <span title={status.library}><Database size={13} />{status.library || "尚未打开档案库"}</span>
+            <span data-tip={status.library}><Database size={13} />{status.library || "尚未打开档案库"}</span>
           </div>
           <div className="publish-state-group">
             <span className={`publish-state ${status.phase}`} role="status"><span className={`publish-dot ${status.phase}`} />{status.phase === "waiting" && blockedPort !== undefined ? "端口待处理" : phaseText[status.phase]}</span>
@@ -311,11 +311,11 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
               <div className="publish-endpoint" key={endpoint.url || `${endpoint.kind}-${index}`}>
                 <span className="publish-endpoint-label">{endpoint.kind === "lan" ? <Wifi size={15} /> : <Shield size={15} />}<span>{networkName[endpoint.kind]}</span>{endpoint.url && <small>{endpoint.url.includes("[") ? "IPv6" : "IPv4"}</small>}</span>
                 {endpoint.url ? <>
-                  <button type="button" className="publish-address" title={`在浏览器打开 ${endpoint.url}`} onClick={() => void act(endpoint, "open")}><code>{endpoint.url}</code></button>
+                  <button type="button" className="publish-address" data-tip={`在浏览器打开 ${endpoint.url}`} onClick={() => void act(endpoint, "open")}><code>{endpoint.url}</code></button>
                   <div className="publish-endpoint-actions">
-                    <button className="btn sm ghost publish-copy" aria-label={`复制 ${label} 地址`} title="复制地址" onClick={() => void act(endpoint, "copy")}><Copy size={14} /><span>复制</span></button>
-                    <button className="btn sm ghost" aria-label={`打开 ${label} 地址`} title="浏览器打开" onClick={() => void act(endpoint, "open")}><ExternalLink size={15} /></button>
-                    <button className="btn sm ghost" aria-label={`${label} 二维码`} title="显示二维码" onClick={() => void act(endpoint, "qr")}><QrCode size={15} /></button>
+                    <button className="btn sm ghost publish-copy" aria-label={`复制 ${label} 地址`} data-tip="复制地址" onClick={() => void act(endpoint, "copy")}><Copy size={14} /><span>复制</span></button>
+                    <button className="btn sm ghost" aria-label={`打开 ${label} 地址`} data-tip="浏览器打开" onClick={() => void act(endpoint, "open")}><ExternalLink size={15} /></button>
+                    <button className="btn sm ghost" aria-label={`${label} 二维码`} data-tip="显示二维码" onClick={() => void act(endpoint, "qr")}><QrCode size={15} /></button>
                   </div>
                 </> : <span className="publish-endpoint-error">{endpoint.error}</span>}
               </div>

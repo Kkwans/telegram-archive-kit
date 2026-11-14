@@ -1,3 +1,4 @@
+import { AppTooltip } from "./AppTooltip";
 import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   AlertTriangle,
@@ -67,18 +68,14 @@ const initialSideWidth = () => {
 };
 const initialCollapsed = () => localStorage.getItem("tak-side-collapsed") === "1";
 
-interface SideTip {
-  top: number;
-  title: string;
-  desc?: string;
-  lines?: string[];
-  warn?: string;
-}
-
-interface AppTip {
-  text: string;
-  x: number;
-  y: number;
+function chatTooltip(chat: ChatRow) {
+  return [
+    `${chat.type || "聊天"} · ID ${chat.id || "--"}`,
+    `${chat.messages.toLocaleString()} 条消息 · ${chat.media.toLocaleString()} 个媒体`,
+    `${chat.pages} 页网页 · ${chat.official} 个官方导出`,
+    chat.updatedAt ? `最近更新 ${chat.updatedAt.slice(0, 10)}` : "尚无更新时间",
+    chat.missing > 0 ? `缺失 ${chat.missing} 个媒体` : "",
+  ].filter(Boolean).join("\n");
 }
 
 // Frost the captured frame once, before it reaches CSS. Blurring a pseudo
@@ -154,8 +151,6 @@ export default function App() {
   const [prefs, setPrefs] = useState<ViewerPrefs>({ seekSeconds: 5, longPressRate: 4, longPressDelayMs: 300, maxVolume: 200, volumeStep: 10, videoFrameAspect: "original", speedWindowSeconds: 180, backdrop: "ambient" });
   const [sideWidth, setSideWidth] = useState(initialSideWidth);
   const [sideCollapsed, setSideCollapsed] = useState(initialCollapsed);
-  const [sideTip, setSideTip] = useState<SideTip | null>(null);
-  const [appTip, setAppTip] = useState<AppTip | null>(null);
   const lastSample = useRef(0);
   const toastSeq = useRef(0);
   const toastSeconds = useRef(3);
@@ -218,41 +213,7 @@ export default function App() {
     localStorage.setItem("tak-side-width", String(sideWidth));
   }, [sideWidth]);
   useEffect(() => {
-    if (palette || pending) setSideTip(null);
-  }, [palette, pending]);
-  useEffect(() => {
-    let timer = 0;
-    const hide = () => setAppTip(null);
-    const over = (e: MouseEvent) => {
-      const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tip]");
-      if (!el) return;
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        const r = el.getBoundingClientRect();
-        setAppTip({ text: el.dataset.tip || "", x: Math.max(70, Math.min(window.innerWidth - 70, r.left + r.width / 2)), y: r.bottom + 8 });
-      }, 90);
-    };
-    const out = (e: MouseEvent) => {
-      const el = (e.target as HTMLElement | null)?.closest("[data-tip]");
-      if (!el) return;
-      window.clearTimeout(timer);
-      setAppTip(null);
-    };
-    document.addEventListener("mouseover", over);
-    document.addEventListener("mouseout", out);
-    window.addEventListener("scroll", hide, true);
-    window.addEventListener("pointerdown", hide);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("mouseover", over);
-      document.removeEventListener("mouseout", out);
-      window.removeEventListener("scroll", hide, true);
-      window.removeEventListener("pointerdown", hide);
-    };
-  }, []);
-  useEffect(() => {
     localStorage.setItem("tak-side-collapsed", sideCollapsed ? "1" : "0");
-    setSideTip(null);
   }, [sideCollapsed]);
 
   useEffect(() => {
@@ -517,8 +478,6 @@ export default function App() {
     } else if (next !== "chats" && next !== "settings") {
       galleryReturn.current = null;
     }
-    setSideTip(null);
-    setAppTip(null);
     if (next === "remote") setRemoteRequest((value) => value + 1);
     else setPlanRecovery(null);
     setPage(next === "remote" ? "library" : next);
@@ -758,26 +717,6 @@ export default function App() {
   const navActive = (key: string) =>
     page === key || (key === "library" && page === "chats");
 
-  const showNavTip = (e: React.MouseEvent<HTMLElement>, label: string, desc: string) => {
-    if (!sideCollapsed) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    setSideTip({ top: Math.max(8, Math.min(r.top - 4, window.innerHeight - 150)), title: label, desc });
-  };
-  const showChatTip = (e: React.MouseEvent<HTMLElement>, c: ChatRow) => {
-    if (!sideCollapsed) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    setSideTip({
-      top: Math.max(8, Math.min(r.top - 8, window.innerHeight - 190)),
-      title: c.name,
-      desc: `${c.type || "聊天"} · ID ${c.id || "--"}`,
-      lines: [
-        `${c.messages.toLocaleString()} 条消息 · ${c.media.toLocaleString()} 个媒体`,
-        `${c.pages} 页网页 · ${c.official} 个官方导出`,
-        c.updatedAt ? `最近更新 ${c.updatedAt.slice(0, 10)}` : "尚无更新时间",
-      ],
-      warn: c.missing > 0 ? `缺失 ${c.missing} 个媒体` : undefined,
-    });
-  };
   const beginWindowResize = (edge: string, e: ReactMouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -850,51 +789,51 @@ export default function App() {
         </div>
         <button
           className="side-toggle"
-          onClick={() => { setSideTip(null); setSideCollapsed((v) => !v); }}
+          onClick={() => setSideCollapsed((v) => !v)}
           aria-label={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
           data-tip={sideCollapsed ? "展开侧栏" : "折叠侧栏"}
         >
           {sideCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
         </button>
         {boot && (
-          <span className="libchip" title={boot.libraryRoot || "未配置档案库"}>
+          <span className="libchip" data-tip={boot.libraryRoot || "未配置档案库"}>
             <FolderOpen size={12} />
             <span>{boot.libraryRoot || "未配置档案库"}</span>
           </span>
         )}
         <span className="spacer" />
-        <button className="cmdk" title="命令面板 (Ctrl+K)" aria-label="打开命令面板" onClick={() => setPalette(true)}>
+        <button className="cmdk" data-tip="命令面板 (Ctrl+K)" aria-label="打开命令面板" onClick={() => setPalette(true)}>
           <Search size={12} />
           Ctrl K
         </button>
-        <button className="taskbtn" title="任务中心" aria-label="打开任务中心" onClick={() => go("tasks")}>
+        <button className="taskbtn" data-tip="任务中心" aria-label="打开任务中心" onClick={() => go("tasks")}>
           <ListTodo size={13} />
           任务中心
           {tasks.filter((t) => t.state === "running").length > 0 && <b>{tasks.filter((t) => t.state === "running").length}</b>}
         </button>
-        <span className="pill" title={boot?.tdl || "未安装 tdl"}>
+        <span className="pill" data-tip={boot?.tdl || "未安装 tdl"}>
           <i className={`dot ${boot?.tdl ? (boot.tdlRunning ? "warn" : "") : "off"}`} />
           {boot?.tdl ? (boot.tdlRunning ? "tdl 运行中" : "tdl 已连接") : "tdl 未安装"}
         </span>
-        <span className="pill" title={boot?.hasSession ? "仅表示本机存在会话文件；实际连接状态请在「账号」页检查" : "尚未登录 Telegram"}>
+        <span className="pill" data-tip={boot?.hasSession ? "仅表示本机存在会话文件；实际连接状态请在「账号」页检查" : "尚未登录 Telegram"}>
           <i className={`dot ${boot?.hasSession ? "" : "off"}`} />
           {boot?.hasSession ? "有会话文件" : "未登录"}
         </span>
         <div className="seg" role="group" aria-label="外观">
-          <button className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")} title="浅色" aria-label="切换浅色外观" aria-pressed={theme === "light"}>
+          <button className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")} data-tip="浅色" aria-label="切换浅色外观" aria-pressed={theme === "light"}>
             <Sun size={13} />
           </button>
-          <button className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")} title="深色" aria-label="切换深色外观" aria-pressed={theme === "dark"}>
+          <button className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")} data-tip="深色" aria-label="切换深色外观" aria-pressed={theme === "dark"}>
             <Moon size={13} />
           </button>
         </div>
-        <button className="wbtn" title="最小化" aria-label="最小化窗口" onClick={() => call("windowMinimize")}>
+        <button className="wbtn" data-tip="最小化" aria-label="最小化窗口" onClick={() => call("windowMinimize")}>
           <Minus size={11} />
         </button>
-        <button className="wbtn" title="最大化" aria-label="最大化或还原窗口" onClick={() => call("windowToggleMaximize")}>
+        <button className="wbtn" data-tip="最大化" aria-label="最大化或还原窗口" onClick={() => call("windowToggleMaximize")}>
           <Square size={10} />
         </button>
-        <button className="wbtn close" title="关闭" aria-label="关闭窗口（隐藏到托盘）" onClick={() => call("windowClose")}>
+        <button className="wbtn close" data-tip="关闭" aria-label="关闭窗口（隐藏到托盘）" onClick={() => call("windowClose")}>
           <X size={11} />
         </button>
       </header>
@@ -909,8 +848,8 @@ export default function App() {
                   key={n.key}
                   className={navActive(n.key) ? "on" : ""}
                   onClick={() => go(n.key)}
-                  onMouseEnter={(e) => showNavTip(e, n.label, n.desc)}
-                  onMouseLeave={() => setSideTip(null)}
+                  data-tip={sideCollapsed ? n.desc : undefined}
+                  data-tip-heading={n.label} data-tip-side="right"
                   aria-label={n.label}
                 >
                   <Icon size={16} />
@@ -925,7 +864,7 @@ export default function App() {
                 <span className="side-title">本地聊天</span>
                 <span className="side-count">{chats.length}</span>
                 <span className="spacer" />
-                <button className="side-manage" onClick={() => go("library")} title="打开档案管理" aria-label="打开档案管理">
+                <button className="side-manage" onClick={() => go("library")} data-tip="打开档案管理" aria-label="打开档案管理">
                   <Settings2 size={12} />
                 </button>
               </>
@@ -947,8 +886,8 @@ export default function App() {
                   setSelected(c.slug);
                   go("chats");
                 }}
-                onMouseEnter={(e) => showChatTip(e, c)}
-                onMouseLeave={() => setSideTip(null)}
+                data-tip={sideCollapsed ? chatTooltip(c) : undefined}
+                data-tip-heading={c.name} data-tip-side="right"
                 aria-label={`${c.name}，${c.messages} 条消息，${c.media} 个媒体`}
               >
                 <span className="avatar">{c.name.slice(0, 1)}</span>
@@ -1007,16 +946,7 @@ export default function App() {
         </main>
       </div>
 
-      {sideCollapsed && sideTip && (
-        <div className="side-tip" role="tooltip" style={{ top: sideTip.top }}>
-          <b>{sideTip.title}</b>
-          {sideTip.desc && <span>{sideTip.desc}</span>}
-          {sideTip.lines?.map((line) => <span key={line}>{line}</span>)}
-          {sideTip.warn && <em>{sideTip.warn}</em>}
-        </div>
-      )}
-
-      {appTip && <div className="app-tip" role="tooltip" style={{ left: appTip.x, top: appTip.y }}>{appTip.text}</div>}
+      <AppTooltip />
 
       {palette && (
         <div
