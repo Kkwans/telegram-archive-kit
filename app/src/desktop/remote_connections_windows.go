@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -105,10 +106,12 @@ type remoteConnectionDTO struct {
 	Status           string `json:"status"`
 	Message          string `json:"message,omitempty"`
 	NextRetryAt      int64  `json:"nextRetryAt,omitempty"`
+	CanSave          bool   `json:"canSave,omitempty"`
 }
 
 type remoteConnectionList struct {
-	Connections []remoteConnectionDTO `json:"connections"`
+	Connections        []remoteConnectionDTO `json:"connections"`
+	MountedConnections []remoteConnectionDTO `json:"mountedConnections,omitempty"`
 }
 
 type remoteFailure struct {
@@ -360,6 +363,9 @@ func (s *remoteConnections) entryLocked(c savedRemoteConnection) remoteConnectio
 			out.NextRetryAt = progress.next.UnixMilli()
 		}
 	}
+	if out.Mounted && !out.Active && out.Status == "offline" {
+		out.Status = "mounted"
+	}
 	if out.Active && s.current.ready {
 		out.Status, out.Message, out.NextRetryAt = "connected", "", 0
 	}
@@ -376,7 +382,66 @@ func (s *remoteConnections) list() (remoteConnectionList, error) {
 	for _, c := range s.records {
 		out.Connections = append(out.Connections, s.entryLocked(c))
 	}
+	out.MountedConnections = s.unrecordedSSHMountsLocked()
 	return out, nil
+}
+
+// Report owned mounts independently from saved connection preferences. A
+// mounted drive can outlive the client even when it was never saved.
+func (s *remoteConnections) unrecordedSSHMountsLocked() []remoteConnectionDTO {
+	if s.b == nil {
+		return nil
+	}
+	s.b.mountMu.Lock()
+	defer s.b.mountMu.Unlock()
+	var out []remoteConnectionDTO
+	for drive, mount := range s.b.mounts {
+		if !mount.ready || mount.endpoint.Kind != "ssh" {
+			continue
+		}
+		represented := false
+		for _, record := range s.records {
+			if record.remoteEndpoint.same(mount.endpoint) && (record.Drive == "" || record.Drive == drive) {
+				represented = true
+				break
+			}
+		}
+		if represented {
+			continue
+		}
+		active := sameRemoteRoot(mount.libraryRoot, s.current.root)
+		status := "mounted"
+		if active && s.current.ready {
+			status = "connected"
+		} else if active && s.current.id != "" {
+			status = "checking"
+			if progress := s.progress[s.current.id]; progress.status != "" {
+				status = progress.status
+			}
+		}
+		_, _, savedForLibrary := s.recordLocked(s.current.id)
+		label := mount.endpoint.VolumeName
+		if label == "" {
+			label = filepath.Base(filepath.Clean(mount.libraryRoot))
+		}
+		entry := remoteConnectionDTO{
+			remoteEndpoint: mount.endpoint, Label: label, Root: mount.libraryRoot,
+			Mounted: true, Active: active, Status: status,
+			CanSave: active && s.current.ready && !savedForLibrary,
+		}
+		entry.Drive = drive
+		out = append(out, entry)
+	}
+	slices.SortFunc(out, func(a, b remoteConnectionDTO) int {
+		if a.Active != b.Active {
+			if a.Active {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Drive, b.Drive)
+	})
+	return out
 }
 
 func (s *remoteConnections) recordLocked(id string) (int, savedRemoteConnection, bool) {

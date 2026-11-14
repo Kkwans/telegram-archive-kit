@@ -66,6 +66,45 @@ func TestRemoteConnectionSettingsKeepEndpointAndRememberedRoots(t *testing.T) {
 	}
 }
 
+func TestRemoteConnectionListReportsLiveAndSavedMounts(t *testing.T) {
+	endpoint := remoteEndpoint{Kind: "ssh", Name: "fixture@host", Path: "/archive"}
+	root := `M:\archive`
+	mount := &rcloneMount{endpoint: endpoint, libraryRoot: root, ready: true}
+	bridge := &Bridge{mounts: map[string]*rcloneMount{"M": mount}}
+	service := &remoteConnections{b: bridge, current: remoteSelection{
+		id: testSavedLibraryID, root: root, ready: true, mount: mount,
+	}}
+
+	list, err := service.list()
+	if err != nil || len(list.Connections) != 0 || len(list.MountedConnections) != 1 {
+		t.Fatalf("unrecorded live mount missing: %+v, %v", list, err)
+	}
+	live := list.MountedConnections[0]
+	if !live.Active || !live.Mounted || !live.CanSave || live.Status != "connected" || live.Drive != "M" {
+		t.Fatalf("incorrect live mount state: %+v", live)
+	}
+
+	otherEndpoint := endpoint
+	otherEndpoint.SSHUseRoot = true
+	service.records = []savedRemoteConnection{{ID: testSavedLibraryID, Root: root, remoteEndpoint: otherEndpoint}}
+	list, err = service.list()
+	if err != nil || len(list.MountedConnections) != 1 || list.MountedConnections[0].CanSave || list.Connections[0].Active {
+		t.Fatalf("different saved mode was mistaken for the live mount: %+v, %v", list, err)
+	}
+
+	service.records[0].remoteEndpoint = endpoint
+	list, err = service.list()
+	if err != nil || len(list.MountedConnections) != 0 || !list.Connections[0].Active || list.Connections[0].Status != "connected" {
+		t.Fatalf("saved live mount was not recognized: %+v, %v", list, err)
+	}
+
+	service.current = remoteSelection{root: `D:\another-library`}
+	list, err = service.list()
+	if err != nil || list.Connections[0].Active || list.Connections[0].Status != "mounted" {
+		t.Fatalf("inactive saved mount was reported offline: %+v, %v", list, err)
+	}
+}
+
 func TestRemoteConnectionRejectsWrongLibraryBeforeWriting(t *testing.T) {
 	root := t.TempDir()
 	s := &remoteConnections{probes: make(map[string]*remoteProbe)}

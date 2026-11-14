@@ -138,11 +138,16 @@
 .remote-workspace input:not([type="checkbox"]):focus { border-color: var(--accent); outline: none; box-shadow: none; }
 .remote-workspace .remote-method:focus-visible { outline-offset: -3px; }
 
-.saved-connections { --saved-action-button: 104px; --saved-action-width: 199px; --saved-row-columns: 32px minmax(0, 1fr) 94px 64px var(--saved-action-width); }
+.saved-connections { --saved-add-width: 104px; --saved-action-width: 188px; --saved-row-columns: 32px minmax(0, 1fr) 94px 64px var(--saved-action-width); }
 .saved-connections .saved-connections-head { gap: 16px; min-height: 32px; }
 .saved-connections .saved-connections-head h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.saved-connections .saved-connections-head > .btn { height: 32px; width: var(--saved-action-button); flex: none; margin: 0 12px 0 0; padding-inline: 8px; justify-content: center; align-self: center; white-space: nowrap; }
+.saved-connections .saved-connections-head > .btn { height: 32px; width: var(--saved-add-width); flex: none; margin: 0 calc(11px + (var(--saved-action-width) - var(--saved-add-width)) / 2) 0 0; padding-inline: 8px; justify-content: center; align-self: center; white-space: nowrap; }
 .saved-connections .saved-connections-head > .btn > svg { flex: none; }
+.mounted-connections { display: grid; gap: 8px; margin-bottom: 16px; }
+.mounted-connections-heading h3 { margin: 0; font-size: 14px; }
+.mounted-connection { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.mounted-connection-status { display: grid; justify-items: center; gap: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.mounted-connection-save { justify-content: center; min-width: 90px; white-space: nowrap; }
 .saved-connection-count { color: var(--muted); font-size: 11px; font-weight: 500; }
 .saved-connections .saved-connection-list { border-radius: 11px; overflow: visible; }
 .saved-connections .saved-connection-columns {
@@ -158,7 +163,7 @@
 }
 .saved-connections .saved-connection-columns > :first-child { grid-column: 1 / 3; }
 .saved-connections .saved-connection-columns > :not(:first-child) { text-align: center; }
-.saved-connections .saved-connection-columns > :last-child { justify-self: end; width: var(--saved-action-button); }
+.saved-connections .saved-connection-columns > :last-child { text-align: center; }
 .saved-connections .saved-connection-columns { padding-inline-end: 11px; }
 .saved-connections .saved-connection-row { grid-template-columns: var(--saved-row-columns); gap: 12px; padding: 12px; min-height: 68px; }
 .saved-connections .saved-connection-row { padding-inline-end: 11px; }
@@ -173,13 +178,13 @@
 .saved-connections .saved-auto .switch:not(.on) { background: var(--muted); border-color: transparent; }
 .saved-connections .saved-auto .switch input { width: 100%; height: 100%; z-index: 1; }
 .saved-connections .saved-auto .switch i { pointer-events: none; }
-.saved-connections .saved-connection-actions { display: grid; grid-template-columns: 90px var(--saved-action-button); justify-content: end; gap: 5px; }
-.saved-connections .is-current .saved-connection-actions { grid-template-columns: var(--saved-action-button); }
-.saved-connections .saved-connection-connect { width: 100%; min-width: 0; height: 32px; justify-content: center; padding: 0 4px; font-size: 12px; margin: 0; background: var(--surface); }
-.saved-connections .saved-connection-connect:hover:not(:disabled) { background: var(--accent-soft); }
+.saved-connections .saved-connection-actions { display: grid; grid-template-columns: 104px 76px; justify-content: center; gap: 8px; }
+.saved-connections .is-current .saved-connection-actions { grid-template-columns: 76px; }
+.saved-connections :is(.saved-connection-connect, .saved-connection-more > summary) { width: 100%; min-width: 0; height: 32px; justify-content: center; gap: 5px; padding: 0 7px; margin: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.saved-connections :is(.saved-connection-connect:hover:not(:disabled), .saved-connection-more > summary:hover) { background: var(--surface-3); }
 .saved-connections .saved-connection-connect:disabled { color: var(--muted); }
 .saved-connection-more { position: relative; }
-.saved-connection-more > summary { list-style: none; width: 100%; height: 32px; justify-content: center; padding-inline: 6px; gap: 4px; white-space: nowrap; }
+.saved-connection-more > summary { list-style: none; }
 .saved-connection-more > summary::-webkit-details-marker { display: none; }
 .saved-connection-menu { position: absolute; z-index: 3; right: 0; top: calc(100% + 4px); display: grid; min-width: 114px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
 .saved-connection:last-child .saved-connection-menu { top: auto; bottom: calc(100% + 4px); }
@@ -200,6 +205,7 @@
 .saved-connections .saved-connections-empty > span { max-width: 340px; line-height: 1.6; }
 
 @container (max-width: 570px) {
+  .saved-connections .saved-connections-head > .btn { margin-right: 0; }
   .saved-connections .saved-connection-columns { display: none; }
   .saved-connections .saved-connection-row { grid-template-columns: 32px minmax(0, 1fr) var(--saved-action-width); gap: 10px 12px; }
   .saved-connections .saved-auto { grid-column: 2; grid-row: 2; justify-content: flex-start; gap: 8px; }
@@ -207,6 +213,9 @@
   .saved-connections .saved-connection-actions { grid-column: 3; grid-row: 2; justify-self: end; }
 }
 @container (max-width: 460px) {
+  .mounted-connection { grid-template-columns: 32px minmax(0, 1fr); }
+  .mounted-connection-status { grid-column: 2; justify-items: start; }
+  .mounted-connection-save { grid-column: 2; justify-self: start; }
   .saved-connections .saved-connection-row { grid-template-columns: 32px minmax(0, 1fr); }
   .saved-connections .saved-connection-status { grid-column: 2; align-items: flex-start; }
   .saved-connections .saved-auto { grid-row: 3; }

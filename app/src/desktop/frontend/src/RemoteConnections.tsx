@@ -6,7 +6,7 @@ import { call } from "./rpc";
 import "./RemoteConnections.css";
 
 type RemoteConnectionKind = "unc" | "ssh" | "rclone";
-type RemoteConnectionStatus = "offline" | "checking" | "connecting" | "connected" | "missing_tools" | "authentication_required" | "identity_mismatch" | "busy" | "error";
+type RemoteConnectionStatus = "offline" | "mounted" | "checking" | "connecting" | "connected" | "missing_tools" | "authentication_required" | "identity_mismatch" | "busy" | "error";
 
 export interface SavedRemoteConnection {
   id: string;
@@ -24,6 +24,7 @@ export interface SavedRemoteConnection {
   sshKey?: string;
   sshUseSudo?: boolean;
   mounted?: boolean;
+  canSave?: boolean;
   active: boolean;
   status: RemoteConnectionStatus;
   message?: string;
@@ -38,6 +39,7 @@ const KINDS = {
 
 const CONNECTION_STATES: Record<RemoteConnectionStatus, { label: string; tone: string; hint?: string }> = {
   offline: { label: "未连接", tone: "", hint: "请检查网络或 NAS 状态后重连。" },
+  mounted: { label: "已挂载", tone: "done" },
   checking: { label: "检测中", tone: "running" },
   connecting: { label: "连接中", tone: "running" },
   connected: { label: "已连接", tone: "done" },
@@ -65,6 +67,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
   toast: (message: string, error?: boolean) => void;
 }) {
   const [items, setItems] = useState<SavedRemoteConnection[] | null>(null);
+  const [mounts, setMounts] = useState<SavedRemoteConnection[]>([]);
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
   const [pending, setPending] = useState("");
@@ -107,10 +110,11 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
     if (writeRef.current) return;
     const seq = ++version.current;
     try {
-      const result = await call<{ connections: SavedRemoteConnection[] | null }>("remoteConnectionList", undefined, signal);
+      const result = await call<{ connections: SavedRemoteConnection[] | null; mountedConnections?: SavedRemoteConnection[] }>("remoteConnectionList", undefined, signal);
       if (seq !== version.current || signal?.aborted) return;
       const next = result.connections ?? [];
       setItems(next);
+      setMounts(result.mountedConnections ?? []);
       setReadError("");
       finishConnection(next);
     } catch (e) {
@@ -158,10 +162,45 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
   });
 
   return <section className="saved-connections" aria-label="已保存的网络连接">
+    {!!mounts.length && <div className="mounted-connections" aria-label="已挂载的连接">
+      <div className="mounted-connections-heading"><h3>已挂载的连接</h3></div>
+      {mounts.map((item) => {
+        const key = `mount:${item.root}`;
+        const entry = CONNECTION_STATES[item.status] ?? CONNECTION_STATES.error;
+        const location = address(item);
+        return <article className="mounted-connection" key={item.root}>
+          <span className="saved-connection-icon"><Server size={16} /></span>
+          <div className="saved-connection-name">
+            <b data-tip={item.label || location}>{item.label || location}</b>
+            <span data-tip={location}>SSH / SFTP · {location}</span>
+          </div>
+          <div className="mounted-connection-status">
+            <span className={`task-state plan-status ${entry.tone}`}>{entry.label}</span>
+            <span>{item.active ? "当前库 · 未保存" : "未保存"}</span>
+          </div>
+          {item.canSave && <button type="button" className="btn sm mounted-connection-save" disabled={!!pending || !!waiting} onClick={() => {
+            if (item.sshHost) {
+              onPasswordConnection(item, true);
+            } else {
+              void perform(key, "remoteConnectionSave", { root: item.root, autoReconnect: true }, () => {
+                onConnected();
+                toast("已保存当前连接");
+              });
+            }
+          }}><Plus size={13} /> 保存连接</button>}
+          {!item.active && item.status === "mounted" && <button type="button" className="btn sm mounted-connection-save" disabled={!!pending || !!waiting} onClick={() => {
+            void perform(key, "switchLibrary", { root: item.root, newRemoteMount: true }, () => {
+              onConnected();
+              toast("已打开档案库");
+            });
+          }}><FolderOpen size={13} /> 打开档案库</button>}
+        </article>;
+      })}
+    </div>}
     <div className="saved-connections-head"><h3>已保存的连接{items && <span className="saved-connection-count">{items.length}</span>}</h3><button type="button" className="btn sm primary" disabled={!!pending || !!waiting} onClick={onAdd}><Plus size={13} /> 添加连接</button></div>
     {readError && <div className="plan-inline-notice" role="alert"><AlertCircle size={14} /><span>{readError}</span><button type="button" className="btn sm ghost" onClick={() => void read()}><RefreshCw size={13} /> 重新读取</button></div>}
     {!items && !readError && <div className="panel plan-loading" role="status" aria-label="正在读取已保存的连接">{[0, 1].map((i) => <div key={i}><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></div>)}</div>}
-    {items && !items.length && <div className="saved-connections-empty"><Network size={24} /><b>还没有保存的连接</b><span>连接档案库时勾选「保存此连接」，即可在这里快速打开。</span></div>}
+    {items && !items.length && !mounts.length && <div className="saved-connections-empty"><Network size={24} /><b>还没有保存的连接</b><span>连接档案库时勾选「保存此连接」，即可在这里快速打开。</span></div>}
     {!!items?.length && <div className="panel saved-connection-list">
       <div className="saved-connection-columns" aria-hidden="true"><span>连接 / 位置</span><span>状态</span><span>自动重连</span><span>操作</span></div>
       {items.map((item) => {
@@ -199,7 +238,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
                 event.currentTarget.open = false;
                 event.currentTarget.querySelector("summary")?.focus();
               }}>
-                <summary className="btn sm ghost" aria-label={`${item.label || location}的更多操作`}><Ellipsis size={15} aria-hidden="true" /> 更多</summary>
+                <summary className="btn sm" aria-label={`${item.label || location}的更多操作`}><Ellipsis size={15} aria-hidden="true" /> 更多</summary>
                 <div className="saved-connection-menu">
                   <button type="button" disabled={busy || inProgress} aria-label={`重命名 ${item.label || location}`} onClick={(event) => {
                     const menu = event.currentTarget.closest("details");
