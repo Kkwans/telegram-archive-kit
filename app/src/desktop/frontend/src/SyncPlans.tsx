@@ -425,6 +425,8 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
 }) {
   const latest = runs[0];
   const hasRunChoice = runs.length > 1;
+  const mediaKinds = plan.mediaKinds ?? [];
+  const historyMediaStatus = mediaKinds.length === 0 ? "不适用" : plan.includeHistory ? "已开启" : "未开启";
   const failedOnly = hasRunChoice && !!location.failedOnly;
   const visible = failedOnly ? runs.filter((run) => run.state === "failed") : runs;
   const run = visible.find((item) => item.id === location.runId) ?? visible[0];
@@ -471,8 +473,8 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
         </div>
         <div>
           <dt><MessageCircle size={15} aria-hidden="true" />同步内容</dt>
-          <dd>{mediaText(plan.mediaKinds ?? [])}</dd>
-          {plan.includeHistory && <dd>补齐历史缺失媒体</dd>}
+          <dd>{mediaText(mediaKinds)}</dd>
+          <dd>历史媒体补齐 · {historyMediaStatus}</dd>
         </div>
       </dl>
     </header>
