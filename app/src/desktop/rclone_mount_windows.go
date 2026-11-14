@@ -24,15 +24,16 @@ import (
 )
 
 type rcloneMount struct {
-	cmd         *exec.Cmd
-	libraryRoot string
-	done        chan struct{}
-	endpoint    remoteEndpoint
-	markerDir   string
-	options     []string
-	env         []string
-	ready       bool // protected by Bridge.mountMu
-	report      mountReport
+	cmd           *exec.Cmd
+	processHandle windows.Handle
+	libraryRoot   string
+	done          chan struct{}
+	endpoint      remoteEndpoint
+	markerDir     string
+	options       []string
+	env           []string
+	ready         bool // protected by Bridge.mountMu
+	report        mountReport
 }
 
 func (b *Bridge) StartRcloneMount(ctx context.Context, remote, subpath, drive string) (string, error) {
@@ -213,7 +214,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		"--network-mode=false",
 		"--ask-password=false",
 	}
-	if endpoint.SSHUseRoot {
+	if endpoint.SSHUseRoot || endpoint.SSHUser == "root" {
 		args = append(args, "--file-perms", "0600", "--dir-perms", "0700")
 	}
 	// WinFsp disk mode supports the handle-relative opens used to verify library
@@ -224,7 +225,14 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	cmd.Stdout, cmd.Stderr = &mount.report, &mount.report
 	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	job, err := startManagedMountProcess(cmd)
+	var job windows.Handle
+	if endpoint.Kind == "ssh" {
+		cmd.Stdout, cmd.Stderr = nil, nil
+		cmd.SysProcAttr.CreationFlags = windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW
+		err = cmd.Start()
+	} else {
+		job, err = startManagedMountProcess(cmd)
+	}
 	if err != nil {
 		b.mountMu.Unlock()
 		return "", nil, remoteError("error", "无法启动受管理的 rclone 挂载，请检查挂载组件后重试")
@@ -237,7 +245,9 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	b.mountMu.Unlock()
 	go func() {
 		_ = cmd.Wait()
-		_ = windows.CloseHandle(job)
+		if job != 0 {
+			_ = windows.CloseHandle(job)
+		}
 		b.mountMu.Lock()
 		unmark()
 		delete(b.mounts, drive)
@@ -282,8 +292,16 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			}
 			b.mountMu.Lock()
 			stillOwned := b.mounts[drive] == mount
-			mount.ready = stillOwned
+			var persistErr error
+			if stillOwned && endpoint.Kind == "ssh" {
+				persistErr = b.rememberSSHMount(drive, mount)
+			}
+			mount.ready = stillOwned && persistErr == nil
 			b.mountMu.Unlock()
+			if persistErr != nil {
+				_ = stopRemoteMount(mount)
+				return "", nil, fmt.Errorf("无法登记 SSH 挂载：%w", persistErr)
+			}
 			if !stillOwned {
 				return "", nil, mount.report.failure(false)
 			}
@@ -400,8 +418,10 @@ func stopRemoteMount(mount *rcloneMount) error {
 	if mount == nil {
 		return nil
 	}
-	if mount.cmd.Process != nil {
+	if mount.cmd != nil && mount.cmd.Process != nil {
 		_ = mount.cmd.Process.Kill()
+	} else if mount.processHandle != 0 {
+		_ = windows.TerminateProcess(mount.processHandle, 0)
 	}
 	select {
 	case <-mount.done:
@@ -414,8 +434,10 @@ func stopRemoteMount(mount *rcloneMount) error {
 func (b *Bridge) stopAllRcloneMounts() {
 	b.mountMu.Lock()
 	drives := make([]string, 0, len(b.mounts))
-	for drive := range b.mounts {
-		drives = append(drives, drive)
+	for drive, mount := range b.mounts {
+		if mount.endpoint.Kind != "ssh" || !mount.ready {
+			drives = append(drives, drive)
+		}
 	}
 	b.mountMu.Unlock()
 	for _, drive := range drives {
@@ -434,6 +456,10 @@ func (r *mountReport) Write(data []byte) (int, error) {
 	msg := strings.ToLower(string(data))
 	status := ""
 	switch {
+	case strings.Contains(msg, "a password is required"), strings.Contains(msg, "not allowed to execute"), strings.Contains(msg, "must have a tty"), strings.Contains(msg, "not in the sudoers"):
+		status = "sudo_required"
+	case strings.Contains(msg, "tak_sftp_server_missing"):
+		status = "sftp_server_missing"
 	case strings.Contains(msg, "host key verification failed"), strings.Contains(msg, "remote host identification has changed"), strings.Contains(msg, "knownhosts"), strings.Contains(msg, "host key mismatch"), strings.Contains(msg, "host key did not match"):
 		status = "host_key"
 	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "authentication"), strings.Contains(msg, "invalid_grant"), strings.Contains(msg, "401 unauthorized"), strings.Contains(msg, "config password"), strings.Contains(msg, "decrypt config"):
@@ -459,6 +485,10 @@ func (r *mountReport) failure(timedOut bool) *remoteFailure {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch r.status {
+	case "sudo_required":
+		return remoteError("authentication_required", "服务器未允许当前 SSH 账号免交互启动 SFTP。请检查 sudo 权限，或关闭 sudo 模式")
+	case "sftp_server_missing":
+		return remoteError("error", "服务器未在常见安装路径提供独立的 OpenSSH SFTP 服务程序")
 	case "host_key":
 		return remoteError("authentication_required", "SSH 主机密钥未获信任或已变更，请核对后在 Windows OpenSSH 中更新信任")
 	case "authentication_required":

@@ -91,6 +91,7 @@ func main() {
 		Windows: windowsOpts,
 	})
 
+	bridge.adoptSSHMounts()
 	bridge.remoteConnections = newRemoteConnections(bridge)
 	bridge.syncPlans, bridge.syncPlansError = NewSyncPlanService(facade.ConfigDir(), SyncPlanHooks{
 		CurrentLibraryID: facade.ActivePlanLibraryID,

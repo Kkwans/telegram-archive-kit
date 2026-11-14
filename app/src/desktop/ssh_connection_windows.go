@@ -42,9 +42,6 @@ func normalizePasswordEndpoint(e remoteEndpoint) (remoteEndpoint, error) {
 		return remoteEndpoint{}, errors.New("请输入 服务器的 IP 地址或主机名")
 	}
 	user := strings.TrimSpace(e.SSHUser)
-	if e.SSHUseRoot && user != "root" {
-		return remoteEndpoint{}, errors.New("root 模式需要使用远程服务器的 root 账号")
-	}
 	if !sshTargetPattern.MatchString(user) || strings.Contains(user, "@") {
 		return remoteEndpoint{}, errors.New("请输入 服务器的 SSH 用户名")
 	}
@@ -88,13 +85,10 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 	var err error
 	if in.Alias != "" {
 		if in.UseRoot {
-			return nil, errors.New("请在 SSH 主机配置中指定 root 用户，或使用地址与密码登录")
+			return nil, errors.New("sudo 模式请使用地址与密码连接")
 		}
 		endpoint, err = sshEndpoint(in.Alias, in.Path)
 	} else {
-		if in.UseRoot {
-			in.User = "root"
-		}
 		endpoint, err = normalizePasswordEndpoint(remoteEndpoint{
 			Kind: "ssh", SSHHost: in.Host, SSHUser: in.User, SSHPort: in.Port, SSHKey: in.Key, Path: in.Path, SSHUseRoot: in.UseRoot,
 		})
@@ -107,9 +101,6 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 	}
 	if method == "sshBrowse" {
 		dir, err := browseSSH(ctx, endpoint, env)
-		if err != nil && in.UseRoot && classifyRemoteError(err).status == "authentication_required" {
-			return nil, remoteError("authentication_required", "服务器拒绝了 root 登录，请检查 root 凭据及服务器的 SSH 登录策略")
-		}
 		return dir, err
 	}
 	if endpoint.Path == "" {
@@ -131,7 +122,7 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		root, _, err := b.mountSSH(ctx, endpoint, expectedID, true)
 		return root, err
 	}
-	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, passwordMountOptions, env, verifySSHLibrary)
+	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, sshPasswordOptions(endpoint), env, verifySSHLibrary)
 	return root, err
 }
 
@@ -174,6 +165,15 @@ func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
 
 var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s", "--contimeout", "8s"}
 
+func sshPasswordOptions(endpoint remoteEndpoint) []string {
+	if !endpoint.SSHUseRoot {
+		return passwordMountOptions
+	}
+	// SFTP owns stdin/stdout. Never mix a sudo password into its protocol.
+	const sudoSFTP = `for server in /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/openssh/sftp-server /usr/libexec/sftp-server; do if test -x "$server"; then exec sudo -n -u root -- "$server"; fi; done; echo TAK_SFTP_SERVER_MISSING >&2; exit 127`
+	return append(slices.Clone(passwordMountOptions), "--sftp-server-command", sudoSFTP)
+}
+
 func passwordMountEnv(ctx context.Context, endpoint remoteEndpoint, password string) ([]string, error) {
 	if password == "" || len(password) > 4096 || strings.ContainsAny(password, "\x00\r\n") {
 		return nil, errors.New("请输入 SSH 登录密码")
@@ -208,7 +208,7 @@ func browseSSH(ctx context.Context, endpoint remoteEndpoint, env []string) (sshD
 	if dir == "" {
 		dir = "/"
 	}
-	options := passwordMountOptions
+	options := sshPasswordOptions(endpoint)
 	if env == nil {
 		var err error
 		options, err = aliasMountOptions(endpoint.Name)

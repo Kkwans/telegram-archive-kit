@@ -22,7 +22,8 @@ export interface SavedRemoteConnection {
   sshUser?: string;
   sshPort?: number;
   sshKey?: string;
-  sshUseRoot?: boolean;
+  sshUseSudo?: boolean;
+  mounted?: boolean;
   active: boolean;
   status: RemoteConnectionStatus;
   message?: string;
@@ -216,6 +217,11 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
                     if (menu) menu.open = false;
                     onPasswordConnection(item);
                   }}><FolderOpen size={14} /> 挂载设置</button>}
+                  {item.mounted && !item.active && <button type="button" disabled={busy || inProgress} onClick={(event) => {
+                    const menu = event.currentTarget.closest("details");
+                    if (menu) menu.open = false;
+                    void perform(item.id, "remoteConnectionUnmount", { id: item.id }, () => toast("已卸载盘符"));
+                  }}><WifiOff size={14} /> 卸载盘符</button>}
                   <button type="button" className="danger" disabled={busy || inProgress} aria-label={`移除连接 ${item.label || location}`} onClick={(event) => {
                     const menu = event.currentTarget.closest("details");
                     if (menu) menu.open = false;
