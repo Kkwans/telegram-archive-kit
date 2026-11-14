@@ -30,6 +30,7 @@ type rcloneMount struct {
 	libraryRoot   string
 	done          chan struct{}
 	endpoint      remoteEndpoint
+	fullRoot      bool
 	markerDir     string
 	options       []string
 	env           []string
@@ -158,6 +159,13 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		if !mount.endpoint.same(endpoint) {
 			continue
 		}
+		if endpoint.SSHUseRoot && !mount.fullRoot {
+			if endpoint.Drive == letter {
+				b.mountMu.Unlock()
+				return "", nil, remoteError("busy", "原盘符仍挂载旧版共享目录，请卸载原盘符或选择其他盘符")
+			}
+			continue
+		}
 		if mount.ready && (useAnyDrive || endpoint.Drive == "" || letter == endpoint.Drive) {
 			b.mountMu.Unlock()
 			if validate != nil {
@@ -232,7 +240,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	// identity and contain publication media paths.
 	cmd := exec.Command(exe, append(args, options...)...)
 	cmd.Env = env
-	mount := &rcloneMount{cmd: cmd, libraryRoot: root, done: make(chan struct{}), endpoint: endpoint, markerDir: markerDir, options: options, env: env}
+	mount := &rcloneMount{cmd: cmd, libraryRoot: root, done: make(chan struct{}), endpoint: endpoint, fullRoot: endpoint.SSHUseRoot, markerDir: markerDir, options: options, env: env}
 	cmd.Stdout, cmd.Stderr = &mount.report, &mount.report
 	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -467,6 +475,8 @@ func (r *mountReport) Write(data []byte) (int, error) {
 	msg := strings.ToLower(string(data))
 	status := ""
 	switch {
+	case strings.Contains(msg, "tak_full_root_rclone_missing"):
+		status = "full_root_rclone_missing"
 	case strings.Contains(msg, "a password is required"), strings.Contains(msg, "not allowed to execute"), strings.Contains(msg, "must have a tty"), strings.Contains(msg, "not in the sudoers"):
 		status = "sudo_required"
 	case strings.Contains(msg, "tak_sftp_server_missing"):
@@ -496,6 +506,8 @@ func (r *mountReport) failure(timedOut bool) *remoteFailure {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch r.status {
+	case "full_root_rclone_missing":
+		return remoteError("missing_tools", "完整文件系统挂载需要在服务器安装 rclone 到 /usr/local/bin/rclone")
 	case "sudo_required":
 		return remoteError("authentication_required", "服务器未允许当前 SSH 账号免交互启动 SFTP。请检查 sudo 权限，或关闭 sudo 模式")
 	case "sftp_server_missing":

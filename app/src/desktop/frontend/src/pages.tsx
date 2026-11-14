@@ -4221,8 +4221,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="SSH 登录密码" autoComplete="off" /></label>
                     </div>}
                     <label className="ssh-root-option">
-                      <b>使用 sudo 权限</b>
-                      <span className={`switch ${sshUseRoot ? "on" : ""}`}><input type="checkbox" role="switch" aria-label="使用 sudo 权限" checked={sshUseRoot} disabled={remoteFormBusy} onChange={(event) => {
+                      <b>挂载服务器文件系统</b>
+                      <span className={`switch ${sshUseRoot ? "on" : ""}`}><input type="checkbox" role="switch" aria-label="挂载服务器文件系统" checked={sshUseRoot} disabled={remoteFormBusy} onChange={(event) => {
                         setSSHUseRoot(event.target.checked); setSSHSavedPath(""); resetSSHTest();
                       }} /><i /></span>
                     </label>
@@ -4242,9 +4242,9 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <label className="rclone-field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} /></label>
                     </div>
                     <div className="ssh-test-row">
-                      <span role="status">{sshDirectory ? sshUseRoot ? "sudo 权限已验证" : "SFTP 已连通" : ""}</span>
+                      <span role="status">{sshDirectory ? sshUseRoot ? "服务器文件系统已连通" : "SFTP 已连通" : ""}</span>
                       <button type="button" className={`btn ${sshDirectory ? "ghost" : "primary"}`} disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH(sshDirectory?.path || sshSavedPath)}>
-                        {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : sshUseRoot ? "测试 sudo 连接" : "测试连接"}
+                        {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : "测试连接"}
                       </button>
                       {sshOpenSSH && <button type="button" className="btn sm ghost" disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH("/", "", true)}><FolderOpen size={13} /> 浏览服务器文件系统</button>}
                     </div>
@@ -4253,7 +4253,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <button type="button" className="btn" disabled={remoteFormBusy} onClick={() => { const key = sshTrust.key; setSSHTrust(null); void browseSSH(sshSavedPath, key); }}><CheckCircle2 size={13} /> 信任并测试</button>
                     </div>}
                     {sshDirectory && <section className="ssh-browser" aria-label="远程档案库目录" aria-busy={sshAction === "test"}>
-                      <div className="ssh-browser-head"><b>选择档案库目录 · SFTP</b>{sshDirectory.library && <span><CheckCircle2 size={13} /> 已识别档案库</span>}</div>
+                      <div className="ssh-browser-head"><b>{sshUseRoot ? "选择档案库目录 · 服务器文件系统" : "选择档案库目录 · SFTP"}</b>{sshDirectory.library && <span><CheckCircle2 size={13} /> 已识别档案库</span>}</div>
                       <div className="ssh-path"><button type="button" className="icon-btn" aria-label="上一级目录" data-tip="上一级目录" disabled={remoteFormBusy || sshDirectory.path === "/"} onClick={() => void browseSSH(sshDirectory.path.slice(0, sshDirectory.path.lastIndexOf("/")) || "/")}><ChevronLeft size={16} /></button>
                         <code data-tip={sshDirectory.path}>{sshDirectory.path}</code></div>
                       <div className="ssh-folders">{sshDirectory.folders.length ? sshDirectory.folders.map((name) => <button type="button" key={name} disabled={remoteFormBusy} onClick={() => void browseSSH(`${sshDirectory.path === "/" ? "" : sshDirectory.path}/${name}`)}><FolderOpen size={15} /><span>{name}</span><ChevronRight size={14} /></button>) : <p>没有子目录</p>}</div>

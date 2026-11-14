@@ -17,6 +17,7 @@ type sshMountRecord struct {
 	Executable string
 	PID        uint32
 	Created    windows.Filetime
+	FullRoot   bool
 }
 
 func (b *Bridge) sshMountRecordPath(drive string) string {
@@ -24,7 +25,7 @@ func (b *Bridge) sshMountRecordPath(drive string) string {
 }
 
 func (b *Bridge) rememberSSHMount(drive string, mount *rcloneMount) error {
-	record := sshMountRecord{Endpoint: mount.endpoint, Root: mount.libraryRoot, Executable: mount.cmd.Path, PID: uint32(mount.cmd.Process.Pid)}
+	record := sshMountRecord{Endpoint: mount.endpoint, Root: mount.libraryRoot, Executable: mount.cmd.Path, PID: uint32(mount.cmd.Process.Pid), FullRoot: mount.fullRoot}
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, record.PID)
 	if err != nil {
 		return err
@@ -68,7 +69,7 @@ func (b *Bridge) adoptSSHMounts() {
 		if err != nil || handle == 0 {
 			continue
 		}
-		mount := &rcloneMount{libraryRoot: record.Root, endpoint: record.Endpoint, done: make(chan struct{}), processHandle: handle, ready: true,
+		mount := &rcloneMount{libraryRoot: record.Root, endpoint: record.Endpoint, fullRoot: record.FullRoot, done: make(chan struct{}), processHandle: handle, ready: true,
 			markerDir: ":sftp:" + path.Join(record.Endpoint.Path, ".runtime")}
 		b.mountMu.Lock()
 		b.mounts[drive] = mount
@@ -115,4 +116,14 @@ func (b *Bridge) existingSSHMount(endpoint remoteEndpoint) string {
 		}
 	}
 	return ""
+}
+
+func (b *Bridge) reusableSSHMount(endpoint remoteEndpoint) string {
+	root := b.existingSSHMount(endpoint)
+	if endpoint.SSHUseRoot {
+		if mount := b.remoteMountAt(root); mount == nil || !mount.fullRoot {
+			return ""
+		}
+	}
+	return root
 }

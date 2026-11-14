@@ -264,7 +264,9 @@ func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
 
 var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s", "--contimeout", "8s"}
 
-const sudoSFTPServer = `for server in /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/openssh/sftp-server /usr/libexec/sftp-server; do if test -x "$server"; then printf 'TAK_SUDO_SFTP\n' >&2; exec sudo -n -u root -- "$server"; fi; done; echo TAK_SFTP_SERVER_MISSING >&2; exit 127`
+// Use a system-installed executable rather than the firmware's SFTP subsystem.
+// The file server runs only for the lifetime of the authenticated SSH channel.
+const sudoSFTPServer = `if ! test -x /usr/local/bin/rclone; then echo TAK_FULL_ROOT_RCLONE_MISSING >&2; exit 127; fi; printf 'TAK_SUDO_SFTP\n' >&2; exec sudo -n -u root -- /usr/local/bin/rclone serve sftp / --stdio --config /dev/null`
 
 func verifySudoSFTP(ctx context.Context, endpoint remoteEndpoint, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -346,6 +348,9 @@ func verifySudoHandshake(stdin io.Writer, stdout, stderr io.Reader) error {
 		return remoteError("authentication_required", "无法打开 sudo SFTP 会话")
 	}
 	if marker, _ := bufio.NewReader(io.LimitReader(stderr, 1024)).ReadString('\n'); strings.TrimSpace(marker) != "TAK_SUDO_SFTP" {
+		if strings.TrimSpace(marker) == "TAK_FULL_ROOT_RCLONE_MISSING" {
+			return remoteError("missing_tools", "完整文件系统挂载需要在服务器安装 rclone 到 /usr/local/bin/rclone")
+		}
 		if strings.Contains(marker, "Host key verification failed") || strings.Contains(marker, "host key is known") {
 			return remoteError("authentication_required", "OpenSSH 主机密钥尚未获信任或已变更，请先在终端核对后重试")
 		}
@@ -356,7 +361,7 @@ func verifySudoHandshake(stdin io.Writer, stdout, stderr io.Reader) error {
 	}
 	var header [9]byte
 	if _, err := io.ReadFull(stdout, header[:]); err != nil || binary.BigEndian.Uint32(header[:4]) < 5 || header[4] != 2 || binary.BigEndian.Uint32(header[5:]) != 3 {
-		return remoteError("authentication_required", "sudo 测试未通过：服务器须允许当前账号免交互启动 OpenSSH SFTP")
+		return remoteError("authentication_required", "服务器未能以 sudo 启动完整文件系统，请核对 sudo 权限和远程 rclone 版本")
 	}
 	return nil
 }
@@ -366,7 +371,7 @@ func sshPasswordOptions(endpoint remoteEndpoint) []string {
 		return passwordMountOptions
 	}
 	// SFTP owns stdin/stdout. Never mix a sudo password into its protocol.
-	return append(slices.Clone(passwordMountOptions), "--sftp-server-command", sudoSFTPServer)
+	return append(slices.Clone(passwordMountOptions), "--sftp-server-command", sudoSFTPServer, "--transfers", "1")
 }
 
 func passwordMountEnv(ctx context.Context, endpoint remoteEndpoint, password string) ([]string, error) {

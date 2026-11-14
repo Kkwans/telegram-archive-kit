@@ -935,7 +935,7 @@ func (s *remoteConnections) connect(ctx context.Context, c savedRemoteConnection
 	var newMount *rcloneMount
 	switch endpoint.Kind {
 	case "ssh":
-		if existing := s.b.existingSSHMount(endpoint); existing != "" {
+		if existing := s.b.reusableSSHMount(endpoint); existing != "" {
 			root = existing
 		} else if endpoint.SSHHost == "" {
 			root, newMount, err = s.b.mountSSH(ctx, endpoint, c.ID, false)

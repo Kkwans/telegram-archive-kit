@@ -102,7 +102,7 @@ func aliasMountOptions(target string, useSudo bool) ([]string, error) {
 		"--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s",
 	}
 	if useSudo {
-		options = append(options, "--sftp-server-command", sudoSFTPServer)
+		options = append(options, "--sftp-server-command", sudoSFTPServer, "--transfers", "1")
 	}
 	return options, nil
 }
