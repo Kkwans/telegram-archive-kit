@@ -4579,6 +4579,7 @@ function SyncPlanStartupSettings({ toast }: { toast: PageCtx["toast"] }) {
 
 export function SettingsPage({ ctx }: { ctx: PageCtx }) {
   const { toast, applyPrefs, setToastSeconds } = ctx;
+  const [overlayScope, setOverlayScope] = useState(() => localStorage.getItem("tak-overlay-scope") === "window" ? "window" : "main");
   const libraryKey = ctx.boot?.libraryKey ?? "";
   const libraryKind = ctx.boot?.libraryKind ?? "unknown";
   const [browsePolicy, setBrowsePolicy] = useBrowsePolicy(libraryKey);
@@ -4789,6 +4790,13 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           </SettingsField>
           <SettingsField label="通知停留时间（秒）" hint="成功、失败、警告与普通通知自动消失的时间（1–10 秒，默认 3 秒）">
             <input type="number" min={1} max={10} step={1} value={form.toastSeconds} onChange={(e) => set("toastSeconds", Number(e.target.value))} />
+          </SettingsField>
+          <SettingsField label="弹窗遮罩范围" hint="弹窗和通知随遮罩范围居中。">
+            <Select ariaLabel="弹窗遮罩范围" value={overlayScope} options={[{ value: "main", label: "主内容区" }, { value: "window", label: "整个窗口" }]} onChange={(value) => {
+              setOverlayScope(value);
+              localStorage.setItem("tak-overlay-scope", value);
+              document.documentElement.dataset.overlayScope = value;
+            }} />
           </SettingsField>
           <SettingsField label="查看器背景" hint="动态取色（半透明）保留当前画面的色彩与玻璃感；动态取色（不透明）使用封面主色；磨砂模糊直接虚化打开查看器前的页面">
             <Select

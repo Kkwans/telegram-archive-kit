@@ -222,10 +222,15 @@ html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(160, 175, 2
 .footer { display: flex; align-items: center; gap: 14px; padding: 0 12px; border-top: 1px solid var(--line); background: var(--surface); color: var(--faint); font-size: 12px; }
 .footer span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .footer .spacer { flex: 1; }
+:root {
+  --overlay-left: var(--main-inset-left, 0px);
+  --overlay-top: var(--main-inset-top, 0px);
+}
+:root[data-overlay-scope="window"] { --overlay-left: 0px; --overlay-top: 0px; }
 .toast-stack {
   position: fixed; top: calc(var(--main-inset-top, 48px) + 16px);
-  left: calc(50% + var(--main-inset-left, 0px) / 2); transform: translateX(-50%); z-index: 500;
-  width: min(520px, calc(100vw - var(--main-inset-left, 0px) - 40px)); display: flex; flex-direction: column; gap: 8px;
+  left: calc(50% + var(--overlay-left) / 2); transform: translateX(-50%); z-index: 500;
+  width: min(520px, calc(100vw - var(--overlay-left) - 40px)); display: flex; flex-direction: column; gap: 8px;
   pointer-events: none;
 }
 .toast-item {
@@ -414,16 +419,20 @@ body.glass-capturing .modal-backdrop { visibility: hidden; }
   position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
   background: transparent; padding: 24px;
 }
-.modal-backdrop:not(.palette-backdrop), .remote-dialog-backdrop {
-  padding: calc(var(--main-inset-top, 0px) + 16px) 16px 16px calc(var(--main-inset-left, 0px) + 16px);
+.modal-backdrop, .remote-dialog-backdrop {
+  padding: calc(var(--overlay-top) + 16px) 16px 16px calc(var(--overlay-left) + 16px);
+  clip-path: inset(var(--overlay-top) 0 0 var(--overlay-left));
 }
 dialog[aria-modal="true"] {
-  inset: var(--main-inset-top, 0px) 0 0 var(--main-inset-left, 0px);
-  max-width: calc(100vw - var(--main-inset-left, 0px) - 32px) !important;
-  max-height: calc(100dvh - var(--main-inset-top, 0px) - 32px) !important;
+  inset: var(--overlay-top) 0 0 var(--overlay-left);
+  max-width: calc(100vw - var(--overlay-left) - 32px) !important;
+  max-height: calc(100dvh - var(--overlay-top) - 32px) !important;
+}
+dialog[aria-modal="true"]::backdrop {
+  clip-path: inset(var(--overlay-top) 0 0 var(--overlay-left));
 }
 .modal-backdrop:not(.palette-backdrop) > .modal, .remote-dialog-backdrop > .remote-modal {
-  max-height: calc(100dvh - var(--main-inset-top, 0px) - 32px);
+  max-height: calc(100dvh - var(--overlay-top) - 32px);
 }
 .modal {
   position: relative; z-index: 1; isolation: isolate;

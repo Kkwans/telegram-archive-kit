@@ -176,6 +176,7 @@ export default function App() {
       document.documentElement.style.setProperty("--main-inset-left", `${left}px`);
       document.documentElement.style.setProperty("--main-inset-top", `${top}px`);
     };
+    document.documentElement.dataset.overlayScope = localStorage.getItem("tak-overlay-scope") === "window" ? "window" : "main";
     update();
     const observer = new ResizeObserver(update);
     observer.observe(main);
