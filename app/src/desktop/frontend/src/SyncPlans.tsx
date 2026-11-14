@@ -424,10 +424,9 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
   onOpenTask: (id: string) => void;
 }) {
   const latest = runs[0];
-  const hasRunChoice = runs.length > 1;
   const mediaKinds = plan.mediaKinds ?? [];
   const historyMediaStatus = mediaKinds.length === 0 ? "不适用" : plan.includeHistory ? "已开启" : "未开启";
-  const failedOnly = hasRunChoice && !!location.failedOnly;
+  const failedOnly = !!runs.length && !!location.failedOnly;
   const visible = failedOnly ? runs.filter((run) => run.state === "failed") : runs;
   const run = visible.find((item) => item.id === location.runId) ?? visible[0];
   const action = planRunAction(plan, latest);
@@ -483,8 +482,8 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
       {currentRecovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { if (run) selectRun(run.id); currentRecovery.open(); }}>{currentRecovery.label} <ArrowUpRight size={13} /></button>}
     </div>}
     <div className="plan-history-heading"><h2>运行历史</h2>{!!runs.length && <span aria-live="polite">{failedOnly ? `${visible.length} / ` : ""}{runs.length} 轮</span>}</div>
-    {runs.length ? <div className={`plan-history${hasRunChoice ? "" : " plan-history-single"}`}>
-      {hasRunChoice && <aside className="panel plan-run-nav" aria-label="运行记录">
+    {runs.length ? <div className="plan-history">
+      <aside className="panel plan-run-nav" aria-label="运行记录">
         <h3>运行记录</h3>
         <div className="plan-run-filter" role="group" aria-label="筛选运行记录">
           <button type="button" aria-pressed={!failedOnly} onClick={() => filterRuns(false)}>全部运行</button>
@@ -496,7 +495,7 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
           </button>)}
         </div>
         {!!run && <div className="plan-run-compact"><Select ariaLabel="选择运行记录" options={visible.map((item) => ({ value: item.id, label: `${runDate(item)} · ${STATES[item.state]?.label ?? item.state}` }))} value={run.id} onChange={selectRun} /></div>}
-      </aside>}
+      </aside>
       {run ? <section className="panel plan-run-result" aria-label="本轮运行结果">
         <header><div><h3>本轮运行结果</h3><p><time>{runDate(run)}</time> · {runTrigger(run)}{elapsed > 0 && ` · 耗时 ${duration(elapsed).replace(/h/g, " 小时").replace(/m/g, " 分").replace(/s/g, " 秒")}`}</p></div>
           <Status state={run.state} label={run.state === "failed" && failedCount ? `${failedCount} 个聊天失败` : undefined} />

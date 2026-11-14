@@ -85,7 +85,6 @@
 .plan-history-heading h2 { margin: 0; font-size: 16px; font-weight: 680; }
 .plan-history-heading > span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .plan-history { display: grid; grid-template-columns: 196px minmax(0,1fr); gap: 12px; align-items: start; }
-.plan-history.plan-history-single { grid-template-columns: minmax(0,1fr); }
 .plan-run-nav { min-width: 0; padding: 8px; display: grid; gap: 7px; }
 .plan-run-nav > h3 { margin: 2px 3px 1px; font-size: 12px; font-weight: 650; color: var(--muted); }
 .plan-run-filter { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 3px; width: 100%; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
