@@ -62,7 +62,7 @@ func sshEndpoint(target, directory string) (remoteEndpoint, error) {
 	}
 	directory = strings.TrimSpace(directory)
 	if strings.ContainsAny(directory, "\\\x00\r\n") {
-		return remoteEndpoint{}, errors.New("请输入 NAS 上使用 / 分隔的目录路径")
+		return remoteEndpoint{}, errors.New("请输入 服务器上使用 / 分隔的目录路径")
 	}
 	if directory != "" {
 		directory = path.Clean(directory)
@@ -76,7 +76,7 @@ func sshEndpoint(target, directory string) (remoteEndpoint, error) {
 
 func (b *Bridge) mountSSH(ctx context.Context, endpoint remoteEndpoint, expectedID string, checkLibraryFile bool) (string, *rcloneMount, error) {
 	if endpoint.SSHHost != "" {
-		return "", nil, remoteError("authentication_required", "请重新输入 NAS 的 SSH 登录密码")
+		return "", nil, remoteError("authentication_required", "请重新输入 SSH 登录密码")
 	}
 	options, err := aliasMountOptions(endpoint.Name)
 	if err != nil {

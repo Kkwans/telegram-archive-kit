@@ -37,11 +37,11 @@ func normalizePasswordEndpoint(e remoteEndpoint) (remoteEndpoint, error) {
 	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() == "" {
 		host = addr.String()
 	} else if !sshTargetPattern.MatchString(host) || strings.Contains(host, "@") {
-		return remoteEndpoint{}, errors.New("请输入 NAS 的 IP 地址或主机名")
+		return remoteEndpoint{}, errors.New("请输入 服务器的 IP 地址或主机名")
 	}
 	user := strings.TrimSpace(e.SSHUser)
 	if !sshTargetPattern.MatchString(user) || strings.Contains(user, "@") {
-		return remoteEndpoint{}, errors.New("请输入 NAS 的 SSH 用户名")
+		return remoteEndpoint{}, errors.New("请输入 服务器的 SSH 用户名")
 	}
 	if e.SSHPort < 1 || e.SSHPort > 65535 {
 		return remoteEndpoint{}, errors.New("SSH 端口须在 1 到 65535 之间")
@@ -67,7 +67,7 @@ func parseServerKey(value string) (ssh.PublicKey, error) {
 			return key, nil
 		}
 	}
-	return nil, errors.New("请先核对并信任 NAS 的 SSH 主机密钥")
+	return nil, errors.New("请先核对并信任 服务器的 SSH 主机密钥")
 }
 
 func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.RawMessage) (any, error) {
@@ -98,7 +98,7 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		return browseSSH(ctx, endpoint, env)
 	}
 	if endpoint.Path == "" {
-		return nil, errors.New("请先选择 NAS 档案库目录")
+		return nil, errors.New("请先选择 远程档案库目录")
 	}
 	if env == nil {
 		return b.StartSSHMount(ctx, endpoint.Name, endpoint.Path)
@@ -111,7 +111,7 @@ func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
 	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() == "" {
 		host = addr.String()
 	} else if !sshTargetPattern.MatchString(host) || strings.Contains(host, "@") {
-		return nil, errors.New("请输入 NAS 的 IP 地址或主机名")
+		return nil, errors.New("请输入 服务器的 IP 地址或主机名")
 	}
 	if port < 1 || port > 65535 {
 		return nil, errors.New("SSH 端口须在 1 到 65535 之间")
@@ -121,7 +121,7 @@ func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return nil, errors.New("无法连接 SSH 端口，请检查 NAS 地址、端口和网络")
+		return nil, errors.New("无法连接 SSH 端口，请检查 服务器地址、端口和网络")
 	}
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -141,7 +141,7 @@ var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "
 
 func passwordMountEnv(ctx context.Context, endpoint remoteEndpoint, password string) ([]string, error) {
 	if password == "" || len(password) > 4096 || strings.ContainsAny(password, "\x00\r\n") {
-		return nil, errors.New("请输入 NAS 的 SSH 登录密码")
+		return nil, errors.New("请输入 SSH 登录密码")
 	}
 	exe := findRclone()
 	if exe == "" {
@@ -239,7 +239,7 @@ func readSSHDirectory(cmd *exec.Cmd, dir string) (sshDirectory, error) {
 		if failure.status != "error" {
 			return sshDirectory{}, failure
 		}
-		return sshDirectory{}, errors.New("未能浏览 SFTP 目录，请确认 NAS 已启用 SFTP 且账号有读取权限")
+		return sshDirectory{}, errors.New("未能浏览 SFTP 目录，请确认 服务器已启用 SFTP 且账号有读取权限")
 	}
 	if decodeErr != nil {
 		return sshDirectory{}, errors.New("未能读取 SFTP 目录，请确认服务已启用且账号具有目录权限")
@@ -250,7 +250,7 @@ func readSSHDirectory(cmd *exec.Cmd, dir string) (sshDirectory, error) {
 
 func verifySSHLibrary(root string) error {
 	if info, err := os.Stat(filepath.Join(root, "library.json")); err != nil || !info.Mode().IsRegular() {
-		return errors.New("未能读取 library.json，请选择 NAS 上的档案库根目录")
+		return errors.New("未能读取 library.json，请选择 远程档案库根目录")
 	}
 	return nil
 }

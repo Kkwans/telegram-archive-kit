@@ -4177,22 +4177,22 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       }} options={(remoteTools.sshAliases ?? []).map((alias) => ({ value: alias, label: alias }))} />
                     </div>}
                     {!sshAlias && <div className="ssh-credentials">
-                      <label className="rclone-field"><span>NAS 地址</span><input value={sshTarget} onChange={(e) => { setSSHTarget(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="例如 192.168.1.20" autoComplete="off" spellCheck={false} /></label>
+                      <label className="rclone-field"><span>服务器地址</span><input value={sshTarget} onChange={(e) => { setSSHTarget(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="IP 地址或主机名" autoComplete="off" spellCheck={false} /></label>
                       <label className="rclone-field"><span>SSH 端口</span><input value={sshPort} onChange={(e) => { setSSHPort(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} type="number" min={1} max={65535} /></label>
-                      <label className="rclone-field"><span>用户名</span><input value={sshUser} onChange={(e) => { setSSHUser(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="NAS 的 SSH 账号" autoComplete="off" spellCheck={false} /></label>
-                      <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="NAS 的 SSH 登录密码" autoComplete="off" /></label>
+                      <label className="rclone-field"><span>用户名</span><input value={sshUser} onChange={(e) => { setSSHUser(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="服务器的 SSH 账号" autoComplete="off" spellCheck={false} /></label>
+                      <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="SSH 登录密码" autoComplete="off" /></label>
                     </div>}
                     <div className="ssh-test-row">
-                      <span>{sshDirectory ? "SFTP 已连通" : "NAS 需启用 SSH 和 SFTP"}</span>
+                      <span>{sshDirectory ? "SFTP 已连通" : "服务器需启用 SSH 和 SFTP"}</span>
                       <button type="button" className={`btn ${sshDirectory ? "ghost" : "primary"}`} disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH(sshDirectory?.path || sshSavedPath)}>
                         {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : "测试连接"}
                       </button>
                     </div>
                     {sshTrust && <div className="plan-inline-notice ssh-host-trust" role="status">
-                      <AlertTriangle size={16} /><span><b>核对 NAS 主机指纹后再继续</b><code>{sshTrust.type} {sshTrust.fingerprint}</code></span>
+                      <AlertTriangle size={16} /><span><b>核对服务器主机指纹后再继续</b><code>{sshTrust.type} {sshTrust.fingerprint}</code></span>
                       <button type="button" className="btn" disabled={remoteFormBusy} onClick={() => { const key = sshTrust.key; setSSHTrust(null); void browseSSH(sshSavedPath, key); }}>信任并测试</button>
                     </div>}
-                    {sshDirectory && <section className="ssh-browser" aria-label="NAS 档案库目录" aria-busy={sshAction === "test"}>
+                    {sshDirectory && <section className="ssh-browser" aria-label="远程档案库目录" aria-busy={sshAction === "test"}>
                       <div className="ssh-browser-head"><b>选择档案库目录</b>{sshDirectory.library && <span><CheckCircle2 size={13} /> 已识别档案库</span>}</div>
                       <div className="ssh-path"><button type="button" className="icon-btn" aria-label="上一级目录" title="上一级目录" disabled={remoteFormBusy || sshDirectory.path === "/"} onClick={() => void browseSSH(sshDirectory.path.slice(0, sshDirectory.path.lastIndexOf("/")) || "/")}><ChevronLeft size={16} /></button>
                         <code title={sshDirectory.path}>{sshDirectory.path}</code></div>
