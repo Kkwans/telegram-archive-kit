@@ -185,7 +185,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
                 event.currentTarget.open = false;
                 event.currentTarget.querySelector("summary")?.focus();
               }}>
-                <summary className="icon-btn" tabIndex={0} aria-label={`${item.label || location}的更多操作`}><Ellipsis size={16} /></summary>
+                <summary className="btn sm ghost" aria-label={`${item.label || location}的更多操作`}><Ellipsis size={15} aria-hidden="true" /> 更多</summary>
                 <div className="saved-connection-menu">
                   <button type="button" disabled={busy || inProgress} aria-label={`重命名 ${item.label || location}`} onClick={(event) => {
                     const menu = event.currentTarget.closest("details");

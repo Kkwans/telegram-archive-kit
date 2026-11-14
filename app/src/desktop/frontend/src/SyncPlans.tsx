@@ -170,6 +170,25 @@ function PlanRunButton({ action, primary, disabled, onAct }: { action: RunAction
   </button>;
 }
 
+function PlanSecondaryActions({ plan, action, busy, onAct, onDelete, inline = false }: {
+  plan: Plan;
+  action: RunAction;
+  busy: boolean;
+  onAct: (action: PlanAction) => void;
+  onDelete: () => void;
+  inline?: boolean;
+}) {
+  return <>
+    {action === "retry" && <button type="button" className={inline ? "btn ghost" : undefined} disabled={busy} onClick={() => onAct(plan.activeRunId ? "stop" : "run")}>
+      {plan.activeRunId ? <><Square size={14} /> 停止本次</> : <><Play size={14} /> 立即运行</>}
+    </button>}
+    <button type="button" className={inline ? "btn ghost" : undefined} disabled={busy} onClick={() => onAct(plan.enabled ? "pause" : "resume")}>
+      {plan.enabled ? <><Pause size={14} /> 暂停计划</> : <><CalendarCheck size={14} /> 恢复计划</>}
+    </button>
+    <button type="button" className={inline ? "btn danger" : "danger"} disabled={busy || !!plan.activeRunId} onClick={onDelete}><Trash2 size={14} /> 删除计划</button>
+  </>;
+}
+
 function PlanMoreActions({ plan, action, busy, onAct, onEdit, onDelete }: {
   plan: Plan;
   action: RunAction;
@@ -193,16 +212,10 @@ function PlanMoreActions({ plan, action, busy, onAct, onEdit, onDelete }: {
       event.currentTarget.open = false;
       trigger.current?.focus();
     }}>
-    <summary className="icon-btn" ref={trigger} aria-label={`${plan.name}的更多操作`} title="更多操作"><Ellipsis size={17} /></summary>
+    <summary className="btn sm ghost" ref={trigger} aria-label={`${plan.name}的更多操作`}><Ellipsis size={15} aria-hidden="true" /> 更多</summary>
     <div className="plan-more-menu">
       {onEdit && <button type="button" disabled={busy || !!plan.activeRunId} onClick={() => run(onEdit)}><Pencil size={14} /> 编辑计划</button>}
-      {action === "retry" && <button type="button" disabled={busy} onClick={() => run(() => onAct(plan.activeRunId ? "stop" : "run"))}>
-        {plan.activeRunId ? <><Square size={14} /> 停止本次</> : <><Play size={14} /> 立即运行</>}
-      </button>}
-      <button type="button" disabled={busy} onClick={() => run(() => onAct(plan.enabled ? "pause" : "resume"))}>
-        {plan.enabled ? <><Pause size={14} /> 暂停计划</> : <><CalendarCheck size={14} /> 恢复计划</>}
-      </button>
-      <button type="button" className="danger" disabled={busy || !!plan.activeRunId} onClick={() => run(onDelete)}><Trash2 size={14} /> 删除计划</button>
+      <PlanSecondaryActions plan={plan} action={action} busy={busy} onAct={(value) => run(() => onAct(value))} onDelete={() => run(onDelete)} />
     </div>
   </details>;
 }
@@ -433,15 +446,17 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
   };
 
   return <>
-    <header className="panel plan-detail-heading">
-      <div className="plan-detail-title-line">
-        <button type="button" className="icon-btn plan-page-back" onClick={onBack} aria-label="返回同步计划" title="返回同步计划"><ArrowLeft size={17} /></button>
-        <h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
-      </div>
+    <div className="plan-detail-toolbar" role="group" aria-label="计划操作">
+      <button type="button" className="btn ghost plan-detail-back" onClick={onBack}><ArrowLeft size={15} /> 返回同步计划</button>
       <div className="plan-row-actions plan-detail-actions">
         <button id={`sync-plan-edit-${plan.id}`} type="button" className="btn" disabled={busy || !!plan.activeRunId} onClick={onEdit}><Pencil size={14} /> 编辑计划</button>
+        <PlanSecondaryActions plan={plan} action={action} busy={busy} onAct={onAct} onDelete={onDelete} inline />
         <PlanRunButton primary action={action} disabled={busy || plan.state === "stopping"} onAct={onAct} />
-        <PlanMoreActions plan={plan} action={action} busy={busy} onAct={onAct} onDelete={onDelete} />
+      </div>
+    </div>
+    <header className="panel plan-detail-heading">
+      <div className="plan-detail-title-line">
+        <h1 id="sync-plan-heading" tabIndex={-1}>{plan.name}</h1>
       </div>
       <dl className="plan-detail-meta">
         <div>
