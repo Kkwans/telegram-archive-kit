@@ -22,6 +22,7 @@ export interface SavedRemoteConnection {
   sshUser?: string;
   sshPort?: number;
   sshKey?: string;
+  sshUseRoot?: boolean;
   active: boolean;
   status: RemoteConnectionStatus;
   message?: string;

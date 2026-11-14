@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,14 +24,15 @@ import (
 )
 
 type rcloneMount struct {
-	cmd       *exec.Cmd
-	done      chan struct{}
-	endpoint  remoteEndpoint
-	markerDir string
-	options   []string
-	env       []string
-	ready     bool // protected by Bridge.mountMu
-	report    mountReport
+	cmd         *exec.Cmd
+	libraryRoot string
+	done        chan struct{}
+	endpoint    remoteEndpoint
+	markerDir   string
+	options     []string
+	env         []string
+	ready       bool // protected by Bridge.mountMu
+	report      mountReport
 }
 
 func (b *Bridge) StartRcloneMount(ctx context.Context, remote, subpath, drive string) (string, error) {
@@ -156,7 +158,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		}
 		if mount.ready && (useAnyDrive || endpoint.Drive == "" || letter == endpoint.Drive) {
 			b.mountMu.Unlock()
-			return letter + `:\`, nil, nil
+			return mount.libraryRoot, nil, nil
 		}
 		if mount.ready && endpoint.Kind == "ssh" && endpoint.Drive != "" && letter != endpoint.Drive {
 			// A saved SSH connection can move to a free letter. Keep the
@@ -192,22 +194,33 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		return "", nil, fmt.Errorf("盘符 %s 已被占用", drive)
 	}
 	root := drive + `:\`
+	mountPath := endpoint.Path
+	dirCacheTime := "30s"
+	if endpoint.Kind == "ssh" && strings.HasPrefix(endpoint.Path, "/") {
+		// The drive exposes the SFTP root while TAK opens only the chosen library.
+		root = filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(endpoint.Path, "/")))
+		mountPath = "/"
+		dirCacheTime = "1m"
+	}
 	// The write-back interval lets close-and-rename writes reach their final
 	// name before the upload starts. Immediate write-back can upload the temp
 	// name and leave the renamed file visible only in the mounted view.
-	args := []string{"mount", prefix + endpoint.Path, drive + ":",
+	args := []string{"mount", prefix + mountPath, drive + ":",
 		"--volname", mountVolumeName(endpoint),
 		"--vfs-cache-mode", "writes",
 		"--vfs-write-back", "5s",
-		"--dir-cache-time", "30s",
+		"--dir-cache-time", dirCacheTime,
 		"--network-mode=false",
 		"--ask-password=false",
+	}
+	if endpoint.SSHUseRoot {
+		args = append(args, "--file-perms", "0600", "--dir-perms", "0700")
 	}
 	// WinFsp disk mode supports the handle-relative opens used to verify library
 	// identity and contain publication media paths.
 	cmd := exec.Command(exe, append(args, options...)...)
 	cmd.Env = env
-	mount := &rcloneMount{cmd: cmd, done: make(chan struct{}), endpoint: endpoint, markerDir: markerDir, options: options, env: env}
+	mount := &rcloneMount{cmd: cmd, libraryRoot: root, done: make(chan struct{}), endpoint: endpoint, markerDir: markerDir, options: options, env: env}
 	cmd.Stdout, cmd.Stderr = &mount.report, &mount.report
 	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -371,13 +384,13 @@ func (b *Bridge) StopRcloneMount(drive string) error {
 }
 
 func (b *Bridge) remoteMountAt(root string) *rcloneMount {
-	if len(root) != 3 || root[1:] != `:\` {
+	if len(root) < 3 || root[1:3] != `:\` {
 		return nil
 	}
 	b.mountMu.Lock()
 	defer b.mountMu.Unlock()
 	mount := b.mounts[strings.ToUpper(root[:1])]
-	if mount != nil && mount.ready {
+	if mount != nil && mount.ready && sameRemoteRoot(root, mount.libraryRoot) {
 		return mount
 	}
 	return nil

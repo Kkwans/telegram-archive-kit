@@ -3276,6 +3276,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [sshAlias, setSSHAlias] = useState("");
   const [sshTarget, setSSHTarget] = useState("");
   const [sshUser, setSSHUser] = useState("");
+  const [sshUseRoot, setSSHUseRoot] = useState(false);
   const [sshPort, setSSHPort] = useState("22");
   const [sshDrive, setSSHDrive] = useState("");
   const [availableDrives, setAvailableDrives] = useState<string[] | null>(null);
@@ -3288,7 +3289,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [sshError, setSSHError] = useState("");
   const sshRequest = useRef<AbortController | null>(null);
   const remoteFormBusy = !!sshAction || rcloneBusy || remoteTesting || busy === "switch" || !!pendingPublishSwitch;
-  const sshCanTest = !!sshAlias || !!sshTarget.trim() && !!sshUser.trim() && !!sshPassword && Number(sshPort) > 0 && Number(sshPort) <= 65535;
+  const sshCanTest = !!sshAlias || !!sshTarget.trim() && (sshUseRoot || !!sshUser.trim()) && !!sshPassword && Number(sshPort) > 0 && Number(sshPort) <= 65535;
   const resetSSHTest = () => { setSSHDirectory(null); setSSHTrust(null); setSSHError(""); };
   const clearSSHPassword = () => { setSSHPassword(""); setSSHTrust(null); setSSHHostKey(""); setSSHDirectory(null); setSSHSavedPath(""); };
 
@@ -3381,6 +3382,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     setRcloneBusy(false);
     setSSHOpen(false);
     setSSHAlias("");
+    setSSHUseRoot(false);
     setSSHDrive("");
     clearSSHPassword();
     setSSHError("");
@@ -3448,7 +3450,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     }
   };
   const sshParams = (directory: string, key = sshHostKey) => sshAlias ? { alias: sshAlias, path: directory } : {
-    host: sshTarget.trim(), user: sshUser.trim(), port: Number(sshPort), password: sshPassword, key, path: directory,
+    host: sshTarget.trim(), user: sshUseRoot ? "root" : sshUser.trim(), port: Number(sshPort), password: sshPassword, key, path: directory, useRoot: sshUseRoot,
   };
   const browseSSH = async (directory = "", trustedKey = "") => {
     if (sshAction || !sshCanTest) return;
@@ -4081,6 +4083,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <RemoteConnections onAdd={() => showRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy}
                   onPasswordConnection={(item, enableAuto) => {
                     setSSHAlias(item.sshHost ? "" : item.name); setSSHTarget(item.sshHost ?? ""); setSSHUser(item.sshUser ?? ""); setSSHPort(String(item.sshPort ?? 22));
+                    setSSHUseRoot(!!item.sshUseRoot);
                     setSSHPassword(""); resetSSHTest(); setSSHHostKey(item.sshKey ?? ""); setSSHSavedPath(item.path);
                     setSSHDrive(item.drive ?? "");
                     setRemoteLabel(item.label); setRemoteSave(true); setRemoteSaveAuto(enableAuto ?? item.autoReconnect);
@@ -4198,9 +4201,15 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                     {!sshAlias && <div className="ssh-credentials">
                       <label className="rclone-field"><span>服务器地址</span><input value={sshTarget} onChange={(e) => { setSSHTarget(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="IP 地址或主机名" autoComplete="off" spellCheck={false} /></label>
                       <label className="rclone-field"><span>SSH 端口</span><input value={sshPort} onChange={(e) => { setSSHPort(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} type="number" min={1} max={65535} /></label>
-                      <label className="rclone-field"><span>用户名</span><input value={sshUser} onChange={(e) => { setSSHUser(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="服务器的 SSH 账号" autoComplete="off" spellCheck={false} /></label>
-                      <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="SSH 登录密码" autoComplete="off" /></label>
+                      <label className="rclone-field"><span>用户名</span><input value={sshUseRoot ? "root" : sshUser} onChange={(e) => { setSSHUser(e.target.value); resetSSHTest(); }} readOnly={sshUseRoot} disabled={remoteFormBusy} placeholder="服务器的 SSH 账号" autoComplete="off" spellCheck={false} /></label>
+                      <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder={sshUseRoot ? "root 登录密码" : "SSH 登录密码"} autoComplete="off" /></label>
                     </div>}
+                    {!sshAlias && <label className="ssh-root-option">
+                      <span><b>以 root 身份登录</b><small>使用服务器的 root 账号浏览和挂载。</small></span>
+                      <span className={`switch ${sshUseRoot ? "on" : ""}`}><input type="checkbox" role="switch" aria-label="以 root 身份登录" checked={sshUseRoot} disabled={remoteFormBusy} onChange={(event) => {
+                        setSSHUseRoot(event.target.checked); setSSHPassword(""); setSSHSavedPath(""); resetSSHTest();
+                      }} /><i /></span>
+                    </label>}
                     <div className="ssh-test-row">
                       <span data-tip="如需浏览受限目录，请使用服务器上有相应权限的 SSH 账号。可读取的隐藏目录也会列出。">{sshDirectory ? "SFTP 已连通" : "服务器需启用 SSH 和 SFTP"}</span>
                       <button type="button" className={`btn ${sshDirectory ? "ghost" : "primary"}`} disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH(sshDirectory?.path || sshSavedPath)}>
@@ -4253,7 +4262,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       ...(availableDrives ?? []).map((letter) => ({ value: letter, label: `${letter}:` })),
                       ...(sshDrive && !availableDrives?.includes(sshDrive) ? [{ value: sshDrive, label: `${sshDrive}:（原盘符）` }] : []),
                     ]} onChange={(drive) => { setSSHDrive(drive); setSSHError(""); }} /></div>
-                  <span className="muted">盘符打开后，直接进入上面选中的档案库目录。</span>
+                  <span className="muted">盘符打开 SFTP 根目录，TAK 使用上面选中的档案库。</span>
                 </div>}
                 {remoteSave && <div className="remote-save-fields">
                   <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>

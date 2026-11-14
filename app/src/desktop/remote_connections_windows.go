@@ -37,10 +37,11 @@ type remoteEndpoint struct {
 	SSHUser    string `json:"sshUser,omitempty"`
 	SSHPort    int    `json:"sshPort,omitempty"`
 	SSHKey     string `json:"sshKey,omitempty"`
+	SSHUseRoot bool   `json:"sshUseRoot,omitempty"`
 }
 
 func (e remoteEndpoint) same(other remoteEndpoint) bool {
-	if e.Kind != other.Kind || e.Name != other.Name || e.SSHHost != other.SSHHost || e.SSHUser != other.SSHUser || e.SSHPort != other.SSHPort || e.SSHKey != other.SSHKey {
+	if e.Kind != other.Kind || e.Name != other.Name || e.SSHHost != other.SSHHost || e.SSHUser != other.SSHUser || e.SSHPort != other.SSHPort || e.SSHKey != other.SSHKey || e.SSHUseRoot != other.SSHUseRoot {
 		return false
 	}
 	if e.Kind == "unc" {

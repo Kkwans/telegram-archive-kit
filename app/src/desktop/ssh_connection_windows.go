@@ -25,6 +25,7 @@ type sshConnectionInput struct {
 	Alias, Host, User, Password, Key, Path string
 	Drive, Label                           string
 	Port                                   int
+	UseRoot                                bool
 }
 
 type sshDirectory struct {
@@ -41,6 +42,9 @@ func normalizePasswordEndpoint(e remoteEndpoint) (remoteEndpoint, error) {
 		return remoteEndpoint{}, errors.New("请输入 服务器的 IP 地址或主机名")
 	}
 	user := strings.TrimSpace(e.SSHUser)
+	if e.SSHUseRoot && user != "root" {
+		return remoteEndpoint{}, errors.New("root 模式需要使用远程服务器的 root 账号")
+	}
 	if !sshTargetPattern.MatchString(user) || strings.Contains(user, "@") {
 		return remoteEndpoint{}, errors.New("请输入 服务器的 SSH 用户名")
 	}
@@ -83,10 +87,16 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 	var env []string
 	var err error
 	if in.Alias != "" {
+		if in.UseRoot {
+			return nil, errors.New("请在 SSH 主机配置中指定 root 用户，或使用地址与密码登录")
+		}
 		endpoint, err = sshEndpoint(in.Alias, in.Path)
 	} else {
+		if in.UseRoot {
+			in.User = "root"
+		}
 		endpoint, err = normalizePasswordEndpoint(remoteEndpoint{
-			Kind: "ssh", SSHHost: in.Host, SSHUser: in.User, SSHPort: in.Port, SSHKey: in.Key, Path: in.Path,
+			Kind: "ssh", SSHHost: in.Host, SSHUser: in.User, SSHPort: in.Port, SSHKey: in.Key, Path: in.Path, SSHUseRoot: in.UseRoot,
 		})
 		if err == nil {
 			env, err = passwordMountEnv(ctx, endpoint, in.Password)
@@ -96,7 +106,11 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		return nil, err
 	}
 	if method == "sshBrowse" {
-		return browseSSH(ctx, endpoint, env)
+		dir, err := browseSSH(ctx, endpoint, env)
+		if err != nil && in.UseRoot && classifyRemoteError(err).status == "authentication_required" {
+			return nil, remoteError("authentication_required", "服务器拒绝了 root 登录，请检查 root 凭据及服务器的 SSH 登录策略")
+		}
+		return dir, err
 	}
 	if endpoint.Path == "" {
 		return nil, errors.New("请先选择 远程档案库目录")
