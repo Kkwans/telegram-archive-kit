@@ -36,6 +36,7 @@ func CheckPort(port int) ([]PortOwner, error) {
 		return nil, err
 	}
 	owners := make([]PortOwner, 0, len(listeners))
+	var names map[uint32]string
 	for pid, addresses := range listeners {
 		owner := PortOwner{PID: pid, Name: "未知程序", Addresses: addresses, Reason: "无法读取程序信息"}
 		if pid <= 4 {
@@ -46,6 +47,18 @@ func CheckPort(port int) ([]PortOwner, error) {
 		if handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid); err == nil {
 			owner = inspectPortOwner(handle, owner)
 			windows.CloseHandle(handle)
+		} else if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			owner.Reason = "权限不足，请从原程序退出后重新检查"
+		} else if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+			owner.Reason = "进程已退出，请重新检查"
+		}
+		if owner.Path == "" {
+			if names == nil {
+				names = processNames()
+			}
+			if name := names[pid]; name != "" {
+				owner.Name = name
+			}
 		}
 		if owner.CanEnd {
 			handle, err := openForTermination(pid)
@@ -67,6 +80,20 @@ func CheckPort(port int) ([]PortOwner, error) {
 		return 0
 	})
 	return owners, nil
+}
+
+func processNames() map[uint32]string {
+	names := make(map[uint32]string)
+	handle, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return names
+	}
+	defer windows.CloseHandle(handle)
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err := windows.Process32First(handle, &entry); err == nil; err = windows.Process32Next(handle, &entry) {
+		names[entry.ProcessID] = windows.UTF16ToString(entry.ExeFile[:])
+	}
+	return names
 }
 
 func EndPortOwner(port int, pid uint32, started string) error {

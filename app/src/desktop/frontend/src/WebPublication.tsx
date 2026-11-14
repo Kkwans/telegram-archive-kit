@@ -366,7 +366,7 @@ export function WebPublication({ ctx }: { ctx: PageCtx }) {
       <div className="publish-settings-panel">
           <section className="panel publish-network" aria-labelledby="publish-network-title">
             <header className="panel-head"><Wifi size={16} aria-hidden="true" /><div><h3 id="publish-network-title">访问网络</h3>
-              <p>{status.requested && !networkConfigured ? "要关闭所有访问入口，请停止部署。" : "同一局域网或获准连接的 Tailscale 设备可免口令浏览。"}</p>
+              {status.requested && !networkConfigured && <p>要关闭所有访问入口，请停止部署。</p>}
             </div></header>
             <div className="publish-body">
               <div className="publish-network-fields">
