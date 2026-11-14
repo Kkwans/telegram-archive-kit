@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,7 @@ type sshConnectionInput struct {
 	Drive, Label                           string
 	Port                                   int
 	UseRoot                                bool
+	VerifySudo                             bool
 }
 
 type sshDirectory struct {
@@ -100,6 +102,11 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		return nil, err
 	}
 	if method == "sshBrowse" {
+		if endpoint.SSHUseRoot && (in.VerifySudo || endpoint.Path == "") {
+			if err := verifySudoSFTP(ctx, endpoint, in.Password); err != nil {
+				return nil, err
+			}
+		}
 		dir, err := browseSSH(ctx, endpoint, env)
 		return dir, err
 	}
@@ -118,6 +125,11 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		endpoint.VolumeName = path.Base(endpoint.Path)
 	}
 	expectedID := b.expectedMountID(endpoint)
+	if endpoint.SSHUseRoot {
+		if err := verifySudoSFTP(ctx, endpoint, in.Password); err != nil {
+			return nil, err
+		}
+	}
 	if env == nil {
 		root, _, err := b.mountSSH(ctx, endpoint, expectedID, true)
 		return root, err
@@ -165,13 +177,64 @@ func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
 
 var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s", "--contimeout", "8s"}
 
+const sudoSFTPServer = `for server in /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/openssh/sftp-server /usr/libexec/sftp-server; do if test -x "$server"; then printf 'TAK_SUDO_SFTP\n' >&2; exec sudo -n -u root -- "$server"; fi; done; echo TAK_SFTP_SERVER_MISSING >&2; exit 127`
+
+func verifySudoSFTP(ctx context.Context, endpoint remoteEndpoint, password string) error {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	addr := net.JoinHostPort(endpoint.SSHHost, strconv.Itoa(endpoint.SSHPort))
+	pinned, err := parseServerKey(endpoint.SSHKey)
+	if err != nil {
+		return err
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return remoteError("offline", "无法连接服务器以验证 sudo 权限")
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	config := &ssh.ClientConfig{User: endpoint.SSHUser, Auth: []ssh.AuthMethod{ssh.Password(password)}, HostKeyCallback: ssh.FixedHostKey(pinned)}
+	sshConn, channels, requests, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		return remoteError("authentication_required", "无法验证 SSH 登录，请检查账号、密码和服务器主机密钥")
+	}
+	client := ssh.NewClient(sshConn, channels, requests)
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return remoteError("authentication_required", "服务器未允许执行 sudo 验证")
+	}
+	defer session.Close()
+	// Require a protocol response from the exact command used for the mount.
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	session.Stdin = strings.NewReader("\x00\x00\x00\x05\x01\x00\x00\x00\x03")
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := session.Start(sudoSFTPServer); err != nil {
+		return remoteError("authentication_required", "服务器未允许启动 sudo SFTP")
+	}
+	if marker, _ := bufio.NewReader(io.LimitReader(stderr, 1024)).ReadString('\n'); strings.TrimSpace(marker) != "TAK_SUDO_SFTP" {
+		return remoteError("authentication_required", "服务器未执行 sudo SFTP 命令，请检查 SSH 是否限制了远程命令")
+	}
+	var header [9]byte
+	if _, err := io.ReadFull(stdout, header[:]); err != nil || binary.BigEndian.Uint32(header[:4]) < 5 || header[4] != 2 || binary.BigEndian.Uint32(header[5:]) != 3 {
+		return remoteError("authentication_required", "sudo 测试未通过：服务器须允许当前账号免交互启动 OpenSSH SFTP")
+	}
+	return nil
+}
+
 func sshPasswordOptions(endpoint remoteEndpoint) []string {
 	if !endpoint.SSHUseRoot {
 		return passwordMountOptions
 	}
 	// SFTP owns stdin/stdout. Never mix a sudo password into its protocol.
-	const sudoSFTP = `for server in /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/openssh/sftp-server /usr/libexec/sftp-server; do if test -x "$server"; then exec sudo -n -u root -- "$server"; fi; done; echo TAK_SFTP_SERVER_MISSING >&2; exit 127`
-	return append(slices.Clone(passwordMountOptions), "--sftp-server-command", sudoSFTP)
+	return append(slices.Clone(passwordMountOptions), "--sftp-server-command", sudoSFTPServer)
 }
 
 func passwordMountEnv(ctx context.Context, endpoint remoteEndpoint, password string) ([]string, error) {

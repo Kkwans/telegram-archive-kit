@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -216,6 +217,11 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 	if endpoint.SSHUseRoot || endpoint.SSHUser == "root" {
 		args = append(args, "--file-perms", "0600", "--dir-perms", "0700")
+	}
+	if endpoint.Kind == "ssh" && endpoint.SSHUseRoot {
+		// Keep elevated VFS writes separate from the ordinary mount's cache.
+		cacheKey := sha256.Sum256([]byte(endpoint.Name + "\x00" + endpoint.SSHKey))
+		args = append(args, "--cache-dir", filepath.Join(b.facade.ConfigDir(), "ssh-sudo-cache", fmt.Sprintf("%x", cacheKey), drive))
 	}
 	// WinFsp disk mode supports the handle-relative opens used to verify library
 	// identity and contain publication media paths.

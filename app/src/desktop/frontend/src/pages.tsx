@@ -3257,6 +3257,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [remoteSave, setRemoteSave] = useState(false);
   const [remoteLabel, setRemoteLabel] = useState("");
   const [remoteSaveAuto, setRemoteSaveAuto] = useState(false);
+  const [sshAutoReconnect, setSSHAutoReconnect] = useState(true);
   const [remoteError, setRemoteError] = useState("");
   const [connectionBusy, setConnectionBusy] = useState(false);
   const remoteDialog = useRef<HTMLDivElement>(null);
@@ -3294,7 +3295,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const clearSSHPassword = () => { setSSHPassword(""); setSSHTrust(null); setSSHHostKey(""); setSSHDirectory(null); setSSHSavedPath(""); };
 
   useEffect(() => {
-    if (!remoteOpen || !sshOpen || !sshDirectory?.library) return;
+    if (!remoteOpen || !sshOpen) return;
     const controller = new AbortController();
     setAvailableDrives(null);
     void call<string[]>("remoteMountDrives", undefined, controller.signal).then((drives) => {
@@ -3303,7 +3304,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
       if (!controller.signal.aborted) setAvailableDrives([]);
     });
     return () => controller.abort();
-  }, [remoteOpen, sshOpen, sshDirectory?.library]);
+  }, [remoteOpen, sshOpen]);
 
   const showDetail = (chat: ChatRow) => {
     setDetailLibraryKey(boot?.libraryKey ?? "");
@@ -3383,6 +3384,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     setSSHOpen(false);
     setSSHAlias("");
     setSSHUseRoot(false);
+    setSSHAutoReconnect(true);
     setSSHDrive("");
     clearSSHPassword();
     setSSHError("");
@@ -3418,7 +3420,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     });
   };
 
-  const switchRemote = (root: string, newRemoteMount = false, onError = setRemoteError, sshPassword?: string) => switchTo(root, false, {
+  const switchRemote = (root: string, newRemoteMount = false, onError = setRemoteError, sshPassword?: string, autoReconnect = remoteSaveAuto) => switchTo(root, false, {
     newRemoteMount,
     onError,
     afterSwitch: async () => {
@@ -3427,7 +3429,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         return;
       }
       try {
-        await call<SavedRemoteConnection>("remoteConnectionSave", { root, label: remoteLabel.trim(), autoReconnect: remoteSaveAuto, sshPassword });
+        await call<SavedRemoteConnection>("remoteConnectionSave", { root, label: remoteLabel.trim(), autoReconnect, sshPassword });
         toast("已保存网络连接", "success");
         setRemoteMode("saved");
       } catch (e) {
@@ -3465,13 +3467,14 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         setSSHTrust(trust);
         return;
       }
-      const next = await call<NonNullable<typeof sshDirectory>>("sshBrowse", sshParams(directory, key), controller.signal);
+      const next = await call<NonNullable<typeof sshDirectory>>("sshBrowse", { ...sshParams(directory, key), verifySudo: sshUseRoot && !sshDirectory }, controller.signal);
       setSSHDirectory(next);
       if (trustedKey) setSSHHostKey(trustedKey);
     } catch (error) {
       if (!controller.signal.aborted) {
         const message = (error as Error).message;
         setSSHError(message);
+        if (sshUseRoot) setSSHDirectory(null);
         if (message.includes("主机密钥")) { setSSHHostKey(""); setSSHDirectory(null); }
       }
     } finally {
@@ -3487,11 +3490,11 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     setSSHError("");
     try {
       const root = await call<string>("sshConnect", {
-        ...sshParams(sshDirectory.path), drive: sshDrive, label: remoteSave ? remoteLabel.trim() : "",
+        ...sshParams(sshDirectory.path), drive: sshDrive, label: remoteLabel.trim(),
       }, controller.signal);
       sshRequest.current = null;
       setSSHAction("switch");
-      const result = await switchRemote(root, true, setSSHError, remoteSave && !sshAlias ? sshPassword : undefined);
+      const result = await switchRemote(root, true, setSSHError, remoteSave && !sshAlias ? sshPassword : undefined, sshAutoReconnect);
       if (result === "switched") clearSSHPassword();
       if (result === "failed") {
         setStagedMountRoot(root);
@@ -4087,12 +4090,13 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                     setSSHPassword(""); resetSSHTest(); setSSHHostKey(item.sshKey ?? ""); setSSHSavedPath(item.path);
                     setSSHDrive(item.drive ?? "");
                     setRemoteLabel(item.label); setRemoteSave(true); setRemoteSaveAuto(enableAuto ?? item.autoReconnect);
+                    setSSHAutoReconnect(enableAuto ?? item.autoReconnect);
                     setSSHOpen(true); setRcloneOpen(false); showRemoteMode("add");
                   }} toast={toast} />
               ) : <>
               <div className="remote-methods" role="group" aria-label="连接方式">
                 <button type="button" className={`remote-method ${!sshOpen && !rcloneOpen ? "selected" : ""}`} aria-pressed={!sshOpen && !rcloneOpen} disabled={remoteFormBusy} onClick={() => { clearSSHPassword(); setSSHOpen(false); setRcloneOpen(false); }}><Network size={15} />SMB / 网络盘</button>
-                <button type="button" className={`remote-method ${sshOpen ? "selected" : ""}`} aria-label="SSH 连接" aria-pressed={sshOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(true); setRcloneOpen(false); }}><Server size={15} />SSH / SFTP</button>
+                <button type="button" className={`remote-method ${sshOpen ? "selected" : ""}`} aria-label="SSH 连接" aria-pressed={sshOpen} disabled={remoteFormBusy} onClick={() => { if (!sshOpen && sshAutoReconnect) setRemoteSave(true); setSSHOpen(true); setRcloneOpen(false); }}><Server size={15} />SSH / SFTP</button>
                 <button type="button" className={`remote-method ${rcloneOpen ? "selected" : ""}`} aria-label="rclone 连接" aria-pressed={rcloneOpen} disabled={remoteFormBusy} onClick={() => { clearSSHPassword(); setRcloneOpen(true); setSSHOpen(false); }}><Cloud size={15} />rclone</button>
               </div>
 
@@ -4205,15 +4209,30 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="SSH 登录密码" autoComplete="off" /></label>
                     </div>}
                     {!sshAlias && <label className="ssh-root-option">
-                      <span><b>使用 sudo 权限</b><small>用上面的账号登录。服务器须允许该账号免交互启动 SFTP。</small></span>
+                      <b>使用 sudo 权限</b>
                       <span className={`switch ${sshUseRoot ? "on" : ""}`}><input type="checkbox" role="switch" aria-label="使用 sudo 权限" checked={sshUseRoot} disabled={remoteFormBusy} onChange={(event) => {
-                        setSSHUseRoot(event.target.checked); resetSSHTest();
+                        setSSHUseRoot(event.target.checked); setSSHSavedPath(""); resetSSHTest();
                       }} /><i /></span>
                     </label>}
+                    <label className="ssh-root-option">
+                      <b>此库为当前库时自动重连</b>
+                      <span className={`switch ${sshAutoReconnect ? "on" : ""}`}><input type="checkbox" role="switch" checked={sshAutoReconnect} disabled={remoteFormBusy} onChange={(event) => {
+                        setSSHAutoReconnect(event.target.checked); if (event.target.checked) setRemoteSave(true);
+                      }} /><i /></span>
+                    </label>
+                    <div className="remote-ssh-mount">
+                      <div className="field"><span>Windows 盘符</span><Select ariaLabel="Windows 盘符" value={sshDrive} disabled={remoteFormBusy}
+                        options={[
+                          { value: "", label: "自动分配" },
+                          ...(availableDrives ?? []).map((letter) => ({ value: letter, label: `${letter}:` })),
+                          ...(sshDrive && !availableDrives?.includes(sshDrive) ? [{ value: sshDrive, label: `${sshDrive}:（原盘符）` }] : []),
+                        ]} onChange={setSSHDrive} /></div>
+                      <label className="field"><span>连接名称（可选）</span><input value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} /></label>
+                    </div>
                     <div className="ssh-test-row">
-                      <span data-tip="如需浏览受限目录，请使用服务器上有相应权限的 SSH 账号。可读取的隐藏目录也会列出。">{sshDirectory ? "SFTP 已连通" : "服务器需启用 SSH 和 SFTP"}</span>
+                      <span role="status">{sshDirectory ? sshUseRoot ? "sudo 权限已验证" : "SFTP 已连通" : ""}</span>
                       <button type="button" className={`btn ${sshDirectory ? "ghost" : "primary"}`} disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH(sshDirectory?.path || sshSavedPath)}>
-                        {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : "测试连接"}
+                        {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : sshUseRoot ? "测试 sudo 连接" : "测试连接"}
                       </button>
                     </div>
                     {sshTrust && <div className="plan-inline-notice ssh-host-trust" role="status">
@@ -4255,22 +4274,12 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 </div>
               )}
               {(!sshOpen && !rcloneOpen || sshOpen && !!sshDirectory?.library || rcloneOpen && remoteTools?.rclone && remoteTools.winFsp && !!remoteTools.rcloneRemotes?.length) && <div className="remote-connect-options">
-                {sshOpen && <div className="remote-ssh-mount">
-                  <div className="field"><span>Windows 盘符</span><Select ariaLabel="Windows 盘符" value={sshDrive} disabled={remoteFormBusy}
-                    options={[
-                      { value: "", label: "自动分配" },
-                      ...(availableDrives ?? []).map((letter) => ({ value: letter, label: `${letter}:` })),
-                      ...(sshDrive && !availableDrives?.includes(sshDrive) ? [{ value: sshDrive, label: `${sshDrive}:（原盘符）` }] : []),
-                    ]} onChange={(drive) => { setSSHDrive(drive); setSSHError(""); }} /></div>
-                  <span className="muted">盘符打开 SFTP 根目录，TAK 使用上面选中的档案库。</span>
-                </div>}
-                {remoteSave && <div className="remote-save-fields">
+                {remoteSave && !sshOpen && <div className="remote-save-fields">
                   <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
                   <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时自动重连</label>
-                  {sshOpen && !sshAlias && <p className="muted">密码保存在当前 Windows 用户的凭据管理器中。</p>}
                 </div>}
                 <div className="remote-connect-footer">
-                  <button type="button" className="btn remote-save-toggle" aria-pressed={remoteSave} disabled={remoteFormBusy || sshOpen && !!sshError} onClick={() => setRemoteSave((value) => !value)}><Bookmark size={14} /> 保存此连接</button>
+                  <button type="button" className="btn remote-save-toggle" aria-pressed={remoteSave} disabled={remoteFormBusy || sshOpen && !!sshError} onClick={() => { if (sshOpen && remoteSave) setSSHAutoReconnect(false); setRemoteSave((value) => !value); }}><Bookmark size={14} /> 保存此连接</button>
                   <div className="remote-form-actions">
                     {!sshOpen && !rcloneOpen && <>
                       <button type="button" className="btn" disabled={remoteFormBusy || !remotePath.trim()} onClick={() => void testRemote()}>

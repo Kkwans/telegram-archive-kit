@@ -344,7 +344,12 @@ func (s *remoteConnections) entryLocked(c savedRemoteConnection) remoteConnectio
 		AutoReconnect: c.AutoReconnect, HasSavedPassword: c.HasSavedPassword, Active: s.current.id == c.ID,
 		Status: "offline",
 	}
-	out.Mounted = c.Kind == "ssh" && s.b.existingSSHMount(c.remoteEndpoint) != ""
+	if c.Kind == "ssh" {
+		out.Mounted = s.b.existingSSHMount(c.remoteEndpoint) != ""
+		if out.Active && s.current.ready && s.current.mount != nil && !s.current.mount.endpoint.same(c.remoteEndpoint) {
+			out.Active = false
+		}
+	}
 	if out.Active {
 		out.Root = s.current.root
 	}
@@ -628,6 +633,10 @@ func (s *remoteConnections) save(ctx context.Context, root, label, sshPassword s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, record, _ := s.recordLocked(id)
+	if record.Kind == "ssh" && endpoint.Kind == "ssh" && record.SSHUseRoot != endpoint.SSHUseRoot &&
+		s.b.existingSSHMount(record.remoteEndpoint) != "" {
+		return remoteConnectionDTO{}, errors.New("另一权限模式已保存并挂载。本次盘符已连接，原连接的自动重连设置已保留")
+	}
 	previousTarget := s.credentialTarget(record)
 	record.ID, record.remoteEndpoint, record.AutoReconnect = id, endpoint, auto
 	target := s.credentialTarget(record)
@@ -819,7 +828,8 @@ func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.Raw
 		defer s.activation.Unlock()
 		s.mu.Lock()
 		_, record, found := s.recordLocked(p.ID)
-		active := s.current.id == p.ID && s.current.ready
+		active := s.current.id == p.ID && s.current.ready &&
+			s.current.mount != nil && s.current.mount.endpoint.same(record.remoteEndpoint)
 		s.mu.Unlock()
 		if !found || record.Kind != "ssh" {
 			return nil, errors.New("未找到 SSH 连接")
@@ -848,7 +858,7 @@ func (s *remoteConnections) reconnect(id string) (remoteConnectionDTO, *remoteFl
 	if !ok {
 		return remoteConnectionDTO{}, nil, errors.New("找不到保存的远程连接，请从原网络位置重新打开")
 	}
-	if s.current.id == id && s.current.ready {
+	if s.current.id == id && s.current.ready && s.entryLocked(c).Active {
 		return s.entryLocked(c), nil, nil
 	}
 	if s.flight != nil {
@@ -1002,9 +1012,11 @@ func (s *remoteConnections) poll(lastHealth *time.Time, lastGeneration *uint64) 
 	s.mu.Lock()
 	current := s.current
 	_, c, exists := s.recordLocked(current.id)
-	if !exists && current.id != "" && !current.ready {
+	if current.id != "" && !current.ready {
 		if mount := s.b.remoteMountAt(current.root); mount != nil && mount.endpoint.Kind == "ssh" {
-			c = savedRemoteConnection{ID: current.id, remoteEndpoint: mount.endpoint}
+			if !exists || !mount.endpoint.same(c.remoteEndpoint) {
+				c = savedRemoteConnection{ID: current.id, remoteEndpoint: mount.endpoint}
+			}
 			exists = true
 		}
 	}
