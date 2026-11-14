@@ -86,7 +86,7 @@ func (b *Bridge) mountSSH(ctx context.Context, endpoint remoteEndpoint, expected
 	if checkLibraryFile {
 		validate = verifySSHLibrary
 	}
-	return b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, true, options, nil, validate)
+	return b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, options, nil, validate)
 }
 
 func aliasMountOptions(target string) ([]string, error) {

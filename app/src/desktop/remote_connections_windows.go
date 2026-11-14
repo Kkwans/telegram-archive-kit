@@ -28,14 +28,15 @@ const (
 )
 
 type remoteEndpoint struct {
-	Kind    string `json:"kind"`
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Drive   string `json:"drive,omitempty"`
-	SSHHost string `json:"sshHost,omitempty"`
-	SSHUser string `json:"sshUser,omitempty"`
-	SSHPort int    `json:"sshPort,omitempty"`
-	SSHKey  string `json:"sshKey,omitempty"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Drive      string `json:"drive,omitempty"`
+	VolumeName string `json:"-"`
+	SSHHost    string `json:"sshHost,omitempty"`
+	SSHUser    string `json:"sshUser,omitempty"`
+	SSHPort    int    `json:"sshPort,omitempty"`
+	SSHKey     string `json:"sshKey,omitempty"`
 }
 
 func (e remoteEndpoint) same(other remoteEndpoint) bool {
@@ -249,10 +250,16 @@ func (e remoteEndpoint) normalized() (remoteEndpoint, error) {
 	case "unc":
 		return uncEndpoint(e.Path)
 	case "ssh":
+		e.Drive = normalizeMountDrive(e.Drive)
+		if err := validateSSHDrive(e.Drive); err != nil {
+			return remoteEndpoint{}, err
+		}
 		if e.SSHHost != "" {
 			return normalizePasswordEndpoint(e)
 		}
-		return sshEndpoint(e.Name, e.Path)
+		alias, err := sshEndpoint(e.Name, e.Path)
+		alias.Drive = e.Drive
+		return alias, err
 	case "rclone":
 		return rcloneEndpoint(e.Name, e.Path, e.Drive)
 	}
@@ -499,7 +506,7 @@ func (s *remoteConnections) switchLibrary(ctx context.Context, root string, newR
 	if err != nil {
 		return nil, err
 	}
-	if id != "" {
+	if id != "" && !newRemoteMount {
 		_, flight, err := s.reconnect(id)
 		if err != nil || flight == nil {
 			return nil, err
@@ -522,7 +529,11 @@ func (s *remoteConnections) switchLibrary(ctx context.Context, root string, newR
 	if mount != nil && s.b.remoteMountAt(root) != mount {
 		return nil, errors.New("挂载已断开，请重新挂载后再打开")
 	}
+	previousRoot, previousID := s.b.facade.CurrentLibrarySelection()
 	err = s.withPublicationSwitch(func() error {
+		if mount != nil && id != "" {
+			return s.b.facade.RestoreLibrary(ctx, root, id, previousRoot, previousID)
+		}
 		if mount != nil {
 			return s.b.facade.SwitchManagedLibrary(root)
 		}
@@ -530,6 +541,11 @@ func (s *remoteConnections) switchLibrary(ctx context.Context, root string, newR
 	})
 	if err == nil {
 		s.refreshSelection()
+		if id != "" && id == previousID && mount != nil && !sameRemoteRoot(previousRoot, root) {
+			if previous := s.b.remoteMountAt(previousRoot); previous != nil && previous.endpoint.same(mount.endpoint) {
+				_ = stopRemoteMount(previous)
+			}
+		}
 	}
 	return nil, err
 }
@@ -630,7 +646,10 @@ func (s *remoteConnections) save(ctx context.Context, root, label, sshPassword s
 	if label = strings.TrimSpace(label); label != "" {
 		record.Label = label
 	} else if record.Label == "" {
-		record.Label = endpoint.Name
+		record.Label = endpoint.VolumeName
+		if record.Label == "" {
+			record.Label = endpoint.Name
+		}
 		if record.Label == "" {
 			record.Label = endpoint.Path
 		}
@@ -840,6 +859,9 @@ func (s *remoteConnections) connect(ctx context.Context, c savedRemoteConnection
 	if err != nil {
 		return "", err
 	}
+	if endpoint.Kind == "ssh" {
+		endpoint.VolumeName = c.Label
+	}
 	if s.b.publication != nil && s.b.publication.Requested() {
 		return "", remoteError("busy", "请先停止网页部署，再切换档案库")
 	}
@@ -858,7 +880,7 @@ func (s *remoteConnections) connect(ctx context.Context, c savedRemoteConnection
 			if envErr != nil {
 				return "", envErr
 			}
-			root, newMount, err = s.b.startRemoteMount(ctx, endpoint, ":sftp:", c.ID, true, passwordMountOptions, env, nil)
+			root, newMount, err = s.b.startRemoteMount(ctx, endpoint, ":sftp:", c.ID, false, passwordMountOptions, env, nil)
 		}
 	case "rclone":
 		root, newMount, err = s.b.mountRclone(ctx, endpoint, c.ID, true)

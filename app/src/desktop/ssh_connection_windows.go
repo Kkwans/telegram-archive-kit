@@ -23,6 +23,7 @@ import (
 
 type sshConnectionInput struct {
 	Alias, Host, User, Password, Key, Path string
+	Drive, Label                           string
 	Port                                   int
 }
 
@@ -100,11 +101,31 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 	if endpoint.Path == "" {
 		return nil, errors.New("请先选择 远程档案库目录")
 	}
-	if env == nil {
-		return b.StartSSHMount(ctx, endpoint.Name, endpoint.Path)
+	endpoint.Drive = normalizeMountDrive(in.Drive)
+	if err := validateSSHDrive(endpoint.Drive); err != nil {
+		return nil, err
 	}
-	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", b.expectedMountID(endpoint), true, passwordMountOptions, env, verifySSHLibrary)
+	if err := validateRemoteLabel(in.Label, true); err != nil {
+		return nil, err
+	}
+	endpoint.VolumeName = strings.TrimSpace(in.Label)
+	if endpoint.VolumeName == "" {
+		endpoint.VolumeName = path.Base(endpoint.Path)
+	}
+	expectedID := b.expectedMountID(endpoint)
+	if env == nil {
+		root, _, err := b.mountSSH(ctx, endpoint, expectedID, true)
+		return root, err
+	}
+	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, passwordMountOptions, env, verifySSHLibrary)
 	return root, err
+}
+
+func validateSSHDrive(drive string) error {
+	if drive != "" && (len(drive) != 1 || drive[0] < 'D' || drive[0] > 'Z') {
+		return errors.New("请选择 D 到 Z 之间的可用盘符")
+	}
+	return nil
 }
 
 func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
@@ -211,6 +232,7 @@ func readSSHDirectory(cmd *exec.Cmd, dir string) (sshDirectory, error) {
 			if decodeErr = reader.Decode(&item); decodeErr != nil {
 				break
 			}
+			// Include dot-prefixed folders advertised by the SFTP account.
 			if item.IsDir && item.Name != "." && item.Name != ".." && item.Name != "" && !strings.ContainsAny(item.Name, "/\\\x00\r\n") {
 				result.Folders = append(result.Folders, item.Name)
 			}

@@ -3277,6 +3277,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [sshTarget, setSSHTarget] = useState("");
   const [sshUser, setSSHUser] = useState("");
   const [sshPort, setSSHPort] = useState("22");
+  const [sshDrive, setSSHDrive] = useState("");
+  const [availableDrives, setAvailableDrives] = useState<string[] | null>(null);
   const [sshPassword, setSSHPassword] = useState("");
   const [sshHostKey, setSSHHostKey] = useState("");
   const [sshTrust, setSSHTrust] = useState<{ key: string; fingerprint: string; type: string } | null>(null);
@@ -3289,6 +3291,18 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const sshCanTest = !!sshAlias || !!sshTarget.trim() && !!sshUser.trim() && !!sshPassword && Number(sshPort) > 0 && Number(sshPort) <= 65535;
   const resetSSHTest = () => { setSSHDirectory(null); setSSHTrust(null); setSSHError(""); };
   const clearSSHPassword = () => { setSSHPassword(""); setSSHTrust(null); setSSHHostKey(""); setSSHDirectory(null); setSSHSavedPath(""); };
+
+  useEffect(() => {
+    if (!remoteOpen || !sshOpen || !sshDirectory?.library) return;
+    const controller = new AbortController();
+    setAvailableDrives(null);
+    void call<string[]>("remoteMountDrives", undefined, controller.signal).then((drives) => {
+      if (!controller.signal.aborted) setAvailableDrives(drives);
+    }).catch(() => {
+      if (!controller.signal.aborted) setAvailableDrives([]);
+    });
+    return () => controller.abort();
+  }, [remoteOpen, sshOpen, sshDirectory?.library]);
 
   const showDetail = (chat: ChatRow) => {
     setDetailLibraryKey(boot?.libraryKey ?? "");
@@ -3367,6 +3381,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     setRcloneBusy(false);
     setSSHOpen(false);
     setSSHAlias("");
+    setSSHDrive("");
     clearSSHPassword();
     setSSHError("");
     readRemoteTools();
@@ -3469,7 +3484,9 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     setSSHAction("connect");
     setSSHError("");
     try {
-      const root = await call<string>("sshConnect", sshParams(sshDirectory.path), controller.signal);
+      const root = await call<string>("sshConnect", {
+        ...sshParams(sshDirectory.path), drive: sshDrive, label: remoteSave ? remoteLabel.trim() : "",
+      }, controller.signal);
       sshRequest.current = null;
       setSSHAction("switch");
       const result = await switchRemote(root, true, setSSHError, remoteSave && !sshAlias ? sshPassword : undefined);
@@ -4063,8 +4080,9 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               {remoteMode === "saved" ? (
                 <RemoteConnections onAdd={() => showRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy}
                   onPasswordConnection={(item, enableAuto) => {
-                    setSSHAlias(""); setSSHTarget(item.sshHost ?? ""); setSSHUser(item.sshUser ?? ""); setSSHPort(String(item.sshPort ?? 22));
+                    setSSHAlias(item.sshHost ? "" : item.name); setSSHTarget(item.sshHost ?? ""); setSSHUser(item.sshUser ?? ""); setSSHPort(String(item.sshPort ?? 22));
                     setSSHPassword(""); resetSSHTest(); setSSHHostKey(item.sshKey ?? ""); setSSHSavedPath(item.path);
+                    setSSHDrive(item.drive ?? "");
                     setRemoteLabel(item.label); setRemoteSave(true); setRemoteSaveAuto(enableAuto ?? item.autoReconnect);
                     setSSHOpen(true); setRcloneOpen(false); showRemoteMode("add");
                   }} toast={toast} />
@@ -4175,7 +4193,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <span>SSH 主机</span>
                       <Select ariaLabel="SSH 主机配置" value={sshAlias} disabled={remoteFormBusy} onChange={(value) => {
                         resetSSHTest(); setSSHAlias(value);
-                      }} options={(remoteTools.sshAliases ?? []).map((alias) => ({ value: alias, label: alias }))} />
+                      }} options={[...new Set([sshAlias, ...(remoteTools.sshAliases ?? [])])].map((alias) => ({ value: alias, label: alias }))} />
                     </div>}
                     {!sshAlias && <div className="ssh-credentials">
                       <label className="rclone-field"><span>服务器地址</span><input value={sshTarget} onChange={(e) => { setSSHTarget(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="IP 地址或主机名" autoComplete="off" spellCheck={false} /></label>
@@ -4184,7 +4202,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="SSH 登录密码" autoComplete="off" /></label>
                     </div>}
                     <div className="ssh-test-row">
-                      <span>{sshDirectory ? "SFTP 已连通" : "服务器需启用 SSH 和 SFTP"}</span>
+                      <span data-tip="如需浏览受限目录，请使用服务器上有相应权限的 SSH 账号。可读取的隐藏目录也会列出。">{sshDirectory ? "SFTP 已连通" : "服务器需启用 SSH 和 SFTP"}</span>
                       <button type="button" className={`btn ${sshDirectory ? "ghost" : "primary"}`} disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH(sshDirectory?.path || sshSavedPath)}>
                         {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : "测试连接"}
                       </button>
@@ -4228,6 +4246,15 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 </div>
               )}
               {(!sshOpen && !rcloneOpen || sshOpen && !!sshDirectory?.library || rcloneOpen && remoteTools?.rclone && remoteTools.winFsp && !!remoteTools.rcloneRemotes?.length) && <div className="remote-connect-options">
+                {sshOpen && <div className="remote-ssh-mount">
+                  <div className="field"><span>Windows 盘符</span><Select ariaLabel="Windows 盘符" value={sshDrive} disabled={remoteFormBusy}
+                    options={[
+                      { value: "", label: "自动分配" },
+                      ...(availableDrives ?? []).map((letter) => ({ value: letter, label: `${letter}:` })),
+                      ...(sshDrive && !availableDrives?.includes(sshDrive) ? [{ value: sshDrive, label: `${sshDrive}:（原盘符）` }] : []),
+                    ]} onChange={(drive) => { setSSHDrive(drive); setSSHError(""); }} /></div>
+                  <span className="muted">盘符打开后，直接进入上面选中的档案库目录。</span>
+                </div>}
                 {remoteSave && <div className="remote-save-fields">
                   <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
                   <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时自动重连</label>

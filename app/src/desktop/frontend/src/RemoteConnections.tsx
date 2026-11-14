@@ -210,6 +210,11 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
                     if (menu) menu.open = false;
                     onPasswordConnection(item);
                   }}><KeyRound size={14} /> {item.hasSavedPassword ? "更新密码" : "补录密码"}</button>}
+                  {item.kind === "ssh" && <button type="button" disabled={busy || inProgress} onClick={(event) => {
+                    const menu = event.currentTarget.closest("details");
+                    if (menu) menu.open = false;
+                    onPasswordConnection(item);
+                  }}><FolderOpen size={14} /> 挂载设置</button>}
                   <button type="button" className="danger" disabled={busy || inProgress} aria-label={`移除连接 ${item.label || location}`} onClick={(event) => {
                     const menu = event.currentTarget.closest("details");
                     if (menu) menu.open = false;

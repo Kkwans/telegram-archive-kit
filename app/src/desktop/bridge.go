@@ -477,6 +477,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.RemoteStatus(), nil
 	case "remoteTools":
 		return b.RemoteTools(), nil
+	case "remoteMountDrives":
+		return b.availableMountDrives()
 	case "clearRemoteCache":
 		return b.facade.ClearRemoteCache()
 	case "rcloneMount":

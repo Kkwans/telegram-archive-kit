@@ -76,6 +76,35 @@ func normalizeMountDrive(drive string) string {
 	return strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(drive), ":"))
 }
 
+func (b *Bridge) availableMountDrives() ([]string, error) {
+	b.mountMu.Lock()
+	defer b.mountMu.Unlock()
+	occupied, err := windows.GetLogicalDrives()
+	if err != nil {
+		return nil, err
+	}
+	drives := make([]string, 0, 23)
+	for letter := byte('D'); letter <= 'Z'; letter++ {
+		if occupied&(1<<(letter-'A')) == 0 && b.mounts[string(letter)] == nil {
+			drives = append(drives, string(letter))
+		}
+	}
+	return drives, nil
+}
+
+func mountVolumeName(endpoint remoteEndpoint) string {
+	label := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || strings.ContainsRune(`\/:*?"<>|`, r) {
+			return ' '
+		}
+		return r
+	}, endpoint.VolumeName))
+	if label == "" {
+		return "TAK Remote"
+	}
+	return label
+}
+
 func (b *Bridge) mountRclone(ctx context.Context, endpoint remoteEndpoint, expectedID string, useAnyDrive bool) (string, *rcloneMount, error) {
 	return b.startRemoteMount(ctx, endpoint, endpoint.Name+":", expectedID, useAnyDrive, nil, nil, nil)
 }
@@ -129,6 +158,11 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			b.mountMu.Unlock()
 			return letter + `:\`, nil, nil
 		}
+		if mount.ready && endpoint.Kind == "ssh" && endpoint.Drive != "" && letter != endpoint.Drive {
+			// A saved SSH connection can move to a free letter. Keep the
+			// original mount available until the library switch succeeds.
+			continue
+		}
 		b.mountMu.Unlock()
 		return "", nil, remoteError("busy", "该远程位置正在挂载或已挂载到其他盘符")
 	}
@@ -162,7 +196,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	// name before the upload starts. Immediate write-back can upload the temp
 	// name and leave the renamed file visible only in the mounted view.
 	args := []string{"mount", prefix + endpoint.Path, drive + ":",
-		"--volname", "TAK Remote",
+		"--volname", mountVolumeName(endpoint),
 		"--vfs-cache-mode", "writes",
 		"--vfs-write-back", "5s",
 		"--dir-cache-time", "30s",
