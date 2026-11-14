@@ -75,26 +75,32 @@ func sshEndpoint(target, directory string) (remoteEndpoint, error) {
 }
 
 func (b *Bridge) mountSSH(ctx context.Context, endpoint remoteEndpoint, expectedID string, checkLibraryFile bool) (string, *rcloneMount, error) {
+	if endpoint.SSHHost != "" {
+		return "", nil, remoteError("authentication_required", "请重新输入 NAS 的 SSH 登录密码")
+	}
+	options, err := aliasMountOptions(endpoint.Name)
+	if err != nil {
+		return "", nil, err
+	}
+	var validate func(string) error
+	if checkLibraryFile {
+		validate = verifySSHLibrary
+	}
+	return b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, true, options, nil, validate)
+}
+
+func aliasMountOptions(target string) ([]string, error) {
 	ssh, err := exec.LookPath("ssh.exe")
 	if err != nil {
-		return "", nil, remoteError("missing_tools", "未检测到 Windows OpenSSH 客户端")
+		return nil, remoteError("missing_tools", "未检测到 Windows OpenSSH 客户端")
 	}
 	// rclone parses this as a space-separated argument list and starts ssh
 	// directly. The host never supplies options, and OpenSSH verifies the key.
-	sshCommand := `"` + ssh + `" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + endpoint.Name
-	var validate func(string) error
-	if checkLibraryFile {
-		validate = func(root string) error {
-			if info, err := os.Stat(filepath.Join(root, "library.json")); err != nil || !info.Mode().IsRegular() {
-				return errors.New("未能读取 library.json，请选择 NAS 上的档案库根目录")
-			}
-			return nil
-		}
-	}
-	return b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, true, []string{
+	sshCommand := `"` + ssh + `" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + target
+	return []string{
 		"--config", "NUL", "--log-level", "ERROR", "--sftp-ssh", sshCommand,
 		"--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s",
-	}, validate)
+	}, nil
 }
 
 func installMountTools(ctx context.Context) error {
@@ -109,12 +115,12 @@ func installMountTools(ctx context.Context) error {
 		install, cancel := context.WithTimeout(ctx, 4*time.Minute)
 		err := hiddenCommandContext(install, "winget", "install", "--id", pkg, "--exact", "--source", "winget", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity").Run()
 		cancel()
-		if err != nil {
+		if err != nil && !(pkg == "Rclone.Rclone" && findRclone() != "" || pkg == "WinFsp.WinFsp" && hasWinFsp()) {
 			return fmt.Errorf("安装 %s 失败：%w", pkg, err)
 		}
 	}
 	if !hasWinFsp() || findRclone() == "" {
-		return errors.New("组件安装已结束，Windows 尚未刷新组件位置，请重开客户端后重试")
+		return errors.New("未检测到安装后的 rclone 或 WinFsp，请检查 WinGet 安装结果后重新检测")
 	}
 	return nil
 }

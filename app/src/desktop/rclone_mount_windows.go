@@ -27,6 +27,7 @@ type rcloneMount struct {
 	endpoint  remoteEndpoint
 	markerDir string
 	options   []string
+	env       []string
 	ready     bool // protected by Bridge.mountMu
 	report    mountReport
 }
@@ -75,7 +76,7 @@ func normalizeMountDrive(drive string) string {
 }
 
 func (b *Bridge) mountRclone(ctx context.Context, endpoint remoteEndpoint, expectedID string, useAnyDrive bool) (string, *rcloneMount, error) {
-	return b.startRemoteMount(ctx, endpoint, endpoint.Name+":", expectedID, useAnyDrive, nil, nil)
+	return b.startRemoteMount(ctx, endpoint, endpoint.Name+":", expectedID, useAnyDrive, nil, nil, nil)
 }
 
 func (b *Bridge) expectedMountID(endpoint remoteEndpoint) string {
@@ -88,7 +89,7 @@ func (b *Bridge) expectedMountID(endpoint remoteEndpoint) string {
 // Pending VFS writes can be uploaded as soon as a writable mount starts. For a
 // saved remote, validate its marker directly before allowing that process to
 // start, then let the caller validate the mounted view before using it.
-func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, prefix, expectedID string, useAnyDrive bool, options []string, validate func(string) error) (string, *rcloneMount, error) {
+func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, prefix, expectedID string, useAnyDrive bool, options, env []string, validate func(string) error) (string, *rcloneMount, error) {
 	if service := b.remoteConnections; service != nil {
 		service.mu.Lock()
 		if service.closed {
@@ -110,7 +111,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
 	if expectedID != "" {
-		if err := verifyRcloneMarker(ctx, exe, markerDir, expectedID, options); err != nil {
+		if err := verifyRcloneMarker(ctx, exe, markerDir, expectedID, options, env); err != nil {
 			return "", nil, err
 		}
 	}
@@ -170,7 +171,8 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	// WinFsp disk mode supports the handle-relative opens used to verify library
 	// identity and contain publication media paths.
 	cmd := exec.Command(exe, append(args, options...)...)
-	mount := &rcloneMount{cmd: cmd, done: make(chan struct{}), endpoint: endpoint, markerDir: markerDir, options: options}
+	cmd.Env = env
+	mount := &rcloneMount{cmd: cmd, done: make(chan struct{}), endpoint: endpoint, markerDir: markerDir, options: options, env: env}
 	cmd.Stdout, cmd.Stderr = &mount.report, &mount.report
 	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -240,12 +242,13 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 }
 
-func verifyRcloneMarker(ctx context.Context, exe, markerDir, expectedID string, options []string) error {
+func verifyRcloneMarker(ctx context.Context, exe, markerDir, expectedID string, options, env []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	args := []string{"cat", markerDir, "--include", "/library-id", "--max-depth", "1", "--count", "33",
 		"--ask-password=false", "--retries", "1", "--contimeout", "8s"}
 	cmd := hiddenCommandContext(ctx, exe, append(args, options...)...)
+	cmd.Env = env
 	var marker bytes.Buffer
 	var report mountReport
 	cmd.Stdout, cmd.Stderr = &marker, &report
@@ -269,7 +272,7 @@ func (m *rcloneMount) confirmMarker(ctx context.Context, expectedID string) erro
 	defer tick.Stop()
 	waitingForUpload := false
 	for {
-		err := verifyRcloneMarker(ctx, m.cmd.Path, m.markerDir, expectedID, m.options)
+		err := verifyRcloneMarker(ctx, m.cmd.Path, m.markerDir, expectedID, m.options, m.env)
 		if waitingForUpload && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return remoteError("error", "远程服务器尚未确认档案库标识，请检查写入权限后再次保存")
 		}
@@ -349,7 +352,7 @@ func (r *mountReport) Write(data []byte) (int, error) {
 	msg := strings.ToLower(string(data))
 	status := ""
 	switch {
-	case strings.Contains(msg, "host key verification failed"), strings.Contains(msg, "remote host identification has changed"), strings.Contains(msg, "knownhosts"):
+	case strings.Contains(msg, "host key verification failed"), strings.Contains(msg, "remote host identification has changed"), strings.Contains(msg, "knownhosts"), strings.Contains(msg, "host key mismatch"), strings.Contains(msg, "host key did not match"):
 		status = "host_key"
 	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "authentication"), strings.Contains(msg, "invalid_grant"), strings.Contains(msg, "401 unauthorized"), strings.Contains(msg, "config password"), strings.Contains(msg, "decrypt config"):
 		status = "authentication_required"

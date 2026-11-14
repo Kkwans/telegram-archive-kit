@@ -55,6 +55,16 @@ func findRclone() string {
 			return p
 		}
 	}
+	if localApp != "" {
+		for _, pattern := range []string{"Rclone.Rclone_*/rclone.exe", "Rclone.Rclone_*/rclone-*/rclone.exe"} {
+			paths, _ := filepath.Glob(filepath.Join(localApp, "Microsoft", "WinGet", "Packages", filepath.FromSlash(pattern)))
+			for i := len(paths) - 1; i >= 0; i-- {
+				if info, err := os.Stat(paths[i]); err == nil && info.Mode().IsRegular() {
+					return paths[i]
+				}
+			}
+		}
+	}
 	return ""
 }
 

@@ -17,6 +17,10 @@ export interface SavedRemoteConnection {
   drive?: string;
   root: string;
   autoReconnect: boolean;
+  sshHost?: string;
+  sshUser?: string;
+  sshPort?: number;
+  sshKey?: string;
   active: boolean;
   status: RemoteConnectionStatus;
   message?: string;
@@ -50,10 +54,11 @@ function connecting(status: RemoteConnectionStatus) {
   return status === "connecting" || status === "checking";
 }
 
-export function RemoteConnections({ onAdd, onConnected, onBusy, toast }: {
+export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnection, toast }: {
   onAdd: () => void;
   onConnected: () => void;
   onBusy: (busy: boolean) => void;
+  onPasswordConnection: (item: SavedRemoteConnection) => void;
   toast: (message: string, error?: boolean) => void;
 }) {
   const [items, setItems] = useState<SavedRemoteConnection[] | null>(null);
@@ -169,9 +174,9 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, toast }: {
             <span className="saved-connection-icon"><Icon size={16} /></span>
             <div className="saved-connection-name"><b title={item.label || location}>{item.label || location}</b><span title={location}>{kind} · {location}</span></div>
             <div className="saved-connection-status"><span className={`task-state plan-status ${inProgress ? "running" : entry.tone}`}>{inProgress ? <Loader2 size={12} className="spin" /> : <span className="plan-status-dot" />}{inProgress && item.status !== "checking" ? "连接中" : entry.label}</span>{item.active && <span className="saved-active">当前库</span>}</div>
-            <label className="saved-auto" title="仅当此库为当前库时随 TAK 启动自动重连"><span>自动重连</span><span className={`switch ${item.autoReconnect ? "on" : ""}`}><input type="checkbox" role="switch" aria-label={`${item.label || location} 自动重连`} aria-description="仅当此库为当前库时随 TAK 启动自动重连" checked={item.autoReconnect} disabled={busy || inProgress} onChange={(event) => void perform(item.id, "remoteConnectionSetAuto", { id: item.id, autoReconnect: event.target.checked }, () => undefined)} /><i /></span></label>
+            <label className="saved-auto" title={item.sshHost ? "密码连接需重新输入密码" : "仅当此库为当前库时随 TAK 启动自动重连"}><span>自动重连</span><span className={`switch ${item.autoReconnect ? "on" : ""}`}><input type="checkbox" role="switch" aria-label={`${item.label || location} 自动重连`} aria-description={item.sshHost ? "密码连接需重新输入密码" : "仅当此库为当前库时随 TAK 启动自动重连"} checked={item.autoReconnect} disabled={busy || inProgress || !!item.sshHost} onChange={(event) => void perform(item.id, "remoteConnectionSetAuto", { id: item.id, autoReconnect: event.target.checked }, () => undefined)} /><i /></span></label>
             <div className="saved-connection-actions">
-              <span className="saved-connection-open">{!ready && <button type="button" className="btn sm saved-connection-connect" disabled={busy || inProgress} onClick={() => reconnect(item.id)}>{inProgress && <Loader2 size={12} className="spin" />}{inProgress ? "连接中…" : item.active ? "重新连接" : "打开档案库"}</button>}</span>
+              <span className="saved-connection-open">{!ready && <button type="button" className="btn sm saved-connection-connect" disabled={busy || inProgress} onClick={() => item.sshHost ? onPasswordConnection(item) : reconnect(item.id)}>{inProgress && <Loader2 size={12} className="spin" />}{inProgress ? "连接中…" : item.active ? "重新连接" : "打开档案库"}</button>}</span>
               <details className="saved-connection-more" onBlur={(event) => {
                 if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
               }} onKeyDown={(event) => {

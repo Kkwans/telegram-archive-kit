@@ -1,0 +1,256 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/netip"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
+
+type sshConnectionInput struct {
+	Alias, Host, User, Password, Key, Path string
+	Port                                   int
+}
+
+type sshDirectory struct {
+	Path    string   `json:"path"`
+	Folders []string `json:"folders"`
+	Library bool     `json:"library"`
+}
+
+func normalizePasswordEndpoint(e remoteEndpoint) (remoteEndpoint, error) {
+	host := strings.TrimSpace(e.SSHHost)
+	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() == "" {
+		host = addr.String()
+	} else if !sshTargetPattern.MatchString(host) || strings.Contains(host, "@") {
+		return remoteEndpoint{}, errors.New("请输入 NAS 的 IP 地址或主机名")
+	}
+	user := strings.TrimSpace(e.SSHUser)
+	if !sshTargetPattern.MatchString(user) || strings.Contains(user, "@") {
+		return remoteEndpoint{}, errors.New("请输入 NAS 的 SSH 用户名")
+	}
+	if e.SSHPort < 1 || e.SSHPort > 65535 {
+		return remoteEndpoint{}, errors.New("SSH 端口须在 1 到 65535 之间")
+	}
+	if _, err := parseServerKey(e.SSHKey); err != nil {
+		return remoteEndpoint{}, err
+	}
+	if strings.ContainsAny(e.Path, "\\\x00\r\n") || e.Path != "" && !strings.HasPrefix(e.Path, "/") {
+		return remoteEndpoint{}, errors.New("请选择 SFTP 目录")
+	}
+	if e.Path != "" {
+		e.Path = path.Clean(e.Path)
+	}
+	e.Name = user + "@" + net.JoinHostPort(host, strconv.Itoa(e.SSHPort))
+	e.SSHHost, e.SSHUser = host, user
+	return e, nil
+}
+
+func parseServerKey(value string) (ssh.PublicKey, error) {
+	fields := strings.Fields(value)
+	if len(fields) == 2 && len(value) <= 8192 {
+		if key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(value)); err == nil {
+			return key, nil
+		}
+	}
+	return nil, errors.New("请先核对并信任 NAS 的 SSH 主机密钥")
+}
+
+func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+	var in sshConnectionInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, errors.New("SSH 连接参数无效")
+	}
+	if method == "sshVerifyHost" {
+		return verifySSHHost(ctx, strings.TrimSpace(in.Host), in.Port)
+	}
+	var endpoint remoteEndpoint
+	var env []string
+	var err error
+	if in.Alias != "" {
+		endpoint, err = sshEndpoint(in.Alias, in.Path)
+	} else {
+		endpoint, err = normalizePasswordEndpoint(remoteEndpoint{
+			Kind: "ssh", SSHHost: in.Host, SSHUser: in.User, SSHPort: in.Port, SSHKey: in.Key, Path: in.Path,
+		})
+		if err == nil {
+			env, err = passwordMountEnv(ctx, endpoint, in.Password)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if method == "sshBrowse" {
+		return browseSSH(ctx, endpoint, env)
+	}
+	if endpoint.Path == "" {
+		return nil, errors.New("请先选择 NAS 档案库目录")
+	}
+	if env == nil {
+		return b.StartSSHMount(ctx, endpoint.Name, endpoint.Path)
+	}
+	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", b.expectedMountID(endpoint), true, passwordMountOptions, env, verifySSHLibrary)
+	return root, err
+}
+
+func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
+	if addr, err := netip.ParseAddr(host); err == nil && addr.Zone() == "" {
+		host = addr.String()
+	} else if !sshTargetPattern.MatchString(host) || strings.Contains(host, "@") {
+		return nil, errors.New("请输入 NAS 的 IP 地址或主机名")
+	}
+	if port < 1 || port > 65535 {
+		return nil, errors.New("SSH 端口须在 1 到 65535 之间")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, errors.New("无法连接 SSH 端口，请检查 NAS 地址、端口和网络")
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	var key ssh.PublicKey
+	_, _, _, _ = ssh.NewClientConn(conn, addr, &ssh.ClientConfig{User: "tak", HostKeyCallback: func(_ string, _ net.Addr, serverKey ssh.PublicKey) error {
+		key = serverKey
+		return errors.New("host key inspection complete")
+	}})
+	if key == nil {
+		return nil, errors.New("端口已连通，但未收到 SSH 主机密钥")
+	}
+	return map[string]string{"key": strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), "fingerprint": ssh.FingerprintSHA256(key), "type": key.Type()}, nil
+}
+
+var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s", "--contimeout", "8s"}
+
+func passwordMountEnv(ctx context.Context, endpoint remoteEndpoint, password string) ([]string, error) {
+	if password == "" || len(password) > 4096 || strings.ContainsAny(password, "\x00\r\n") {
+		return nil, errors.New("请输入 NAS 的 SSH 登录密码")
+	}
+	exe := findRclone()
+	if exe == "" {
+		return nil, errors.New("请先安装 rclone")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := hiddenCommandContext(ctx, exe, "obscure", "-")
+	cmd.Stdin = strings.NewReader(password + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errors.New("无法准备 SSH 认证，请检查 rclone 安装")
+	}
+	env := slices.DeleteFunc(os.Environ(), func(item string) bool {
+		key, _, _ := strings.Cut(item, "=")
+		return strings.HasPrefix(strings.ToUpper(key), "RCLONE_")
+	})
+	return append(env, "RCLONE_SFTP_HOST="+endpoint.SSHHost, "RCLONE_SFTP_USER="+endpoint.SSHUser,
+		"RCLONE_SFTP_PORT="+strconv.Itoa(endpoint.SSHPort), "RCLONE_SFTP_HOST_KEYS="+endpoint.SSHKey,
+		"RCLONE_SFTP_PASS="+strings.TrimSpace(string(out))), nil
+}
+
+func browseSSH(ctx context.Context, endpoint remoteEndpoint, env []string) (sshDirectory, error) {
+	exe := findRclone()
+	if exe == "" {
+		return sshDirectory{}, errors.New("请先安装 rclone")
+	}
+	dir := endpoint.Path
+	if dir == "" {
+		dir = "/"
+	}
+	options := passwordMountOptions
+	if env == nil {
+		var err error
+		options, err = aliasMountOptions(endpoint.Name)
+		if err != nil {
+			return sshDirectory{}, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 14*time.Second)
+	defer cancel()
+	cmd := hiddenCommandContext(ctx, exe, append([]string{"lsjson", ":sftp:" + dir, "--no-modtime", "--no-mimetype", "--ask-password=false"}, options...)...)
+	cmd.Env = env
+	return readSSHDirectory(cmd, dir)
+}
+
+func readSSHDirectory(cmd *exec.Cmd, dir string) (sshDirectory, error) {
+	var report mountReport
+	cmd.Stderr = &report
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return sshDirectory{}, err
+	}
+	if err := cmd.Start(); err != nil {
+		return sshDirectory{}, errors.New("无法启动 rclone")
+	}
+	result := sshDirectory{Path: dir, Folders: []string{}}
+	reader := json.NewDecoder(bufio.NewReader(io.LimitReader(out, 16<<20)))
+	start, decodeErr := reader.Token()
+	if decodeErr == nil && start == json.Delim('[') {
+		for reader.More() {
+			var item struct {
+				Name  string
+				IsDir bool
+			}
+			if decodeErr = reader.Decode(&item); decodeErr != nil {
+				break
+			}
+			if item.IsDir && item.Name != "." && item.Name != ".." && item.Name != "" && !strings.ContainsAny(item.Name, "/\\\x00\r\n") {
+				result.Folders = append(result.Folders, item.Name)
+			}
+			if !item.IsDir && item.Name == "library.json" {
+				result.Library = true
+			}
+		}
+		if decodeErr == nil {
+			_, decodeErr = reader.Token()
+		}
+	} else if decodeErr == nil {
+		decodeErr = fmt.Errorf("invalid listing")
+	}
+	if decodeErr == nil {
+		var extra any
+		if err := reader.Decode(&extra); !errors.Is(err, io.EOF) {
+			decodeErr = errors.New("invalid listing")
+		}
+	}
+	if decodeErr != nil && !errors.Is(decodeErr, io.EOF) {
+		_ = cmd.Process.Kill()
+	}
+	_ = out.Close()
+	if err := cmd.Wait(); err != nil {
+		failure := report.failure(false)
+		if failure.status != "error" {
+			return sshDirectory{}, failure
+		}
+		return sshDirectory{}, errors.New("未能浏览 SFTP 目录，请确认 NAS 已启用 SFTP 且账号有读取权限")
+	}
+	if decodeErr != nil {
+		return sshDirectory{}, errors.New("未能读取 SFTP 目录，请确认服务已启用且账号具有目录权限")
+	}
+	slices.Sort(result.Folders)
+	return result, nil
+}
+
+func verifySSHLibrary(root string) error {
+	if info, err := os.Stat(filepath.Join(root, "library.json")); err != nil || !info.Mode().IsRegular() {
+		return errors.New("未能读取 library.json，请选择 NAS 上的档案库根目录")
+	}
+	return nil
+}

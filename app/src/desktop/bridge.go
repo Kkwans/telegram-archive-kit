@@ -483,6 +483,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.StartRcloneMount(ctx, p.Name, p.Path, p.Drive)
 	case "sshMount":
 		return b.StartSSHMount(ctx, p.Name, p.Path)
+	case "sshVerifyHost", "sshBrowse", "sshConnect":
+		return b.sshConnectionRPC(ctx, method, raw)
 	case "sshMountInstall":
 		return nil, installMountTools(ctx)
 	case "rcloneUnmount":

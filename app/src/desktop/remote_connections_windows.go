@@ -27,14 +27,18 @@ const (
 )
 
 type remoteEndpoint struct {
-	Kind  string `json:"kind"`
-	Name  string `json:"name"`
-	Path  string `json:"path"`
-	Drive string `json:"drive,omitempty"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Drive   string `json:"drive,omitempty"`
+	SSHHost string `json:"sshHost,omitempty"`
+	SSHUser string `json:"sshUser,omitempty"`
+	SSHPort int    `json:"sshPort,omitempty"`
+	SSHKey  string `json:"sshKey,omitempty"`
 }
 
 func (e remoteEndpoint) same(other remoteEndpoint) bool {
-	if e.Kind != other.Kind || e.Name != other.Name {
+	if e.Kind != other.Kind || e.Name != other.Name || e.SSHHost != other.SSHHost || e.SSHUser != other.SSHUser || e.SSHPort != other.SSHPort || e.SSHKey != other.SSHKey {
 		return false
 	}
 	if e.Kind == "unc" {
@@ -242,6 +246,9 @@ func (e remoteEndpoint) normalized() (remoteEndpoint, error) {
 	case "unc":
 		return uncEndpoint(e.Path)
 	case "ssh":
+		if e.SSHHost != "" {
+			return normalizePasswordEndpoint(e)
+		}
 		return sshEndpoint(e.Name, e.Path)
 	case "rclone":
 		return rcloneEndpoint(e.Name, e.Path, e.Drive)
@@ -367,6 +374,11 @@ func (s *remoteConnections) expectedMountID(endpoint remoteEndpoint) string {
 	defer s.mu.Unlock()
 	for _, c := range s.records {
 		if c.remoteEndpoint.same(endpoint) {
+			return c.ID
+		}
+		if c.Kind == "ssh" && c.SSHHost != "" && endpoint.Kind == "ssh" &&
+			strings.EqualFold(c.SSHHost, endpoint.SSHHost) && c.SSHPort == endpoint.SSHPort &&
+			c.SSHUser == endpoint.SSHUser && c.Path == endpoint.Path {
 			return c.ID
 		}
 	}
@@ -549,6 +561,9 @@ func (s *remoteConnections) save(ctx context.Context, root, label string, auto b
 	var err error
 	if mount != nil {
 		endpoint = mount.endpoint
+		if endpoint.SSHHost != "" && auto {
+			return remoteConnectionDTO{}, errors.New("密码连接下次需重新输入密码，请关闭自动重连后保存")
+		}
 	} else {
 		endpoint, err = resolveUNC(root)
 		if err != nil {
@@ -625,6 +640,9 @@ func (s *remoteConnections) renameOrSetAuto(id, label string, auto *bool) (remot
 	}
 	wasAuto := c.AutoReconnect
 	if auto != nil {
+		if *auto && c.SSHHost != "" {
+			return remoteConnectionDTO{}, errors.New("密码连接下次需重新输入密码")
+		}
 		c.AutoReconnect = *auto
 	} else {
 		c.Label = strings.TrimSpace(label)

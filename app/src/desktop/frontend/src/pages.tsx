@@ -3275,11 +3275,20 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [sshOpen, setSSHOpen] = useState(false);
   const [sshAlias, setSSHAlias] = useState("");
   const [sshTarget, setSSHTarget] = useState("");
-  const [sshDirectory, setSSHDirectory] = useState("");
-  const [sshAction, setSSHAction] = useState<"install" | "connect" | "switch">();
+  const [sshUser, setSSHUser] = useState("");
+  const [sshPort, setSSHPort] = useState("22");
+  const [sshPassword, setSSHPassword] = useState("");
+  const [sshHostKey, setSSHHostKey] = useState("");
+  const [sshTrust, setSSHTrust] = useState<{ key: string; fingerprint: string; type: string } | null>(null);
+  const [sshDirectory, setSSHDirectory] = useState<{ path: string; folders: string[]; library: boolean } | null>(null);
+  const [sshSavedPath, setSSHSavedPath] = useState("");
+  const [sshAction, setSSHAction] = useState<"install" | "test" | "connect" | "switch">();
   const [sshError, setSSHError] = useState("");
   const sshRequest = useRef<AbortController | null>(null);
   const remoteFormBusy = !!sshAction || rcloneBusy || remoteTesting || busy === "switch" || !!pendingPublishSwitch;
+  const sshCanTest = !!sshAlias || !!sshTarget.trim() && !!sshUser.trim() && !!sshPassword && Number(sshPort) > 0 && Number(sshPort) <= 65535;
+  const resetSSHTest = () => { setSSHDirectory(null); setSSHTrust(null); setSSHError(""); };
+  const clearSSHPassword = () => { setSSHPassword(""); setSSHTrust(null); setSSHHostKey(""); setSSHDirectory(null); setSSHSavedPath(""); };
 
   const showDetail = (chat: ChatRow) => {
     setDetailLibraryKey(boot?.libraryKey ?? "");
@@ -3340,7 +3349,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     void call<RemoteTools>("remoteTools").then((tools) => {
       setRemoteTools(tools);
       if (tools.rcloneRemotes?.length) setRcloneRemote(tools.rcloneRemotes[0]);
-      setSSHAlias((current) => tools.sshAliases?.includes(current) ? current : tools.sshAliases?.[0] || "");
+      setSSHAlias((current) => tools.sshAliases?.includes(current) ? current : "");
     }).catch((error: Error) => setRemoteToolsError(error.message));
   };
   const openRemote = () => {
@@ -3357,6 +3366,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     setRcloneOpen(false);
     setRcloneBusy(false);
     setSSHOpen(false);
+    setSSHAlias("");
+    clearSSHPassword();
     setSSHError("");
     readRemoteTools();
   };
@@ -3382,6 +3393,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   }, [remoteOpen, onRemoteClosed]);
 
   const showRemoteMode = (mode: typeof remoteMode) => {
+    if (mode === "saved") clearSSHPassword();
     setRemoteMode(mode);
     requestAnimationFrame(() => {
       const selector = mode === "add" ? "#remote-title" : ".saved-connections-head > button";
@@ -3420,20 +3432,53 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
       setSSHAction(undefined);
     }
   };
+  const sshParams = (directory: string, key = sshHostKey) => sshAlias ? { alias: sshAlias, path: directory } : {
+    host: sshTarget.trim(), user: sshUser.trim(), port: Number(sshPort), password: sshPassword, key, path: directory,
+  };
+  const browseSSH = async (directory = "", trustedKey = "") => {
+    if (sshAction || !sshCanTest) return;
+    const controller = new AbortController();
+    sshRequest.current = controller;
+    setSSHAction("test");
+    setSSHError("");
+    try {
+      const key = trustedKey || sshHostKey;
+      if (!sshAlias && !key) {
+        const trust = await call<{ key: string; fingerprint: string; type: string }>("sshVerifyHost", { host: sshTarget.trim(), port: Number(sshPort) }, controller.signal);
+        setSSHTrust(trust);
+        return;
+      }
+      const next = await call<NonNullable<typeof sshDirectory>>("sshBrowse", sshParams(directory, key), controller.signal);
+      setSSHDirectory(next);
+      if (trustedKey) setSSHHostKey(trustedKey);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const message = (error as Error).message;
+        setSSHError(message);
+        if (message.includes("主机密钥")) { setSSHHostKey(""); setSSHDirectory(null); }
+      }
+    } finally {
+      if (sshRequest.current === controller) sshRequest.current = null;
+      setSSHAction(undefined);
+    }
+  };
   const mountSSH = async () => {
-    if (sshAction || !(sshAlias || sshTarget.trim())) return;
+    if (sshAction || sshError || !sshDirectory?.library) return;
     const controller = new AbortController();
     sshRequest.current = controller;
     setSSHAction("connect");
     setSSHError("");
     try {
-      const root = await call<string>("sshMount", { name: sshAlias || sshTarget, path: sshDirectory }, controller.signal);
+      const root = await call<string>("sshConnect", sshParams(sshDirectory.path), controller.signal);
       sshRequest.current = null;
       setSSHAction("switch");
-      if (await switchRemote(root, true, setSSHError) === "failed") {
+      const result = await switchRemote(root, true, setSSHError);
+      if (result === "switched") clearSSHPassword();
+      if (result === "failed") {
         setStagedMountRoot(root);
         setRemotePath(root);
         setRemoteProbe(await call<RemoteStatus>("remoteStatus", { root, newRemoteMount: true }));
+        clearSSHPassword();
         setSSHOpen(false);
       }
     } catch (error) {
@@ -3446,6 +3491,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const closeRemote = () => {
     if ((sshAction && !sshRequest.current) || rcloneBusy || remoteTesting || connectionBusy || busy === "switch" || pendingPublishSwitch) return;
     sshRequest.current?.abort();
+    clearSSHPassword();
     setRemoteOpen(false);
   };
   const remoteConnected = () => {
@@ -4015,12 +4061,17 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               )}
 
               {remoteMode === "saved" ? (
-                <RemoteConnections onAdd={() => showRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy} toast={toast} />
+                <RemoteConnections onAdd={() => showRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy}
+                  onPasswordConnection={(item) => {
+                    setSSHAlias(""); setSSHTarget(item.sshHost ?? ""); setSSHUser(item.sshUser ?? ""); setSSHPort(String(item.sshPort ?? 22));
+                    setSSHPassword(""); resetSSHTest(); setSSHHostKey(item.sshKey ?? ""); setSSHSavedPath(item.path);
+                    setRemoteSave(false); setRemoteSaveAuto(false); setSSHOpen(true); setRcloneOpen(false); showRemoteMode("add");
+                  }} toast={toast} />
               ) : <>
               <div className="remote-methods" role="group" aria-label="连接方式">
-                <button type="button" className={`remote-method ${!sshOpen && !rcloneOpen ? "selected" : ""}`} aria-pressed={!sshOpen && !rcloneOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(false); setRcloneOpen(false); }}><Network size={15} />SMB / 网络盘</button>
+                <button type="button" className={`remote-method ${!sshOpen && !rcloneOpen ? "selected" : ""}`} aria-pressed={!sshOpen && !rcloneOpen} disabled={remoteFormBusy} onClick={() => { clearSSHPassword(); setSSHOpen(false); setRcloneOpen(false); }}><Network size={15} />SMB / 网络盘</button>
                 <button type="button" className={`remote-method ${sshOpen ? "selected" : ""}`} aria-label="SSH 连接" aria-pressed={sshOpen} disabled={remoteFormBusy} onClick={() => { setSSHOpen(true); setRcloneOpen(false); }}><Server size={15} />SSH / SFTP</button>
-                <button type="button" className={`remote-method ${rcloneOpen ? "selected" : ""}`} aria-label="rclone 连接" aria-pressed={rcloneOpen} disabled={remoteFormBusy} onClick={() => { setRcloneOpen(true); setSSHOpen(false); }}><Cloud size={15} />rclone</button>
+                <button type="button" className={`remote-method ${rcloneOpen ? "selected" : ""}`} aria-label="rclone 连接" aria-pressed={rcloneOpen} disabled={remoteFormBusy} onClick={() => { clearSSHPassword(); setRcloneOpen(true); setSSHOpen(false); }}><Cloud size={15} />rclone</button>
               </div>
 
               {!sshOpen && !rcloneOpen && <>
@@ -4097,31 +4148,57 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 </div>
               </>}
               {sshOpen && remoteTools && (
-                <form id="remote-ssh-form" className="rclone-form remote-ssh-form" onSubmit={(event) => { event.preventDefault(); if (!remoteFormBusy) void mountSSH(); }}>
-                  {!remoteTools.openSSH ? (
-                    <p role="status">请在 Windows 的「可选功能」启用 OpenSSH 客户端，然后重新打开网络位置。</p>
-                  ) : !remoteTools.rclone || !remoteTools.winFsp ? (
-                    <>
-                      <div className="rclone-form-head"><b>安装挂载组件</b><span>{[!remoteTools.rclone && "rclone", !remoteTools.winFsp && "WinFsp"].filter(Boolean).join("、")}</span></div>
-                      {remoteTools.winget ? <button type="button" className="btn primary rclone-mount-btn" disabled={Boolean(sshAction)} onClick={() => void installSSHMountTools()}>
+                <form id="remote-ssh-form" className="rclone-form remote-ssh-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!remoteFormBusy) void (sshDirectory?.library ? mountSSH() : browseSSH(sshSavedPath));
+                }}>
+                  {!remoteTools.rclone || !remoteTools.winFsp ? (
+                    <div className="ssh-tools-card">
+                      <div className="rclone-form-head"><b>安装挂载组件</b><span>需要 {[!remoteTools.rclone && "rclone", !remoteTools.winFsp && "WinFsp"].filter(Boolean).join("、")}</span></div>
+                      {remoteTools.winget ? <button type="button" className="btn primary" disabled={Boolean(sshAction)} onClick={() => void installSSHMountTools()}>
                         {sshAction === "install" && <Loader2 size={13} className="spin" />} {sshAction === "install" ? "正在安装…" : "安装组件"}
-                      </button> : <p role="status">请先通过 Windows 应用安装程序启用 WinGet。</p>}
-                    </>
-                  ) : (
-                    <>
-                      <div className="rclone-fields">
-                        <div className="rclone-field grow">
-                          <span>SSH 主机</span>
-                          {!!remoteTools.sshAliases?.length && <Select ariaLabel="SSH 主机配置" value={sshAlias} disabled={remoteFormBusy} onChange={setSSHAlias} options={[...remoteTools.sshAliases.map((alias) => ({ value: alias, label: alias })), { value: "", label: "手动输入" }]} />}
-                          {!sshAlias && <input value={sshTarget} onChange={(e) => setSSHTarget(e.target.value)} disabled={remoteFormBusy} placeholder="主机别名或 用户名@主机" spellCheck={false} aria-label="SSH 主机" />}
-                        </div>
-                        <label className="rclone-field grow">
-                          <span>NAS 档案库目录</span>
-                          <input value={sshDirectory} onChange={(e) => setSSHDirectory(e.target.value)} disabled={remoteFormBusy} placeholder="留空使用 SSH 登录目录" spellCheck={false} />
-                        </label>
-                      </div>
-                    </>
-                  )}
+                      </button> : <p role="status">请先启用 Windows WinGet。</p>}
+                    </div>
+                  ) : <>
+                    {remoteTools.openSSH && !!remoteTools.sshAliases?.length && <div className="ssh-mode" role="group" aria-label="SSH 连接方式">
+                      <button type="button" aria-pressed={!sshAlias} disabled={remoteFormBusy} onClick={() => {
+                        if (!sshAlias) return;
+                        clearSSHPassword(); resetSSHTest(); setSSHAlias(""); setRemoteSaveAuto(false);
+                      }}><KeyRound size={16} /> 地址与密码</button>
+                      <button type="button" aria-pressed={!!sshAlias} disabled={remoteFormBusy} onClick={() => {
+                        if (sshAlias) return;
+                        clearSSHPassword(); resetSSHTest(); setSSHAlias(remoteTools.sshAliases![0]);
+                      }}><Server size={16} /> 已有 SSH 配置</button>
+                    </div>}
+                    {sshAlias && <div className="rclone-field ssh-alias-field">
+                      <span>SSH 主机</span>
+                      <Select ariaLabel="SSH 主机配置" value={sshAlias} disabled={remoteFormBusy} onChange={(value) => {
+                        resetSSHTest(); setSSHAlias(value);
+                      }} options={(remoteTools.sshAliases ?? []).map((alias) => ({ value: alias, label: alias }))} />
+                    </div>}
+                    {!sshAlias && <div className="ssh-credentials">
+                      <label className="rclone-field"><span>NAS 地址</span><input value={sshTarget} onChange={(e) => { setSSHTarget(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="例如 192.168.1.20" autoComplete="off" spellCheck={false} /></label>
+                      <label className="rclone-field"><span>SSH 端口</span><input value={sshPort} onChange={(e) => { setSSHPort(e.target.value); setSSHHostKey(""); setSSHSavedPath(""); resetSSHTest(); }} disabled={remoteFormBusy} type="number" min={1} max={65535} /></label>
+                      <label className="rclone-field"><span>用户名</span><input value={sshUser} onChange={(e) => { setSSHUser(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="NAS 的 SSH 账号" autoComplete="off" spellCheck={false} /></label>
+                      <label className="rclone-field"><span>密码</span><input type="password" value={sshPassword} onChange={(e) => { setSSHPassword(e.target.value); resetSSHTest(); }} disabled={remoteFormBusy} placeholder="NAS 的 SSH 登录密码" autoComplete="off" /></label>
+                    </div>}
+                    <div className="ssh-test-row">
+                      <span>{sshDirectory ? "SFTP 已连通" : "NAS 需启用 SSH 和 SFTP"}</span>
+                      <button type="button" className={`btn ${sshDirectory ? "ghost" : "primary"}`} disabled={remoteFormBusy || !sshCanTest} onClick={() => void browseSSH(sshDirectory?.path || sshSavedPath)}>
+                        {sshAction === "test" ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />} {sshDirectory ? "重新测试" : "测试连接"}
+                      </button>
+                    </div>
+                    {sshTrust && <div className="plan-inline-notice ssh-host-trust" role="status">
+                      <AlertTriangle size={16} /><span><b>核对 NAS 主机指纹后再继续</b><code>{sshTrust.type} {sshTrust.fingerprint}</code></span>
+                      <button type="button" className="btn" disabled={remoteFormBusy} onClick={() => { const key = sshTrust.key; setSSHTrust(null); void browseSSH(sshSavedPath, key); }}>信任并测试</button>
+                    </div>}
+                    {sshDirectory && <section className="ssh-browser" aria-label="NAS 档案库目录" aria-busy={sshAction === "test"}>
+                      <div className="ssh-browser-head"><b>选择档案库目录</b>{sshDirectory.library && <span><CheckCircle2 size={13} /> 已识别档案库</span>}</div>
+                      <div className="ssh-path"><button type="button" className="icon-btn" aria-label="上一级目录" title="上一级目录" disabled={remoteFormBusy || sshDirectory.path === "/"} onClick={() => void browseSSH(sshDirectory.path.slice(0, sshDirectory.path.lastIndexOf("/")) || "/")}><ChevronLeft size={16} /></button>
+                        <code title={sshDirectory.path}>{sshDirectory.path}</code></div>
+                      <div className="ssh-folders">{sshDirectory.folders.length ? sshDirectory.folders.map((name) => <button type="button" key={name} disabled={remoteFormBusy} onClick={() => void browseSSH(`${sshDirectory.path === "/" ? "" : sshDirectory.path}/${name}`)}><FolderOpen size={15} /><span>{name}</span><ChevronRight size={14} /></button>) : <p>没有子目录</p>}</div>
+                    </section>}
+                  </>}
                   {sshError && <p role="alert">{sshError}</p>}
                 </form>
               )}
@@ -4149,13 +4226,14 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   </div>
                 </div>
               )}
-              {(!sshOpen && !rcloneOpen || sshOpen && remoteTools?.openSSH && remoteTools.rclone && remoteTools.winFsp || rcloneOpen && remoteTools?.rclone && remoteTools.winFsp && !!remoteTools.rcloneRemotes?.length) && <div className="remote-connect-options">
+              {(!sshOpen && !rcloneOpen || sshOpen && !!sshDirectory?.library || rcloneOpen && remoteTools?.rclone && remoteTools.winFsp && !!remoteTools.rcloneRemotes?.length) && <div className="remote-connect-options">
                 {remoteSave && <div className="remote-save-fields">
                   <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
-                  <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>
+                  {sshOpen && !sshAlias ? <p className="muted">保存地址和目录，下次连接时重新输入密码。</p> :
+                    <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>}
                 </div>}
                 <div className="remote-connect-footer">
-                  <button type="button" className="btn remote-save-toggle" aria-pressed={remoteSave} disabled={remoteFormBusy} onClick={() => setRemoteSave((value) => !value)}><Bookmark size={14} /> 保存此连接</button>
+                  <button type="button" className="btn remote-save-toggle" aria-pressed={remoteSave} disabled={remoteFormBusy || sshOpen && !!sshError} onClick={() => setRemoteSave((value) => !value)}><Bookmark size={14} /> 保存此连接</button>
                   <div className="remote-form-actions">
                     {!sshOpen && !rcloneOpen && <>
                       <button type="button" className="btn" disabled={remoteFormBusy || !remotePath.trim()} onClick={() => void testRemote()}>
@@ -4167,7 +4245,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                         {busy === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "切换到此库"}
                       </button>
                     </>}
-                    {sshOpen && <button type="submit" form="remote-ssh-form" className="btn primary" disabled={remoteFormBusy || !(sshAlias || sshTarget.trim())}>
+                    {sshOpen && <button type="submit" form="remote-ssh-form" className="btn primary" disabled={remoteFormBusy || !!sshError || !sshDirectory?.library}>
                       {sshAction && <Loader2 size={13} className="spin" />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "连接并使用"}
                     </button>}
                     {rcloneOpen && <button type="button" className="btn primary" disabled={remoteFormBusy || !rcloneRemote} onClick={() => void mountRclone()}>
