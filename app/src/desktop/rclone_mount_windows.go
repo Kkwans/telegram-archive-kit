@@ -160,6 +160,11 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		}
 		if mount.ready && (useAnyDrive || endpoint.Drive == "" || letter == endpoint.Drive) {
 			b.mountMu.Unlock()
+			if validate != nil {
+				if err := validate(mount.libraryRoot); err != nil {
+					return "", nil, err
+				}
+			}
 			return mount.libraryRoot, nil, nil
 		}
 		if mount.ready && endpoint.Kind == "ssh" && endpoint.Drive != "" && letter != endpoint.Drive {

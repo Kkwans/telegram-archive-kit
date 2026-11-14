@@ -28,6 +28,8 @@ type sshConnectionInput struct {
 	Port                                   int
 	UseRoot                                bool
 	VerifySudo                             bool
+	SystemView                             bool
+	Initialize                             bool
 }
 
 type sshDirectory struct {
@@ -100,6 +102,12 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		return nil, err
 	}
 	if method == "sshBrowse" {
+		if in.SystemView {
+			if in.Alias == "" {
+				return nil, errors.New("请使用 OpenSSH 浏览服务器文件系统")
+			}
+			return browseSSHSystem(ctx, endpoint)
+		}
 		if endpoint.SSHUseRoot && (in.VerifySudo || endpoint.Path == "") {
 			if err := verifySudoSFTP(ctx, endpoint, in.Password); err != nil {
 				return nil, err
@@ -123,17 +131,98 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 		endpoint.VolumeName = path.Base(endpoint.Path)
 	}
 	expectedID := b.expectedMountID(endpoint)
+	validate := verifySSHLibrary
+	if in.Initialize && (endpoint.Path == "/" || expectedID != "") {
+		return nil, errors.New("请选择未使用的子目录创建档案库")
+	}
+	if in.Initialize {
+		validate = verifySSHNewLibraryDirectory
+	}
 	if endpoint.SSHUseRoot {
 		if err := verifySudoSFTP(ctx, endpoint, in.Password); err != nil {
 			return nil, err
 		}
 	}
 	if env == nil {
-		root, _, err := b.mountSSH(ctx, endpoint, expectedID, true)
+		options, err := aliasMountOptions(endpoint.Name, endpoint.SSHUseRoot)
+		if err != nil {
+			return nil, err
+		}
+		root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, options, nil, validate)
 		return root, err
 	}
-	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, sshPasswordOptions(endpoint), env, verifySSHLibrary)
+	root, _, err := b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, sshPasswordOptions(endpoint), env, validate)
 	return root, err
+}
+
+func verifySSHNewLibraryDirectory(root string) error {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return errors.New("无法通过 SFTP 打开所选目录")
+	}
+	for _, name := range []string{"library.json", "index.html", "chats", ".runtime", "logs", "assets"} {
+		if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("所选目录已有 %s，请选择其他目录创建档案库", name)
+		}
+	}
+	return nil
+}
+
+type sshSystemDirectory struct {
+	Path    string   `json:"path"`
+	Folders []string `json:"folders"`
+	Files   []string `json:"files"`
+}
+
+func browseSSHSystem(ctx context.Context, endpoint remoteEndpoint) (sshSystemDirectory, error) {
+	dir := endpoint.Path
+	if dir == "" {
+		dir = "/"
+	}
+	if !path.IsAbs(dir) {
+		return sshSystemDirectory{}, errors.New("请输入以 / 开头的服务器路径")
+	}
+	quoted := "'" + strings.ReplaceAll(dir, "'", "'\"'\"'") + "'"
+	// Use NUL separators so names aren't interpreted as shell text or split at whitespace.
+	const list = `cd -- "$1" || exit 1; for entry in ./* ./.[!.]* ./..?*; do if [ -d "$entry" ]; then printf 'd%s\000' "${entry#./}"; elif [ -e "$entry" ] || [ -L "$entry" ]; then printf 'f%s\000' "${entry#./}"; fi; done`
+	prefix := "sh -c "
+	if endpoint.SSHUseRoot {
+		prefix = "sudo -n -u root -- sh -c "
+	}
+	command := prefix + "'" + strings.ReplaceAll(list, "'", "'\"'\"'") + "' sh " + quoted
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	cmd := hiddenCommandContext(ctx, "ssh.exe", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=5", endpoint.Name, command)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return sshSystemDirectory{}, err
+	}
+	if err := cmd.Start(); err != nil {
+		return sshSystemDirectory{}, err
+	}
+	const limit = 4 << 20
+	data, readErr := io.ReadAll(io.LimitReader(out, limit+1))
+	if readErr != nil || len(data) > limit {
+		_ = cmd.Process.Kill()
+	}
+	if err := cmd.Wait(); err != nil || readErr != nil || len(data) > limit {
+		return sshSystemDirectory{}, errors.New("无法读取服务器目录，请检查 SSH 连接和目录权限")
+	}
+	result := sshSystemDirectory{Path: dir, Folders: []string{}, Files: []string{}}
+	for _, entry := range strings.Split(string(data), "\x00") {
+		if len(entry) < 2 || strings.ContainsAny(entry[1:], "/\r\n") {
+			continue
+		}
+		switch entry[0] {
+		case 'd':
+			result.Folders = append(result.Folders, entry[1:])
+		case 'f':
+			result.Files = append(result.Files, entry[1:])
+		}
+	}
+	slices.Sort(result.Folders)
+	slices.Sort(result.Files)
+	return result, nil
 }
 
 func validateSSHDrive(drive string) error {
