@@ -400,13 +400,16 @@ export default function App() {
     let disposed = false;
     let busy = false;
     let open = false;
+    let generation = 0;
+    const modalSelector = ".modal-backdrop, .remote-dialog-backdrop, dialog[aria-modal='true'][open]";
     const clear = () => {
       document.body.classList.remove("glass-ready", "glass-captured", "glass-capturing");
       document.body.style.removeProperty("--glass-snapshot");
     };
     const capture = async () => {
-      if (busy || disposed) return;
+      if (busy || disposed || !open) return;
       busy = true;
+      const opening = generation;
       document.body.classList.add("glass-capturing");
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       let image = "";
@@ -419,9 +422,9 @@ export default function App() {
         image = "";
       }
       if (disposed) return;
-      if (!document.querySelector(".modal-backdrop")) {
-        document.body.classList.remove("glass-capturing");
+      if (opening !== generation) {
         busy = false;
+        if (open) void capture();
         return;
       }
       if (image) {
@@ -431,6 +434,11 @@ export default function App() {
           /* keep the sharp capture as a fallback */
         }
         if (disposed) return;
+        if (opening !== generation) {
+          busy = false;
+          if (open) void capture();
+          return;
+        }
         document.body.style.setProperty("--glass-snapshot", `url("${image}")`);
         document.body.classList.add("glass-captured");
       }
@@ -439,17 +447,19 @@ export default function App() {
       busy = false;
     };
     const sync = () => {
-      const has = !!document.querySelector(".modal-backdrop");
+      const has = !!document.querySelector(modalSelector);
       if (has && !open) {
         open = true;
+        generation++;
         void capture();
       } else if (!has && open) {
         open = false;
+        generation++;
         clear();
       }
     };
     const observer = new MutationObserver(sync);
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
     sync();
     return () => {
       disposed = true;

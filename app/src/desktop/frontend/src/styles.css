@@ -413,8 +413,8 @@ html[data-theme="dark"] .toast-close:hover { background: rgba(255, 255, 255, .1)
 }
 
 /* ============================== Modal ============================== */
-body:not(.glass-ready) .modal-backdrop,
-body.glass-capturing .modal-backdrop { visibility: hidden; }
+body.glass-capturing :is(.modal-backdrop, .remote-dialog-backdrop, dialog[aria-modal="true"][open]) { opacity: 0; }
+body.glass-capturing dialog[aria-modal="true"][open]::backdrop { visibility: hidden; }
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
   background: transparent; padding: 24px;
@@ -423,12 +423,25 @@ body.glass-capturing .modal-backdrop { visibility: hidden; }
   padding: calc(var(--overlay-top) + 16px) 16px 16px calc(var(--overlay-left) + 16px);
   clip-path: inset(var(--overlay-top) 0 0 var(--overlay-left));
 }
+:root {
+  --dialog-shade: rgb(17 24 39 / 28%);
+  --dialog-blur: blur(10px) saturate(1.15);
+}
+:root[data-theme="dark"] {
+  --dialog-shade: rgb(5 9 18 / 48%);
+}
+:root body :is(.modal-backdrop, .remote-dialog-backdrop) {
+  background: var(--dialog-shade);
+  backdrop-filter: var(--dialog-blur);
+}
 dialog[aria-modal="true"] {
   inset: var(--overlay-top) 0 0 var(--overlay-left);
   max-width: calc(100vw - var(--overlay-left) - 32px) !important;
   max-height: calc(100dvh - var(--overlay-top) - 32px) !important;
 }
-dialog[aria-modal="true"]::backdrop {
+:root body dialog[aria-modal="true"][open]::backdrop {
+  background: var(--dialog-shade);
+  backdrop-filter: var(--dialog-blur);
   clip-path: inset(var(--overlay-top) 0 0 var(--overlay-left));
 }
 .modal-backdrop:not(.palette-backdrop) > .modal, .remote-dialog-backdrop > .remote-modal {
@@ -445,8 +458,7 @@ dialog[aria-modal="true"]::backdrop {
     inset 0 1px 0 rgba(255, 255, 255, .88), inset 0 0 0 1px rgba(255, 255, 255, .16);
 }
 .modal > * { position: relative; z-index: 1; }
-body.glass-captured .modal,
-body.glass-captured .palette {
+body.glass-captured :is(.modal, .palette, .remote-workspace.remote-modal, dialog[aria-modal="true"][open]) {
   background-color: transparent;
   background-image:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.05'/%3E%3C/svg%3E"),
@@ -466,8 +478,7 @@ html[data-theme="dark"] .modal {
     0 36px 100px rgba(0, 0, 0, .62), 0 3px 14px rgba(0, 0, 0, .28),
     inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 0 0 1px rgba(255, 255, 255, .04);
 }
-html[data-theme="dark"] body.glass-captured .modal,
-html[data-theme="dark"] body.glass-captured .palette {
+html[data-theme="dark"] body.glass-captured :is(.modal, .palette, .remote-workspace.remote-modal, dialog[aria-modal="true"][open]) {
   background-color: transparent;
   background-image:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.05'/%3E%3C/svg%3E"),
@@ -476,7 +487,6 @@ html[data-theme="dark"] body.glass-captured .palette {
     radial-gradient(120% 90% at 100% 100%, rgba(120, 150, 220, .08), transparent 62%),
     var(--glass-snapshot, none);
 }
-html[data-theme="dark"] .modal-backdrop { background: transparent; }
 .modal h2 { margin: 0; font-size: 16px; font-weight: 680; }
 .modal-sub { margin: 0; font-size: 12.5px; color: var(--muted); }
 .drop-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; padding: 10px; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface-2); }
@@ -1651,7 +1661,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .media-modal-name { max-width: 30%; }
 
 /* command palette */
-.palette-backdrop { background: transparent; }
 .palette {
   position: relative; width: min(640px, 100%); border-radius: 18px;
   background: rgba(248, 250, 254, .94);
@@ -2948,7 +2957,6 @@ html[data-theme="dark"] .media-type-card { background: rgba(255, 255, 255, .05);
 .publish-footer { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .publish-footer > span { margin-right: auto; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
 .publish-qr, .publish-confirm { border: 1px solid var(--line); border-radius: 13px; padding: 16px; background: var(--surface); color: var(--text); max-width: min(360px, calc(100vw - 24px)); }
-.publish-qr::backdrop, .publish-confirm::backdrop { background: #0b102066; }
 .publish-confirm { width: min(364px, calc(100vw - 24px)); max-width: none; padding: 0; overflow-wrap: anywhere; }
 .publish-confirm > header { display: flex; align-items: center; gap: 8px; padding: 16px 16px 0; }
 .publish-confirm > header svg { flex: none; color: var(--danger); }

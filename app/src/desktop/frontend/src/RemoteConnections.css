@@ -5,7 +5,6 @@
   display: grid;
   place-items: center;
   padding: calc(var(--overlay-top) + 16px) 16px 16px calc(var(--overlay-left) + 16px);
-  background: #11182766;
 }
 
 .remote-workspace.remote-modal {

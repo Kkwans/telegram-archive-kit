@@ -290,7 +290,6 @@ dialog.task-info-modal {
   box-shadow: 0 12px 32px #10182824;
 }
 dialog.task-info-modal[open] { display: flex; flex-direction: column; gap: 12px; }
-dialog.task-info-modal::backdrop { background: #11182766; }
 .task-info-modal .task-info-heading h2 { font-size: 16px; line-height: 1.45; }
 .plan-task-modal { max-height: calc(100dvh - 48px); }
 .task-info-modal .task-info-times { row-gap: 8px; }

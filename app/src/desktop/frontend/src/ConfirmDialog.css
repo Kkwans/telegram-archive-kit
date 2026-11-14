@@ -11,10 +11,6 @@
   box-shadow: 0 12px 32px #10182824;
 }
 
-.confirm-compact::backdrop {
-  background: #11182766;
-}
-
 .confirm-compact-copy {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
