@@ -1912,13 +1912,13 @@ html[data-theme="dark"] .palette {
   position: fixed; z-index: 110000; inset: auto; margin: 0;
   width: max-content; max-width: min(380px, calc(100vw - 16px));
   max-height: calc(100vh - 16px); overflow: hidden;
-  padding: 7px 11px; border: 0; border-radius: 8px;
-  background: #23304a; color: #f4f7ff; box-shadow: 0 4px 14px #10192e38;
+  padding: 7px 11px; border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--surface); color: var(--text); box-shadow: 0 4px 14px #10192e26;
   font-size: 12px; line-height: 1.5; text-align: start;
   white-space: pre-wrap; overflow-wrap: anywhere;
   pointer-events: none; visibility: hidden;
 }
-:root[data-theme="dark"] .app-tip { background: #dfe8fa; color: #192540; box-shadow: 0 4px 14px #060b1666; }
+:root[data-theme="dark"] .app-tip { background: var(--surface-3); box-shadow: 0 4px 14px #060b1666; }
 .app-tip strong { display: block; margin-bottom: 3px; font-weight: 650; }
 
 /* task table */

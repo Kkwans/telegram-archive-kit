@@ -11,20 +11,33 @@ function triggerAt(target: EventTarget | null) {
 export function AppTooltip() {
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
   const bubble = useRef<HTMLDivElement>(null);
+  const point = useRef<{ x: number; y: number } | null>(null);
+  const position = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let hovered: HTMLElement | null = null;
     let focused: HTMLElement | null = null;
-    const show = () => setTrigger(hovered ?? focused);
+    const show = () => {
+      if (!hovered) point.current = null;
+      setTrigger(hovered ?? focused);
+      position.current?.();
+    };
     const hide = () => { hovered = focused = null; setTrigger(null); };
     const over = (event: PointerEvent) => {
       if (event.pointerType === "touch") return;
       const next = triggerAt(event.target);
+      point.current = next ? { x: event.clientX, y: event.clientY } : null;
       if (next !== hovered) { hovered = next; show(); }
+    };
+    const move = (event: PointerEvent) => {
+      if (!hovered || event.pointerType === "touch") return;
+      point.current = { x: event.clientX, y: event.clientY };
+      position.current?.();
     };
     const out = (event: PointerEvent) => {
       if (!hovered || hovered.contains(event.relatedTarget as Node | null)) return;
       hovered = triggerAt(event.relatedTarget);
+      if (hovered) point.current = { x: event.clientX, y: event.clientY };
       show();
     };
     const focus = (event: FocusEvent) => {
@@ -34,6 +47,7 @@ export function AppTooltip() {
     const blur = () => { focused = null; show(); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") hide(); };
     document.addEventListener("pointerover", over);
+    document.addEventListener("pointermove", move);
     document.addEventListener("pointerout", out);
     document.addEventListener("focusin", focus);
     document.addEventListener("focusout", blur);
@@ -44,6 +58,7 @@ export function AppTooltip() {
     window.addEventListener("keydown", escape, true);
     return () => {
       document.removeEventListener("pointerover", over);
+      document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerout", out);
       document.removeEventListener("focusin", focus);
       document.removeEventListener("focusout", blur);
@@ -60,18 +75,24 @@ export function AppTooltip() {
     if (!trigger || !bubble.current) return;
     const tip = bubble.current;
     tip.showPopover?.();
-    const anchor = trigger.getBoundingClientRect();
     const { width, height } = tip.getBoundingClientRect();
     const edge = 8;
-    const gap = 8;
     const clamp = (value: number, size: number, limit: number) => Math.max(edge, Math.min(value, limit - edge - size));
-    const beside = trigger.dataset.tipSide === "right" && anchor.right + gap + width <= window.innerWidth - edge;
-    const preferredY = anchor.bottom + gap + height <= window.innerHeight - edge || anchor.top - gap - height < edge
-      ? anchor.bottom + gap : anchor.top - gap - height;
-    const x = clamp(beside ? anchor.right + gap : anchor.left + (anchor.width - width) / 2, width, window.innerWidth);
-    const y = clamp(beside ? anchor.top + (anchor.height - height) / 2 : preferredY, height, window.innerHeight);
-    tip.style.left = `${x}px`;
-    tip.style.top = `${y}px`;
+    position.current = () => {
+      const cursor = point.current;
+      const anchor = trigger.getBoundingClientRect();
+      let x = anchor.left + (anchor.width - width) / 2;
+      if (cursor) {
+        x = cursor.x + 14;
+        if (x + width > window.innerWidth - edge) x = cursor.x - 14 - width;
+      }
+      const bottom = cursor ? cursor.y + 18 : anchor.bottom + 8;
+      const top = (cursor ? cursor.y - 12 : anchor.top - 8) - height;
+      const y = bottom + height <= window.innerHeight - edge || top < edge ? bottom : top;
+      tip.style.left = `${clamp(x, width, window.innerWidth)}px`;
+      tip.style.top = `${clamp(y, height, window.innerHeight)}px`;
+    };
+    position.current();
     tip.style.visibility = "visible";
 
     const originalDescription = trigger.getAttribute("aria-describedby");
@@ -81,9 +102,10 @@ export function AppTooltip() {
       else if (records.some((record) => record.target === trigger && record.type === "attributes")) refresh((value) => value + 1);
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    observer.observe(trigger, { attributes: true, attributeFilter: ["data-tip", "data-tip-heading", "data-tip-side"] });
+    observer.observe(trigger, { attributes: true, attributeFilter: ["data-tip", "data-tip-heading"] });
     return () => {
       observer.disconnect();
+      position.current = null;
       tip.hidePopover?.();
       if (originalDescription) trigger.setAttribute("aria-describedby", originalDescription);
       else trigger.removeAttribute("aria-describedby");

@@ -849,7 +849,7 @@ export default function App() {
                   className={navActive(n.key) ? "on" : ""}
                   onClick={() => go(n.key)}
                   data-tip={sideCollapsed ? n.desc : undefined}
-                  data-tip-heading={n.label} data-tip-side="right"
+                  data-tip-heading={n.label}
                   aria-label={n.label}
                 >
                   <Icon size={16} />
@@ -887,7 +887,7 @@ export default function App() {
                   go("chats");
                 }}
                 data-tip={sideCollapsed ? chatTooltip(c) : undefined}
-                data-tip-heading={c.name} data-tip-side="right"
+                data-tip-heading={c.name}
                 aria-label={`${c.name}，${c.messages} 条消息，${c.media} 个媒体`}
               >
                 <span className="avatar">{c.name.slice(0, 1)}</span>
