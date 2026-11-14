@@ -261,6 +261,7 @@ func (e remoteEndpoint) normalized() (remoteEndpoint, error) {
 		}
 		alias, err := sshEndpoint(e.Name, e.Path)
 		alias.Drive = e.Drive
+		alias.SSHUseRoot = e.SSHUseRoot
 		return alias, err
 	case "rclone":
 		return rcloneEndpoint(e.Name, e.Path, e.Drive)

@@ -86,10 +86,8 @@ func (b *Bridge) sshConnectionRPC(ctx context.Context, method string, raw json.R
 	var env []string
 	var err error
 	if in.Alias != "" {
-		if in.UseRoot {
-			return nil, errors.New("sudo 模式请使用地址与密码连接")
-		}
 		endpoint, err = sshEndpoint(in.Alias, in.Path)
+		endpoint.SSHUseRoot = in.UseRoot
 	} else {
 		endpoint, err = normalizePasswordEndpoint(remoteEndpoint{
 			Kind: "ssh", SSHHost: in.Host, SSHUser: in.User, SSHPort: in.Port, SSHKey: in.Key, Path: in.Path, SSHUseRoot: in.UseRoot,
@@ -182,6 +180,10 @@ const sudoSFTPServer = `for server in /usr/lib/openssh/sftp-server /usr/lib/ssh/
 func verifySudoSFTP(ctx context.Context, endpoint remoteEndpoint, password string) error {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	if endpoint.SSHHost == "" {
+		cmd := hiddenCommandContext(ctx, "ssh.exe", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=5", endpoint.Name, sudoSFTPServer)
+		return probeOpenSSHSudo(cmd)
+	}
 	addr := net.JoinHostPort(endpoint.SSHHost, strconv.Itoa(endpoint.SSHPort))
 	pinned, err := parseServerKey(endpoint.SSHKey)
 	if err != nil {
@@ -211,7 +213,11 @@ func verifySudoSFTP(ctx context.Context, endpoint remoteEndpoint, password strin
 	if err != nil {
 		return err
 	}
-	session.Stdin = strings.NewReader("\x00\x00\x00\x05\x01\x00\x00\x00\x03")
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+	defer stdin.Close()
 	stderr, err := session.StderrPipe()
 	if err != nil {
 		return err
@@ -219,8 +225,45 @@ func verifySudoSFTP(ctx context.Context, endpoint remoteEndpoint, password strin
 	if err := session.Start(sudoSFTPServer); err != nil {
 		return remoteError("authentication_required", "服务器未允许启动 sudo SFTP")
 	}
+	return verifySudoHandshake(stdin, stdout, stderr)
+}
+
+func probeOpenSSHSudo(cmd *exec.Cmd) error {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	defer stdin.Close()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return remoteError("authentication_required", "无法启动 Windows OpenSSH，请检查 SSH 客户端")
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	return verifySudoHandshake(stdin, stdout, stderr)
+}
+
+func verifySudoHandshake(stdin io.Writer, stdout, stderr io.Reader) error {
+	if _, err := io.WriteString(stdin, "\x00\x00\x00\x05\x01\x00\x00\x00\x03"); err != nil {
+		return remoteError("authentication_required", "无法打开 sudo SFTP 会话")
+	}
 	if marker, _ := bufio.NewReader(io.LimitReader(stderr, 1024)).ReadString('\n'); strings.TrimSpace(marker) != "TAK_SUDO_SFTP" {
-		return remoteError("authentication_required", "服务器未执行 sudo SFTP 命令，请检查 SSH 是否限制了远程命令")
+		if strings.Contains(marker, "Host key verification failed") || strings.Contains(marker, "host key is known") {
+			return remoteError("authentication_required", "OpenSSH 主机密钥尚未获信任或已变更，请先在终端核对后重试")
+		}
+		if strings.Contains(marker, "Permission denied") {
+			return remoteError("authentication_required", "OpenSSH 免密认证失败，请用相同目标在终端确认可以免密登录")
+		}
+		return remoteError("authentication_required", "未能启动 sudo SFTP，请检查 SSH 登录和服务器命令权限")
 	}
 	var header [9]byte
 	if _, err := io.ReadFull(stdout, header[:]); err != nil || binary.BigEndian.Uint32(header[:4]) < 5 || header[4] != 2 || binary.BigEndian.Uint32(header[5:]) != 3 {
@@ -274,7 +317,7 @@ func browseSSH(ctx context.Context, endpoint remoteEndpoint, env []string) (sshD
 	options := sshPasswordOptions(endpoint)
 	if env == nil {
 		var err error
-		options, err = aliasMountOptions(endpoint.Name)
+		options, err = aliasMountOptions(endpoint.Name, endpoint.SSHUseRoot)
 		if err != nil {
 			return sshDirectory{}, err
 		}

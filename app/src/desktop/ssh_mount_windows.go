@@ -78,7 +78,7 @@ func (b *Bridge) mountSSH(ctx context.Context, endpoint remoteEndpoint, expected
 	if endpoint.SSHHost != "" {
 		return "", nil, remoteError("authentication_required", "请重新输入 SSH 登录密码")
 	}
-	options, err := aliasMountOptions(endpoint.Name)
+	options, err := aliasMountOptions(endpoint.Name, endpoint.SSHUseRoot)
 	if err != nil {
 		return "", nil, err
 	}
@@ -89,18 +89,22 @@ func (b *Bridge) mountSSH(ctx context.Context, endpoint remoteEndpoint, expected
 	return b.startRemoteMount(ctx, endpoint, ":sftp:", expectedID, false, options, nil, validate)
 }
 
-func aliasMountOptions(target string) ([]string, error) {
+func aliasMountOptions(target string, useSudo bool) ([]string, error) {
 	ssh, err := exec.LookPath("ssh.exe")
 	if err != nil {
 		return nil, remoteError("missing_tools", "未检测到 Windows OpenSSH 客户端")
 	}
 	// rclone parses this as a space-separated argument list and starts ssh
 	// directly. The host never supplies options, and OpenSSH verifies the key.
-	sshCommand := `"` + ssh + `" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + target
-	return []string{
+	sshCommand := `"` + ssh + `" -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + target
+	options := []string{
 		"--config", "NUL", "--log-level", "ERROR", "--sftp-ssh", sshCommand,
 		"--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s",
-	}, nil
+	}
+	if useSudo {
+		options = append(options, "--sftp-server-command", sudoSFTPServer)
+	}
+	return options, nil
 }
 
 func installMountTools(ctx context.Context) error {

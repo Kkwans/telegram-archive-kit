@@ -67,8 +67,8 @@
 .remote-workspace .remote-save-fields .field > input { height: 36px; }
 .remote-workspace .remote-save-fields > .plan-check { min-height: 36px; font-size: 11.5px; line-height: 1.5; }
 .remote-ssh-mount { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 12px; }
-.remote-ssh-mount > .field { min-width: 0; }
-.remote-ssh-mount .field input, .remote-ssh-mount .ui-select-btn { height: 36px; }
+.remote-ssh-mount > * { min-width: 0; }
+.remote-ssh-mount .ui-select-btn { height: 36px; }
 .remote-workspace .remote-form { gap: 9px; }
 .remote-workspace .remote-form > label { color: var(--text); font-size: 12px; font-weight: 600; }
 .remote-workspace .remote-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
@@ -99,9 +99,9 @@
 .remote-workspace .ssh-mode > button[aria-pressed="true"] > svg { color: var(--accent); }
 .remote-workspace .ssh-alias-field > .ui-select { width: 100%; }
 .remote-workspace .ssh-credentials { display: grid; grid-template-columns: minmax(0, 1.5fr) 76px minmax(0, 1fr) minmax(0, 1.25fr); gap: 8px; }
-.remote-workspace .ssh-credentials input { font-family: inherit; font-size: 13px; }
+.remote-workspace .remote-ssh-form .rclone-field input { font-family: inherit; font-size: 13px; }
 .remote-workspace .ssh-credentials input[type="number"] { font-variant-numeric: tabular-nums; }
-.remote-workspace .ssh-credentials .rclone-field > span, .remote-workspace .ssh-alias-field > span { font-size: 12px; line-height: 18px; font-weight: 650; }
+.remote-workspace .remote-ssh-form .rclone-field > span, .remote-workspace .remote-ssh-mount .field > span { font-size: 12px; line-height: 18px; font-weight: 650; }
 .remote-workspace .ssh-test-row { padding-top: 2px; color: var(--muted); font-size: 12px; }
 .remote-workspace .ssh-test-row button, .remote-workspace .ssh-tools-card button, .remote-workspace .ssh-host-trust button { flex: none; }
 .remote-workspace .ssh-host-trust code { display: block; margin-top: 4px; overflow-wrap: anywhere; user-select: text; }
