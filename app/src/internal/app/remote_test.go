@@ -7,11 +7,12 @@ import (
 )
 
 func TestRemoteStatusKeepsOfflineMappedIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "offline")
 	f := &Facade{a: &App{
-		Settings:  Settings{LastRemoteRoot: `X:\`, LastRemoteKind: "mapped"},
+		Settings:  Settings{LastRemoteRoot: root, LastRemoteKind: "mapped"},
 		ConfigDir: t.TempDir(),
 	}}
-	st := f.RemoteStatusFor(`X:\`)
+	st := f.RemoteStatusFor(root)
 	if !st.Remote || st.Kind != "mapped" {
 		t.Fatalf("offline mapped library should stay remote: %+v", st)
 	}
