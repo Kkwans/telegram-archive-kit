@@ -22,7 +22,7 @@ export function Select({
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight: number; upward: boolean } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLUListElement>(null);
@@ -48,15 +48,18 @@ export function Select({
       const rect = trigger.current?.getBoundingClientRect();
       if (!rect) return;
       const gap = 5;
-      const below = window.innerHeight - rect.bottom - 12;
-      const above = rect.top - 12;
-      const estimated = Math.min(220, options.length * 36 + 10);
-      const upward = below < Math.min(estimated, 180) && above > below;
+      const inset = 12;
+      const limit = 220;
+      const below = window.innerHeight - rect.bottom - gap - inset;
+      const above = rect.top - gap - inset;
+      const upward = below < limit && above > below;
+      const maxHeight = Math.max(0, Math.min(limit, upward ? above : below));
       setPosition({
         left: rect.left,
-        top: upward ? Math.max(8, rect.top - Math.min(estimated, above) - gap) : rect.bottom + gap,
+        top: upward ? rect.top - gap : rect.bottom + gap,
         width: rect.width,
-        maxHeight: Math.max(120, upward ? above : below),
+        maxHeight,
+        upward,
       });
     };
     place();
@@ -139,7 +142,7 @@ export function Select({
           className="ui-select-menu portal"
           role="listbox"
           aria-label={ariaLabel}
-          style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight }}
+          style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight, transform: position.upward ? "translateY(-100%)" : undefined }}
         >
           {options.map((o, i) => (
             <li
