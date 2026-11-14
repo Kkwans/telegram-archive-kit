@@ -334,7 +334,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         <section className="panel storage-panel">
           <div className="panel-head">
             <h3><HardDrive size={14} /> 档案库存储</h3>
-            <span className="meta" title={boot?.libraryRoot || "未配置"}>{boot?.libraryRoot || "未配置"}</span>
+            <span className="meta" data-tip={boot?.libraryRoot || "未配置"}>{boot?.libraryRoot || "未配置"}</span>
           </div>
           <div className="storage-body">
             <div>
@@ -352,7 +352,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <div className="storage-path">
               <div>
                 <span>归档目录</span>
-                <code title={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code>
+                <code data-tip={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code>
               </div>
               <button className="btn sm ghost" onClick={() => boot && call("openPath", { path: boot.libraryRoot })} disabled={!boot?.libraryRoot}>
                 <FolderOpen size={12} /> 打开
@@ -606,7 +606,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <button className="btn danger" disabled={busy === "delete"} onClick={remove}>
             <Trash2 size={13} /> 删除本地归档
           </button>
-          <button className="btn primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} title="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
+          <button className="btn primary" disabled={onlineLoading || !ctx.boot?.hasSession} onClick={() => void onlineUpdate()} data-tip="从 Telegram 在线会话拉取最新消息，先统计再确认归档">
             {onlineLoading ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />} {onlineLoading ? "正在读取会话…" : "拉取最新消息"}
           </button>
         </div>
@@ -656,7 +656,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           <div className="fact"><span>最近更新</span><b>{dateTime(current.updatedAt)}</b></div>
           <div className="fact wide">
             <span>归档目录</span>
-            <code title={current.dir}>{current.dir}</code>
+            <code data-tip={current.dir}>{current.dir}</code>
             <button className="icon-btn" data-tip="复制目录" aria-label="复制目录" onClick={copyPath}>
               <Copy size={13} />
             </button>
@@ -664,7 +664,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           {current.hasSource && (
             <div className="fact wide">
               <span>result.json</span>
-              <code title={jsonPath}>{jsonPath}</code>
+              <code data-tip={jsonPath}>{jsonPath}</code>
               <button className="icon-btn" data-tip="复制 result.json 路径" aria-label="复制 result.json 路径" onClick={copyJSONPath}>
                 <Copy size={13} />
               </button>
@@ -685,10 +685,10 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
             <button className="btn sm ghost" onClick={exportChat}>
               <ArrowDownToLine size={12} /> 导出到另一库
             </button>
-            <button className="btn sm ghost" onClick={rebuild} title="重新生成离线网页，并补齐缺失的图片与视频封面缩略图">
+            <button className="btn sm ghost" onClick={rebuild} data-tip="重新生成离线网页，并补齐缺失的图片与视频封面缩略图">
               <RefreshCw size={12} /> 补齐封面与网页
             </button>
-            <button className="btn sm ghost" onClick={() => void backfillJSON()} disabled={!current.hasSource} title="先统计 result.json 中缺失的媒体、数量与占用，确认后再补全；不访问 Telegram 在线消息">
+            <button className="btn sm ghost" onClick={() => void backfillJSON()} disabled={!current.hasSource} data-tip="先统计 result.json 中缺失的媒体、数量与占用，确认后再补全；不访问 Telegram 在线消息">
               <FileText size={12} /> 按 result.json 补全
             </button>
           </div>
@@ -1333,7 +1333,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
           <span className="meta">{summary ? `共 ${(summary.total - summary.files).toLocaleString()} 个媒体 · ${summary.files.toLocaleString()} 个文件` : "正在读取…"}</span>
           <button ref={toolsButton} className={"icon-btn media-options-button" + (searchText.trim() ? " has-query" : "")}
             aria-label="媒体浏览选项" aria-haspopup="dialog" aria-expanded={toolsOpen}
-            title={searchText.trim() ? "媒体浏览选项 · 已启用搜索" : "媒体浏览选项"} onClick={() => setToolsOpen((open) => !open)}>
+            data-tip={searchText.trim() ? "媒体浏览选项 · 已启用搜索" : "媒体浏览选项"} onClick={() => setToolsOpen((open) => !open)}>
             <SlidersHorizontal size={13} />
           </button>
         </div>
@@ -1397,7 +1397,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
                 {media.map((item) => {
                   const src = previewURL(item, chat.slug, libraryKey, displayed.version);
                   return (
-                  <button key={displayed.version + ":" + item.rel} className={"media-tile " + item.kind} title={item.name + (item.id ? " · 消息 #" + item.id : "")}
+                  <button key={displayed.version + ":" + item.rel} className={"media-tile " + item.kind} data-tip={item.name + (item.id ? " · 消息 #" + item.id : "")}
                     onClick={() => openItem(item)} disabled={loading || searchPending}>
                     <GalleryImage key={src} src={src} kind={item.kind} performanceMode={performanceMode} limiter={limiter} suspended={Boolean(viewer || audioItem)} />
                     {item.kind === "video" && <span className="media-play"><Play size={14} fill="currentColor" /></span>}
@@ -1411,7 +1411,7 @@ export function MediaGallery({ ctx, chat, onSummary }: {
                 <div className="file-list">
                   {files.map((f) => <div className="file-row" key={f.rel}>
                     <span className={"file-ext ext-" + fileExt(f.name).slice(0, 4)}>{fileExt(f.name).toUpperCase().slice(0, 4) || "FILE"}</span>
-                    <div className="file-info"><b title={f.name}>{f.name}</b><span>{f.id ? "消息 #" + f.id + " · " : ""}{bytes(f.size)}</span></div>
+                    <div className="file-info"><b data-tip={f.name}>{f.name}</b><span>{f.id ? "消息 #" + f.id + " · " : ""}{bytes(f.size)}</span></div>
                     <div className="file-actions">
                       <button className="btn sm ghost" disabled={loading || searchPending} onClick={() => openExternal(f)}><ExternalLink size={12} /> 打开</button>
                       <button className="btn sm ghost" disabled={loading || searchPending} onClick={() => reveal(f)}><LocateFixed size={12} /> 定位</button>
@@ -3021,8 +3021,8 @@ function MediaViewer({
       )}
       <div className="viewer-backdrop" style={backdropStyle} aria-hidden="true" />
       <header className="media-modal-head viewer-head">
-        <span className="media-modal-name" title={item.name}>{item.name}</span>
-        <span className="media-modal-count" title={positionLabel}>{position.toLocaleString()} / {total.toLocaleString()} · {bytes(item.size)}</span>
+        <span className="media-modal-name" data-tip={item.name}>{item.name}</span>
+        <span className="media-modal-count" data-tip={positionLabel}>{position.toLocaleString()} / {total.toLocaleString()} · {bytes(item.size)}</span>
         {loading && <span className="viewer-page-status" role="status">正在读取相邻媒体…</span>}
         {error && <span className="viewer-page-status error" role="alert">{error}</span>}
         <span className="spacer" />
@@ -3140,7 +3140,7 @@ function MediaViewer({
         {items.slice(Math.max(0, index - 5), index + 6).map((v, offset) => {
           const i = Math.max(0, index - 5) + offset;
           const src = previewURL(v, chat.slug, libraryKey, version);
-          return <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} title={v.name} onClick={() => { if (!fsBusy.current) onIndex(i); }}>
+          return <button key={v.rel} ref={i === index ? active : undefined} className={i === index ? "on" : ""} data-tip={v.name} onClick={() => { if (!fsBusy.current) onIndex(i); }}>
             <GalleryImage key={src} src={src} kind={v.kind} performanceMode={performanceMode} limiter={limiter} />
             <span className="strip-index">{positions[i]}</span>
             {v.kind === "video" && <span className="strip-kind"><Play size={9} fill="currentColor" /></span>}
@@ -3154,7 +3154,7 @@ function MediaViewer({
         <ChevronRight size={26} />
       </button>
       {immersive && (
-        <button className="viewer-immersive-exit" onClick={exitImmersive} title="退出沉浸模式（Esc）" aria-label="退出沉浸模式">
+        <button className="viewer-immersive-exit" onClick={exitImmersive} data-tip="退出沉浸模式（Esc）" aria-label="退出沉浸模式">
           <Minimize2 size={15} />
         </button>
       )}
@@ -3401,7 +3401,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     });
   };
 
-  const switchRemote = (root: string, newRemoteMount = false, onError = setRemoteError) => switchTo(root, false, {
+  const switchRemote = (root: string, newRemoteMount = false, onError = setRemoteError, sshPassword?: string) => switchTo(root, false, {
     newRemoteMount,
     onError,
     afterSwitch: async () => {
@@ -3410,7 +3410,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         return;
       }
       try {
-        await call<SavedRemoteConnection>("remoteConnectionSave", { root, label: remoteLabel.trim(), autoReconnect: remoteSaveAuto });
+        await call<SavedRemoteConnection>("remoteConnectionSave", { root, label: remoteLabel.trim(), autoReconnect: remoteSaveAuto, sshPassword });
         toast("已保存网络连接", "success");
         setRemoteMode("saved");
       } catch (e) {
@@ -3472,7 +3472,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
       const root = await call<string>("sshConnect", sshParams(sshDirectory.path), controller.signal);
       sshRequest.current = null;
       setSSHAction("switch");
-      const result = await switchRemote(root, true, setSSHError);
+      const result = await switchRemote(root, true, setSSHError, remoteSave && !sshAlias ? sshPassword : undefined);
       if (result === "switched") clearSSHPassword();
       if (result === "failed") {
         setStagedMountRoot(root);
@@ -3834,7 +3834,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
             </span>
             <ChevronRight size={16} />
           </button>
-          <button className="action-card" disabled={!boot?.hasSession} onClick={() => ctx.openOnline("local")} title={!boot?.hasSession ? "请先在账号页登录 Telegram" : undefined}>
+          <button className="action-card" disabled={!boot?.hasSession} onClick={() => ctx.openOnline("local")} data-tip={!boot?.hasSession ? "请先在账号页登录 Telegram" : undefined}>
             <span className="action-icon"><MessagesSquare size={18} /></span>
             <span className="action-text">
               <b>从在线聊天更新</b>
@@ -3924,7 +3924,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       toggleSel(c.slug);
                     }
                   }}
-                  title="点击查看聊天详情"
+                  data-tip="点击查看聊天详情"
                 >
                   <td className="check-col" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={sel.has(c.slug)} onChange={() => toggleSel(c.slug)} aria-label={`选择 ${c.name}`} />
@@ -3978,18 +3978,18 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               <div className="library-path-row">
                 <div>
                   <span>根目录</span>
-                  <code title={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code>
+                  <code data-tip={boot?.libraryRoot}>{boot?.libraryRoot || "未配置"}</code>
                 </div>
-                <button className="icon-btn" title="复制根目录" aria-label="复制根目录" onClick={() => copyText(boot?.libraryRoot || "", "根目录")}>
+                <button className="icon-btn" data-tip="复制根目录" aria-label="复制根目录" onClick={() => copyText(boot?.libraryRoot || "", "根目录")}>
                   <Copy size={13} />
                 </button>
               </div>
               <div className="library-path-row">
                 <div>
                   <span>配置文件</span>
-                  <code title={boot?.configPath}>{boot?.configPath || "--"}</code>
+                  <code data-tip={boot?.configPath}>{boot?.configPath || "--"}</code>
                 </div>
-                <button className="icon-btn" title="复制配置文件路径" aria-label="复制配置文件路径" onClick={() => copyText(boot?.configPath || "", "配置文件路径")}>
+                <button className="icon-btn" data-tip="复制配置文件路径" aria-label="复制配置文件路径" onClick={() => copyText(boot?.configPath || "", "配置文件路径")}>
                   <Copy size={13} />
                 </button>
               </div>
@@ -4009,7 +4009,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               {history.map((root) => (
                 <button key={root} onClick={() => switchTo(root)} className={root === boot?.libraryRoot ? "on" : ""}>
                   <span className="folder-badge"><FolderOpen size={14} /></span>
-                  <span className="library-path" title={root}>{root}</span>
+                  <span className="library-path" data-tip={root}>{root}</span>
                   {root === boot?.libraryRoot && <span className="current-badge">当前</span>}
                 </button>
               ))}
@@ -4032,7 +4032,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           }}>
             <div className="remote-head">
               <div className="remote-title">
-                {remoteMode === "add" && <button type="button" className="icon-btn remote-header-action" aria-label="返回已保存的连接" title="返回已保存的连接" disabled={remoteFormBusy} onClick={() => showRemoteMode("saved")}><ChevronLeft size={16} /></button>}
+                {remoteMode === "add" && <button type="button" className="icon-btn remote-header-action" aria-label="返回已保存的连接" data-tip="返回已保存的连接" disabled={remoteFormBusy} onClick={() => showRemoteMode("saved")}><ChevronLeft size={16} /></button>}
                 <h2 id="remote-title" tabIndex={-1}>{remoteMode === "saved" ? "网络位置" : "添加网络连接"}</h2>
               </div>
               <button type="button" className="icon-btn remote-header-action" aria-label="关闭网络位置" disabled={sshAction === "install" || sshAction === "switch" || rcloneBusy || remoteTesting || connectionBusy || busy === "switch" || !!pendingPublishSwitch} onClick={closeRemote}>
@@ -4045,7 +4045,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   <span className="remote-current-icon"><Database size={16} /></span>
                   <div>
                     <b>当前档案库</b>
-                    <span title={remote.root}>{remote.root}</span>
+                    <span data-tip={remote.root}>{remote.root}</span>
                   </div>
                   <em>{pathKindLabel(remote.kind)}</em>
                   {remote.remote && remote.reachable && (
@@ -4054,7 +4054,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   {!remote.reachable && <span className="remote-current-meta warn">{remote.error || "不可访问"}</span>}
                   {remote.remote && remote.cacheBytes > 0 && (
                     <button className="btn sm ghost" onClick={() => void clearRemoteCache()}>
-                      清理缓存 {bytes(remote.cacheBytes)}
+                      <Trash2 size={13} /> 清理缓存 {bytes(remote.cacheBytes)}
                     </button>
                   )}
                 </div>
@@ -4062,10 +4062,11 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
 
               {remoteMode === "saved" ? (
                 <RemoteConnections onAdd={() => showRemoteMode("add")} onConnected={remoteConnected} onBusy={setConnectionBusy}
-                  onPasswordConnection={(item) => {
+                  onPasswordConnection={(item, enableAuto) => {
                     setSSHAlias(""); setSSHTarget(item.sshHost ?? ""); setSSHUser(item.sshUser ?? ""); setSSHPort(String(item.sshPort ?? 22));
                     setSSHPassword(""); resetSSHTest(); setSSHHostKey(item.sshKey ?? ""); setSSHSavedPath(item.path);
-                    setRemoteSave(false); setRemoteSaveAuto(false); setSSHOpen(true); setRcloneOpen(false); showRemoteMode("add");
+                    setRemoteLabel(item.label); setRemoteSave(true); setRemoteSaveAuto(enableAuto ?? item.autoReconnect);
+                    setSSHOpen(true); setRcloneOpen(false); showRemoteMode("add");
                   }} toast={toast} />
               ) : <>
               <div className="remote-methods" role="group" aria-label="连接方式">
@@ -4121,7 +4122,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               {remoteError && <div className="plan-inline-notice" role="alert"><AlertTriangle size={15} /><span>{remoteError}</span></div>}
               {!sshOpen && sshError && <div className="plan-inline-notice" role="alert"><AlertTriangle size={15} /><span>{sshError}</span></div>}
 
-              {(sshOpen || rcloneOpen) && !remoteTools && <div className="plan-inline-notice" role={remoteToolsError ? "alert" : "status"}>{remoteToolsError ? <AlertTriangle size={14} /> : <Loader2 size={14} className="spin" />}<span>{remoteToolsError || "正在检查连接组件…"}</span>{remoteToolsError && <button type="button" className="btn sm ghost" onClick={readRemoteTools}>重新检查</button>}</div>}
+              {(sshOpen || rcloneOpen) && !remoteTools && <div className="plan-inline-notice" role={remoteToolsError ? "alert" : "status"}>{remoteToolsError ? <AlertTriangle size={14} /> : <Loader2 size={14} className="spin" />}<span>{remoteToolsError || "正在检查连接组件…"}</span>{remoteToolsError && <button type="button" className="btn sm ghost" onClick={readRemoteTools}><RefreshCw size={13} /> 重新检查</button>}</div>}
               {rcloneOpen && remoteTools && (!remoteTools.rclone || !remoteTools.winFsp || !remoteTools.rcloneRemotes?.length) && <>
                 <div className="remote-option">
                   <span className="remote-option-icon"><Cloud size={17} /></span>
@@ -4156,7 +4157,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                     <div className="ssh-tools-card">
                       <div className="rclone-form-head"><b>安装挂载组件</b><span>需要 {[!remoteTools.rclone && "rclone", !remoteTools.winFsp && "WinFsp"].filter(Boolean).join("、")}</span></div>
                       {remoteTools.winget ? <button type="button" className="btn primary" disabled={Boolean(sshAction)} onClick={() => void installSSHMountTools()}>
-                        {sshAction === "install" && <Loader2 size={13} className="spin" />} {sshAction === "install" ? "正在安装…" : "安装组件"}
+                        {sshAction === "install" ? <Loader2 size={13} className="spin" /> : <Download size={13} />} {sshAction === "install" ? "正在安装…" : "安装组件"}
                       </button> : <p role="status">请先启用 Windows WinGet。</p>}
                     </div>
                   ) : <>
@@ -4190,12 +4191,12 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                     </div>
                     {sshTrust && <div className="plan-inline-notice ssh-host-trust" role="status">
                       <AlertTriangle size={16} /><span><b>核对服务器主机指纹后再继续</b><code>{sshTrust.type} {sshTrust.fingerprint}</code></span>
-                      <button type="button" className="btn" disabled={remoteFormBusy} onClick={() => { const key = sshTrust.key; setSSHTrust(null); void browseSSH(sshSavedPath, key); }}>信任并测试</button>
+                      <button type="button" className="btn" disabled={remoteFormBusy} onClick={() => { const key = sshTrust.key; setSSHTrust(null); void browseSSH(sshSavedPath, key); }}><CheckCircle2 size={13} /> 信任并测试</button>
                     </div>}
                     {sshDirectory && <section className="ssh-browser" aria-label="远程档案库目录" aria-busy={sshAction === "test"}>
                       <div className="ssh-browser-head"><b>选择档案库目录</b>{sshDirectory.library && <span><CheckCircle2 size={13} /> 已识别档案库</span>}</div>
-                      <div className="ssh-path"><button type="button" className="icon-btn" aria-label="上一级目录" title="上一级目录" disabled={remoteFormBusy || sshDirectory.path === "/"} onClick={() => void browseSSH(sshDirectory.path.slice(0, sshDirectory.path.lastIndexOf("/")) || "/")}><ChevronLeft size={16} /></button>
-                        <code title={sshDirectory.path}>{sshDirectory.path}</code></div>
+                      <div className="ssh-path"><button type="button" className="icon-btn" aria-label="上一级目录" data-tip="上一级目录" disabled={remoteFormBusy || sshDirectory.path === "/"} onClick={() => void browseSSH(sshDirectory.path.slice(0, sshDirectory.path.lastIndexOf("/")) || "/")}><ChevronLeft size={16} /></button>
+                        <code data-tip={sshDirectory.path}>{sshDirectory.path}</code></div>
                       <div className="ssh-folders">{sshDirectory.folders.length ? sshDirectory.folders.map((name) => <button type="button" key={name} disabled={remoteFormBusy} onClick={() => void browseSSH(`${sshDirectory.path === "/" ? "" : sshDirectory.path}/${name}`)}><FolderOpen size={15} /><span>{name}</span><ChevronRight size={14} /></button>) : <p>没有子目录</p>}</div>
                     </section>}
                   </>}
@@ -4229,8 +4230,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               {(!sshOpen && !rcloneOpen || sshOpen && !!sshDirectory?.library || rcloneOpen && remoteTools?.rclone && remoteTools.winFsp && !!remoteTools.rcloneRemotes?.length) && <div className="remote-connect-options">
                 {remoteSave && <div className="remote-save-fields">
                   <label className="field"><span>连接名称（可选）</span><input type="text" value={remoteLabel} maxLength={100} disabled={remoteFormBusy} onChange={(e) => setRemoteLabel(e.target.value)} placeholder="例如：家里的 NAS" /></label>
-                  {sshOpen && !sshAlias ? <p className="muted">保存地址和目录，下次连接时重新输入密码。</p> :
-                    <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时随 TAK 启动自动重连</label>}
+                  <label className="plan-check"><input type="checkbox" checked={remoteSaveAuto} disabled={remoteFormBusy} onChange={(e) => setRemoteSaveAuto(e.target.checked)} /> 此库为当前库时自动重连</label>
+                  {sshOpen && !sshAlias && <p className="muted">密码保存在当前 Windows 用户的凭据管理器中。</p>}
                 </div>}
                 <div className="remote-connect-footer">
                   <button type="button" className="btn remote-save-toggle" aria-pressed={remoteSave} disabled={remoteFormBusy || sshOpen && !!sshError} onClick={() => setRemoteSave((value) => !value)}><Bookmark size={14} /> 保存此连接</button>
@@ -4246,7 +4247,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       </button>
                     </>}
                     {sshOpen && <button type="submit" form="remote-ssh-form" className="btn primary" disabled={remoteFormBusy || !!sshError || !sshDirectory?.library}>
-                      {sshAction && <Loader2 size={13} className="spin" />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "连接并使用"}
+                      {sshAction ? <Loader2 size={13} className="spin" /> : <CheckCircle2 size={13} />} {sshAction === "connect" ? "正在连接…" : sshAction === "switch" ? "正在切换…" : remoteSave ? "连接并保存" : "连接并使用"}
                     </button>}
                     {rcloneOpen && <button type="button" className="btn primary" disabled={remoteFormBusy || !rcloneRemote} onClick={() => void mountRclone()}>
                       {rcloneBusy ? <Loader2 size={13} className="spin" /> : <Network size={13} />}
@@ -4278,7 +4279,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
 
             <div className="chat-detail-grid">
               <div className="chat-detail-tile"><span>Chat ID</span><b className="mono">{detailChat.id || "--"}</b></div>
-              <div className="chat-detail-tile"><span>工作区目录</span><b className="mono" title={detailChat.dir}>{detailChat.slug}</b></div>
+              <div className="chat-detail-tile"><span>工作区目录</span><b className="mono" data-tip={detailChat.dir}>{detailChat.slug}</b></div>
               <div className="chat-detail-tile"><span>消息</span><b>{detailChat.messages.toLocaleString()}</b></div>
               <div className="chat-detail-tile">
                 <span>媒体文件</span>
@@ -4356,7 +4357,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <span><Music size={12} /> 音频 <b>{official.meta.audio.toLocaleString()}</b></span>
                 <span><FileText size={12} /> 文件 <b>{official.meta.files.toLocaleString()}</b></span>
               </div>
-              <code title={official.meta.root}>{official.meta.root}</code>
+              <code data-tip={official.meta.root}>{official.meta.root}</code>
             </div>
 
             <label className="official-import-field">
@@ -4894,7 +4895,7 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
         .map((r) => (
           <div key={r.label} className={`diag-row ${r.state}`}>
             <span className="diag-label">{r.label}</span>
-            <span className="diag-value" title={r.value}>{wrapPath(r.value)}</span>
+            <span className="diag-value" data-tip={r.value}>{wrapPath(r.value)}</span>
           </div>
         ))}
     </div>
@@ -4985,7 +4986,7 @@ export function Diagnostics({ ctx }: { ctx: PageCtx }) {
                 <button key={l.name} className={l.name === active ? "on" : ""} onClick={() => setActive(l.name)}>
                   <FileText size={14} className="log-icon" />
                   <span className="log-info">
-                    <span className="nm" title={l.name}>{l.name}</span>
+                    <span className="nm" data-tip={l.name}>{l.name}</span>
                     <span className="log-meta"><span>{l.modTime}</span><span>{bytes(l.size)}</span></span>
                   </span>
                 </button>

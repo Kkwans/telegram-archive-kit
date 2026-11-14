@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,11 +50,12 @@ func (e remoteEndpoint) same(other remoteEndpoint) bool {
 
 type savedRemoteConnection struct {
 	remoteEndpoint
-	ID            string   `json:"id"`
-	Label         string   `json:"label"`
-	Root          string   `json:"root"`
-	AutoReconnect bool     `json:"autoReconnect"`
-	PreviousRoots []string `json:"previousRoots,omitempty"`
+	ID               string   `json:"id"`
+	Label            string   `json:"label"`
+	Root             string   `json:"root"`
+	AutoReconnect    bool     `json:"autoReconnect"`
+	HasSavedPassword bool     `json:"hasSavedPassword,omitempty"`
+	PreviousRoots    []string `json:"previousRoots,omitempty"`
 }
 
 func (c savedRemoteConnection) matchesRoot(root string) bool {
@@ -91,14 +93,15 @@ type remoteConnectionFile struct {
 
 type remoteConnectionDTO struct {
 	remoteEndpoint
-	ID            string `json:"id"`
-	Label         string `json:"label"`
-	Root          string `json:"root"`
-	AutoReconnect bool   `json:"autoReconnect"`
-	Active        bool   `json:"active"`
-	Status        string `json:"status"`
-	Message       string `json:"message,omitempty"`
-	NextRetryAt   int64  `json:"nextRetryAt,omitempty"`
+	ID               string `json:"id"`
+	Label            string `json:"label"`
+	Root             string `json:"root"`
+	AutoReconnect    bool   `json:"autoReconnect"`
+	HasSavedPassword bool   `json:"hasSavedPassword,omitempty"`
+	Active           bool   `json:"active"`
+	Status           string `json:"status"`
+	Message          string `json:"message,omitempty"`
+	NextRetryAt      int64  `json:"nextRetryAt,omitempty"`
 }
 
 type remoteConnectionList struct {
@@ -329,7 +332,7 @@ func (s *remoteConnections) refreshSelection() {
 func (s *remoteConnections) entryLocked(c savedRemoteConnection) remoteConnectionDTO {
 	out := remoteConnectionDTO{
 		remoteEndpoint: c.remoteEndpoint, ID: c.ID, Label: c.Label, Root: c.Root,
-		AutoReconnect: c.AutoReconnect, Active: s.current.id == c.ID,
+		AutoReconnect: c.AutoReconnect, HasSavedPassword: c.HasSavedPassword, Active: s.current.id == c.ID,
 		Status: "offline",
 	}
 	if out.Active {
@@ -531,7 +534,7 @@ func (s *remoteConnections) switchLibrary(ctx context.Context, root string, newR
 	return nil, err
 }
 
-func (s *remoteConnections) save(ctx context.Context, root, label string, auto bool) (remoteConnectionDTO, error) {
+func (s *remoteConnections) save(ctx context.Context, root, label, sshPassword string, auto bool) (remoteConnectionDTO, error) {
 	if err := s.beginActivation(); err != nil {
 		return remoteConnectionDTO{}, err
 	}
@@ -561,9 +564,6 @@ func (s *remoteConnections) save(ctx context.Context, root, label string, auto b
 	var err error
 	if mount != nil {
 		endpoint = mount.endpoint
-		if endpoint.SSHHost != "" && auto {
-			return remoteConnectionDTO{}, errors.New("密码连接下次需重新输入密码，请关闭自动重连后保存")
-		}
 	} else {
 		endpoint, err = resolveUNC(root)
 		if err != nil {
@@ -590,6 +590,15 @@ func (s *remoteConnections) save(ctx context.Context, root, label string, auto b
 		if err := mount.confirmMarker(ctx, id); err != nil {
 			return remoteConnectionDTO{}, classifyRemoteError(err)
 		}
+		if endpoint.SSHHost != "" && sshPassword != "" {
+			env, err := passwordMountEnv(ctx, endpoint, sshPassword)
+			if err != nil {
+				return remoteConnectionDTO{}, err
+			}
+			if err := verifyRcloneMarker(ctx, mount.cmd.Path, mount.markerDir, id, passwordMountOptions, env); err != nil {
+				return remoteConnectionDTO{}, classifyRemoteError(err)
+			}
+		}
 	}
 	if err := s.b.facade.SetCurrentLibraryIdentity(root, id); err != nil {
 		return remoteConnectionDTO{}, classifyRemoteError(err)
@@ -598,7 +607,25 @@ func (s *remoteConnections) save(ctx context.Context, root, label string, auto b
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, record, _ := s.recordLocked(id)
+	previousTarget := s.credentialTarget(record)
 	record.ID, record.remoteEndpoint, record.AutoReconnect = id, endpoint, auto
+	target := s.credentialTarget(record)
+	var previousPassword string
+	if target != "" {
+		previousPassword, err = readSSHPassword(target)
+		if err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+			return remoteConnectionDTO{}, fmt.Errorf("无法读取 Windows 凭据管理器：%w", err)
+		}
+		if sshPassword == "" && auto && previousPassword == "" {
+			return remoteConnectionDTO{}, errors.New("请先补录 SSH 登录密码")
+		}
+		if sshPassword != "" {
+			if err := writeSSHPassword(target, sshPassword); err != nil {
+				return remoteConnectionDTO{}, err
+			}
+		}
+	}
+	record.HasSavedPassword = target != "" && (sshPassword != "" || previousPassword != "")
 	record.updateRoot(root)
 	if label = strings.TrimSpace(label); label != "" {
 		record.Label = label
@@ -609,9 +636,21 @@ func (s *remoteConnections) save(ctx context.Context, root, label string, auto b
 		}
 	}
 	if err := s.replaceLocked(record); err != nil {
+		if target != "" && sshPassword != "" {
+			if previousPassword == "" {
+				err = errors.Join(err, deleteSSHPassword(target))
+			} else {
+				err = errors.Join(err, writeSSHPassword(target, previousPassword))
+			}
+		}
 		return remoteConnectionDTO{}, err
 	}
 	delete(s.progress, id)
+	if previousTarget != "" && previousTarget != target {
+		if err := deleteSSHPassword(previousTarget); err != nil {
+			return s.entryLocked(record), err
+		}
+	}
 	return s.entryLocked(record), nil
 }
 
@@ -641,7 +680,10 @@ func (s *remoteConnections) renameOrSetAuto(id, label string, auto *bool) (remot
 	wasAuto := c.AutoReconnect
 	if auto != nil {
 		if *auto && c.SSHHost != "" {
-			return remoteConnectionDTO{}, errors.New("密码连接下次需重新输入密码")
+			if _, err := readSSHPassword(s.credentialTarget(c)); err != nil {
+				return remoteConnectionDTO{}, errors.New("请先补录 SSH 登录密码，再开启自动重连")
+			}
+			c.HasSavedPassword = true
 		}
 		c.AutoReconnect = *auto
 	} else {
@@ -668,13 +710,28 @@ func (s *remoteConnections) forget(id string) error {
 	defer s.activation.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	i, _, ok := s.recordLocked(id)
+	i, record, ok := s.recordLocked(id)
 	if !ok {
 		return nil
 	}
 	records := append([]savedRemoteConnection{}, s.records[:i]...)
 	records = append(records, s.records[i+1:]...)
+	target := s.credentialTarget(record)
+	var password string
+	if target != "" {
+		var err error
+		password, err = readSSHPassword(target)
+		if err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+			return fmt.Errorf("无法读取 Windows 凭据管理器：%w", err)
+		}
+		if err := deleteSSHPassword(target); err != nil {
+			return err
+		}
+	}
 	if err := s.persistLocked(records); err != nil {
+		if password != "" {
+			return errors.Join(err, writeSSHPassword(target, password))
+		}
 		return err
 	}
 	delete(s.progress, id)
@@ -690,6 +747,7 @@ func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.Raw
 		ID            string `json:"id"`
 		Root          string `json:"root"`
 		Label         string `json:"label"`
+		SSHPassword   string `json:"sshPassword"`
 		AutoReconnect *bool  `json:"autoReconnect"`
 	}
 	if len(raw) > 0 {
@@ -701,7 +759,7 @@ func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.Raw
 	case "remoteConnectionList":
 		return s.list()
 	case "remoteConnectionSave":
-		return s.save(ctx, p.Root, p.Label, p.AutoReconnect != nil && *p.AutoReconnect)
+		return s.save(ctx, p.Root, p.Label, p.SSHPassword, p.AutoReconnect != nil && *p.AutoReconnect)
 	case "remoteConnectionReconnect":
 		entry, _, err := s.reconnect(p.ID)
 		return entry, err
@@ -789,7 +847,19 @@ func (s *remoteConnections) connect(ctx context.Context, c savedRemoteConnection
 	var newMount *rcloneMount
 	switch endpoint.Kind {
 	case "ssh":
-		root, newMount, err = s.b.mountSSH(ctx, endpoint, c.ID, false)
+		if endpoint.SSHHost == "" {
+			root, newMount, err = s.b.mountSSH(ctx, endpoint, c.ID, false)
+		} else {
+			password, readErr := readSSHPassword(s.credentialTarget(c))
+			if readErr != nil {
+				return "", remoteError("authentication_required", "请补录 SSH 登录密码，再重新连接")
+			}
+			env, envErr := passwordMountEnv(ctx, endpoint, password)
+			if envErr != nil {
+				return "", envErr
+			}
+			root, newMount, err = s.b.startRemoteMount(ctx, endpoint, ":sftp:", c.ID, true, passwordMountOptions, env, nil)
+		}
 	case "rclone":
 		root, newMount, err = s.b.mountRclone(ctx, endpoint, c.ID, true)
 	}
