@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -176,9 +177,10 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	cmd.Stdout, cmd.Stderr = &mount.report, &mount.report
 	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Start(); err != nil {
+	job, err := startManagedMountProcess(cmd)
+	if err != nil {
 		b.mountMu.Unlock()
-		return "", nil, remoteError("error", "无法启动 rclone，请检查挂载组件后重试")
+		return "", nil, remoteError("error", "无法启动受管理的 rclone 挂载，请检查挂载组件后重试")
 	}
 	if b.mounts == nil {
 		b.mounts = make(map[string]*rcloneMount)
@@ -188,6 +190,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	b.mountMu.Unlock()
 	go func() {
 		_ = cmd.Wait()
+		_ = windows.CloseHandle(job)
 		b.mountMu.Lock()
 		unmark()
 		delete(b.mounts, drive)
@@ -240,6 +243,38 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			return root, mount, nil
 		}
 	}
+}
+
+// A private Windows job also releases the drive when the client crashes or
+// Windows terminates it before the ordinary shutdown code runs.
+func startManagedMountProcess(cmd *exec.Cmd) (windows.Handle, error) {
+	job, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if _, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
+		_ = windows.CloseHandle(job)
+		return 0, err
+	}
+	if err = cmd.Start(); err != nil {
+		_ = windows.CloseHandle(job)
+		return 0, err
+	}
+	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
+	if err == nil {
+		err = windows.AssignProcessToJobObject(job, process)
+		_ = windows.CloseHandle(process)
+	}
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = windows.CloseHandle(job)
+		return 0, err
+	}
+	return job, nil
 }
 
 func verifyRcloneMarker(ctx context.Context, exe, markerDir, expectedID string, options, env []string) error {
