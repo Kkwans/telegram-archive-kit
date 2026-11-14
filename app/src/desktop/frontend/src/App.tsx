@@ -173,6 +173,19 @@ export default function App() {
     libraryKey: string; slug: string; top: number; anchor?: HTMLElement; offset: number;
   } | null>(null);
   const scrollArea = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const main = scrollArea.current?.parentElement;
+    if (!main) return;
+    const update = () => {
+      const { left, top } = main.getBoundingClientRect();
+      document.documentElement.style.setProperty("--main-inset-left", `${left}px`);
+      document.documentElement.style.setProperty("--main-inset-top", `${top}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(main);
+    return () => observer.disconnect();
+  }, []);
   const pickerWaiters = useRef(new Map<string, { resolve: (paths: string[]) => void; reject: (e: Error) => void }>());
 
   const dismissToast = useCallback((id: number) => {

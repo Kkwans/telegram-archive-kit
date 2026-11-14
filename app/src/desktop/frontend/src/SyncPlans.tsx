@@ -443,19 +443,19 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
         <PlanRunButton primary action={action} disabled={busy || plan.state === "stopping"} onAct={onAct} />
         <PlanMoreActions plan={plan} action={action} busy={busy} onAct={onAct} onDelete={onDelete} />
       </div>
-      <dl className="plan-detail-facts">
+      <dl className="plan-detail-meta">
         <div>
-          <dt><Database size={14} /> 目标档案库</dt>
-          <dd title={plan.libraryLabel}>{plan.libraryLabel || "档案库"}</dd>
+          <dt><Database size={15} aria-hidden="true" />目标档案库</dt>
+          <dd className="plan-detail-library" title={plan.libraryLabel}>{plan.libraryLabel || "档案库"}</dd>
           <dd>{plan.targets?.length ?? 0} 个聊天</dd>
         </div>
         <div>
-          <dt><CalendarClock size={14} /> 运行时间</dt>
+          <dt><CalendarClock size={15} aria-hidden="true" />运行时间</dt>
           <dd>{scheduleText(plan.schedule)}</dd>
           <dd>{plan.enabled ? `下次运行 ${when(plan.nextRunAt, "待排程")}` : "定时运行已暂停"}</dd>
         </div>
         <div>
-          <dt><MessageCircle size={14} /> 同步内容</dt>
+          <dt><MessageCircle size={15} aria-hidden="true" />同步内容</dt>
           <dd>{mediaText(plan.mediaKinds ?? [])}</dd>
           {plan.includeHistory && <dd>补齐历史缺失媒体</dd>}
         </div>

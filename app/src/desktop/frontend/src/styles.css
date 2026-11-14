@@ -413,6 +413,17 @@ body.glass-capturing .modal-backdrop { visibility: hidden; }
   position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
   background: transparent; padding: 24px;
 }
+.modal-backdrop:not(.palette-backdrop), .remote-dialog-backdrop {
+  padding: calc(var(--main-inset-top, 0px) + 16px) 16px 16px calc(var(--main-inset-left, 0px) + 16px);
+}
+dialog[aria-modal="true"] {
+  inset: var(--main-inset-top, 0px) 0 0 var(--main-inset-left, 0px);
+  max-width: calc(100vw - var(--main-inset-left, 0px) - 32px) !important;
+  max-height: calc(100dvh - var(--main-inset-top, 0px) - 32px) !important;
+}
+.modal-backdrop:not(.palette-backdrop) > .modal, .remote-dialog-backdrop > .remote-modal {
+  max-height: calc(100dvh - var(--main-inset-top, 0px) - 32px);
+}
 .modal {
   position: relative; z-index: 1; isolation: isolate;
   width: min(520px, 100%); max-height: calc(100vh - 48px); overflow-x: hidden; overflow-y: auto;
