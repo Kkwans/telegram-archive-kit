@@ -748,6 +748,31 @@ func (s *remoteConnections) forget(id string) error {
 	if !ok {
 		return nil
 	}
+	current := s.current
+	mount := s.b.remoteMountAt(s.b.existingSSHMount(record.remoteEndpoint))
+	if record.Kind == "rclone" {
+		mount = s.b.remoteMountAt(record.Root)
+	}
+	if current.id == id && (current.mount == nil || current.mount.endpoint.same(record.remoteEndpoint)) {
+		if !s.b.archiveMu.TryLock() {
+			return takapp.ErrOperationRunning
+		}
+		defer s.b.archiveMu.Unlock()
+		if err := s.withPublicationSwitch(func() error {
+			return s.b.facade.ClearLibrarySelection(current.root, current.id)
+		}); err != nil {
+			return err
+		}
+		s.current = remoteSelection{generation: current.generation + 1}
+		if s.b.syncPlans != nil {
+			s.b.syncPlans.Wake()
+		}
+	}
+	if mount != nil {
+		if err := stopRemoteMount(mount); err != nil {
+			return err
+		}
+	}
 	records := append([]savedRemoteConnection{}, s.records[:i]...)
 	records = append(records, s.records[i+1:]...)
 	target := s.credentialTarget(record)
@@ -805,22 +830,6 @@ func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.Raw
 	case "remoteConnectionRename":
 		return s.renameOrSetAuto(p.ID, p.Label, nil)
 	case "remoteConnectionForget":
-		s.mu.Lock()
-		_, record, found := s.recordLocked(p.ID)
-		s.mu.Unlock()
-		if found && record.Kind == "ssh" {
-			if existing := s.b.existingSSHMount(record.remoteEndpoint); existing != "" {
-				s.mu.Lock()
-				active := s.current.id == record.ID && s.current.ready
-				s.mu.Unlock()
-				if active {
-					return nil, errors.New("请先切换到其他档案库，再移除并卸载此连接")
-				}
-				if err := stopRemoteMount(s.b.remoteMountAt(existing)); err != nil {
-					return nil, err
-				}
-			}
-		}
 		return nil, s.forget(p.ID)
 	case "remoteConnectionUnmount":
 		if err := s.beginActivation(); err != nil {

@@ -459,6 +459,37 @@ func (f *Facade) SwitchManagedLibrary(root string) error {
 	return f.switchLibrary(context.Background(), root, "", "", "", true)
 }
 
+// ClearLibrarySelection leaves the client open without a library.
+func (f *Facade) ClearLibrarySelection(root, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.taskMu.Lock()
+	defer f.taskMu.Unlock()
+	if root == "" || !strings.EqualFold(filepath.Clean(root), filepath.Clean(f.a.Settings.LibraryRoot)) || id != f.a.Settings.ExpectedLibraryID {
+		return ErrLibraryIdentity
+	}
+	if f.op != nil {
+		return ErrOperationRunning
+	}
+	for _, task := range f.tasks {
+		if task.snapshot().State == "running" {
+			return ErrOperationRunning
+		}
+	}
+	candidate := appAtLibrary(f.a, "")
+	candidate.Settings.LibraryRoot = ""
+	candidate.Settings.ExpectedLibraryID = ""
+	candidate.Settings.LastWorkspaceSlug = ""
+	if err := candidate.saveSettings(); err != nil {
+		return err
+	}
+	f.a.Settings = candidate.Settings
+	f.libLock.release()
+	f.libLock = nil
+	f.remoteSuspended = false
+	return nil
+}
+
 func (f *Facade) switchLibrary(ctx context.Context, root, expectedID, previousRoot, previousID string, managed bool) error {
 	root = strings.TrimSpace(root)
 	if root == "" {
