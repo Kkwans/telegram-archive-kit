@@ -6,11 +6,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "embed"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,6 +27,50 @@ import (
 	takapp "telegramarchivekit/internal/app"
 	"telegramarchivekit/internal/platform"
 )
+
+//go:embed sftp_space_proxy.py
+var sftpSpaceProxy string
+
+type sshFilesystemSpace struct {
+	Total *int64 `json:"total"`
+	Free  *int64 `json:"free"`
+}
+
+func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
+	mode, prefix := "share", "exec"
+	if endpoint.SSHUseRoot {
+		mode, prefix = "system", "exec sudo -n -u root --"
+	}
+	program := base64.StdEncoding.EncodeToString([]byte(sftpSpaceProxy))
+	target := base64.StdEncoding.EncodeToString([]byte(endpoint.Path))
+	command := fmt.Sprintf(`%s python3 -u -c 'import base64;exec(base64.b64decode("%s"))' %s %s`, prefix, program, mode, target)
+	options = slices.Clone(options)
+	for i := 0; i+1 < len(options); i++ {
+		if options[i] == "--sftp-server-command" {
+			options[i+1] = command
+			return options
+		}
+	}
+	return append(options, "--sftp-server-command", command)
+}
+
+func sshAbout(ctx context.Context, exe, remote string, options, env []string) (sshFilesystemSpace, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	args := append([]string{"about", remote, "--json"}, options...)
+	cmd := hiddenCommandContext(ctx, exe, args...)
+	cmd.Env = env
+	data, err := cmd.Output()
+	if err != nil {
+		return sshFilesystemSpace{}, err
+	}
+	var result sshFilesystemSpace
+	if err := json.Unmarshal(data, &result); err != nil || result.Total == nil || result.Free == nil ||
+		*result.Total <= 0 || *result.Free < 0 || *result.Free > *result.Total {
+		return sshFilesystemSpace{}, errors.New("无法读取远程存储容量")
+	}
+	return result, nil
+}
 
 type rcloneMount struct {
 	cmd           *exec.Cmd
@@ -143,6 +191,16 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	exe := findRclone()
 	if exe == "" || !hasWinFsp() {
 		return "", nil, remoteError("missing_tools", "请先安装 rclone 和 WinFsp 挂载组件")
+	}
+	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
+		// rclone's SFTP backend cannot query a subdirectory's statvfs directly
+		// ("Operation unsupported"), so the proxy rewrites that request on the
+		// server. If the server cannot run it, keep the mount usable and let the
+		// underlying backend report whatever capacity it can.
+		candidate := sshCapacityOptions(endpoint, options)
+		if _, capacityErr := sshAbout(ctx, exe, ":sftp:/", candidate, env); capacityErr == nil {
+			options = candidate
+		}
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
 	if expectedID != "" {

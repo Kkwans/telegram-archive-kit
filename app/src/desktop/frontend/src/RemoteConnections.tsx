@@ -73,6 +73,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
   const [pending, setPending] = useState("");
   const [rename, setRename] = useState<{ id: string; label: string } | null>(null);
   const [forget, setForget] = useState<SavedRemoteConnection | null>(null);
+  const [unmount, setUnmount] = useState<SavedRemoteConnection | null>(null);
   const [waiting, setWaiting] = useState("");
   const waitRef = useRef("");
   const writeRef = useRef(false);
@@ -256,10 +257,11 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
                     if (menu) menu.open = false;
                     onPasswordConnection(item);
                   }}><FolderOpen size={14} /> 挂载设置</button>}
-                  {item.mounted && !item.active && <button type="button" disabled={busy || inProgress} onClick={(event) => {
+                  {item.mounted && <button type="button" disabled={busy || inProgress} onClick={(event) => {
                     const menu = event.currentTarget.closest("details");
                     if (menu) menu.open = false;
-                    void perform(item.id, "remoteConnectionUnmount", { id: item.id }, () => toast("已卸载盘符"));
+                    if (item.active) setUnmount(item);
+                    else void perform(item.id, "remoteConnectionUnmount", { id: item.id }, () => toast("已卸载盘符"));
                   }}><WifiOff size={14} /> 卸载盘符</button>}
                   <button type="button" className="danger" disabled={busy || inProgress} aria-label={`移除连接 ${item.label || location}`} onClick={(event) => {
                     const menu = event.currentTarget.closest("details");
@@ -279,6 +281,11 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
       <div className="saved-connection-edit-field"><label htmlFor="saved-connection-label">连接名称</label><input id="saved-connection-label" type="text" autoFocus value={rename.label} maxLength={100} disabled={!!pending || !!waiting} onChange={(event) => setRename({ ...rename, label: event.target.value })} /></div>
       <div className="saved-connection-edit-actions"><button type="submit" className="btn sm primary" disabled={!!pending || !!waiting || !rename.label.trim()}>{pending === rename.id ? <Loader2 size={13} className="spin" /> : <Check size={13} />} 保存</button><button type="button" className="btn sm ghost" aria-label="取消重命名" onClick={closeRename} disabled={!!pending}><X size={13} /> 取消</button></div>
     </form>}
+    <ConfirmDialog compact open={!!unmount} title="卸载当前盘符？" message="当前档案库会关闭，保存的连接会保留。重新连接后即可继续使用。" confirmLabel="卸载盘符" onCancel={() => setUnmount(null)} onConfirm={() => {
+      const item = unmount;
+      setUnmount(null);
+      if (item) void perform(item.id, "remoteConnectionUnmount", { id: item.id }, () => { onConnected(); toast("已卸载盘符，可以重新连接"); });
+    }} />
     <ConfirmDialog compact open={!!forget} title={`移除连接「${forget?.label || (forget ? address(forget) : "")}」？`} message={forget?.active ? "移除后将关闭当前档案库并卸载盘符，档案库文件会保留。" : "移除此连接和自动重连设置，档案库文件会保留。"} confirmLabel="移除连接" danger onCancel={() => setForget(null)} onConfirm={() => { const item = forget; setForget(null); if (item) void perform(item.id, "remoteConnectionForget", { id: item.id }, () => { if (item.active) onConnected(); toast("已移除保存的连接"); }); }} />
   </section>;
 }

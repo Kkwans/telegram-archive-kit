@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,6 +14,26 @@ import (
 
 	takapp "telegramarchivekit/internal/app"
 )
+
+func TestSSHCapacityOptionsUseSelectedFilesystem(t *testing.T) {
+	endpoint := remoteEndpoint{Kind: "ssh", Path: "/volume2/测试 archive", SSHUseRoot: true}
+	original := []string{"--config", "NUL", "--sftp-server-command", "old"}
+	options := sshCapacityOptions(endpoint, original)
+	if original[3] != "old" || len(options) != len(original) {
+		t.Fatalf("options were modified or duplicated: %v", options)
+	}
+	command := options[3]
+	if !strings.Contains(command, "sudo -n") || !strings.Contains(command, " system ") ||
+		!strings.Contains(command, base64.StdEncoding.EncodeToString([]byte(endpoint.Path))) ||
+		strings.Contains(command, endpoint.Path) {
+		t.Fatal("system capacity command did not safely encode the selected path")
+	}
+	endpoint.SSHUseRoot = false
+	options = sshCapacityOptions(endpoint, []string{"--config", "NUL"})
+	if len(options) != 4 || !strings.Contains(options[3], " share ") || strings.Contains(options[3], "sudo -n") {
+		t.Fatal("ordinary SSH capacity command used the wrong server mode")
+	}
+}
 
 const testSavedLibraryID = "0123456789abcdef0123456789abcdef"
 
@@ -102,6 +123,49 @@ func TestRemoteConnectionListReportsLiveAndSavedMounts(t *testing.T) {
 	list, err = service.list()
 	if err != nil || list.Connections[0].Active || list.Connections[0].Status != "mounted" {
 		t.Fatalf("inactive saved mount was reported offline: %+v, %v", list, err)
+	}
+}
+
+func TestUnmountCurrentConnectionPreservesSavedRecord(t *testing.T) {
+	root, config := t.TempDir(), t.TempDir()
+	t.Setenv("TAK_CONFIG_DIR", config)
+	t.Setenv("TAK_LIBRARY_ROOT", root)
+	facade, err := takapp.OpenFacade()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.AcquireLibraryLock(); err != nil {
+		t.Fatal(err)
+	}
+	defer facade.ReleaseLibraryLock()
+	id, err := facade.RegisterCurrentLibrary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.SetCurrentLibraryIdentity(root, id); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := remoteEndpoint{Kind: "ssh", Name: "fixture@host", Path: "/archive"}
+	done := make(chan struct{})
+	close(done)
+	mount := &rcloneMount{endpoint: endpoint, libraryRoot: root, ready: true, done: done}
+	drive := strings.ToUpper(filepath.VolumeName(root)[:1])
+	bridge := &Bridge{facade: facade, mounts: map[string]*rcloneMount{drive: mount}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := &remoteConnections{
+		b: bridge, ctx: ctx, progress: make(map[string]remoteProgress),
+		records: []savedRemoteConnection{{ID: id, Root: root, remoteEndpoint: endpoint}},
+		current: remoteSelection{id: id, root: root, ready: true, mount: mount},
+	}
+	if _, err := service.rpc(ctx, "remoteConnectionUnmount", []byte(`{"id":"`+id+`"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if selected, identity := facade.CurrentLibrarySelection(); selected != "" || identity != "" {
+		t.Fatal("unmount retained the active library selection")
+	}
+	if len(service.records) != 1 || service.records[0].ID != id {
+		t.Fatal("unmount removed the saved connection")
 	}
 }
 

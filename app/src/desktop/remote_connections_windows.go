@@ -903,20 +903,31 @@ func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.Raw
 		defer s.activation.Unlock()
 		s.mu.Lock()
 		_, record, found := s.recordLocked(p.ID)
-		active := s.current.id == p.ID && s.current.ready &&
-			s.current.mount != nil && s.current.mount.endpoint.same(record.remoteEndpoint)
+		current := s.current
+		currentMount := s.b.remoteMountAt(current.root)
+		active := current.id == p.ID && (currentMount == nil || currentMount.endpoint.same(record.remoteEndpoint))
 		s.mu.Unlock()
 		if !found || record.Kind != "ssh" {
 			return nil, errors.New("未找到 SSH 连接")
 		}
 		if active {
-			return nil, errors.New("请先切换到其他档案库，再卸载此盘符")
+			if !s.b.archiveMu.TryLock() {
+				return nil, takapp.ErrOperationRunning
+			}
+			defer s.b.archiveMu.Unlock()
+			if err := s.withPublicationSwitch(func() error {
+				return s.b.facade.ClearLibrarySelection(current.root, current.id)
+			}); err != nil {
+				return nil, err
+			}
+			s.refreshSelection()
 		}
 		if err := stopRemoteMount(s.b.remoteMountAt(s.b.existingSSHMount(record.remoteEndpoint))); err != nil {
 			return nil, err
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		delete(s.progress, p.ID)
 		_, latest, found := s.recordLocked(p.ID)
 		if !found {
 			return nil, errors.New("未找到 SSH 连接")

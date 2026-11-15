@@ -141,9 +141,9 @@
 .saved-connections { --saved-add-width: 104px; --saved-action-width: 188px; --saved-row-columns: 32px minmax(0, 1fr) 94px 64px var(--saved-action-width); }
 .saved-connections .saved-connections-head { gap: 16px; min-height: 32px; }
 .saved-connections .saved-connections-head h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.saved-connections .saved-connections-head > .btn { height: 32px; width: var(--saved-add-width); flex: none; margin: 0 calc(11px + (var(--saved-action-width) - var(--saved-add-width)) / 2) 0 0; padding-inline: 8px; justify-content: center; align-self: center; white-space: nowrap; }
+.saved-connections .saved-connections-head > .btn { height: 32px; width: var(--saved-add-width); flex: none; margin: 0; padding-inline: 8px; justify-content: center; align-self: center; white-space: nowrap; }
 .saved-connections .saved-connections-head > .btn > svg { flex: none; }
-.mounted-connections { display: grid; gap: 8px; margin-bottom: 16px; }
+.mounted-connections { display: grid; gap: 8px; }
 .mounted-connections-heading h3 { margin: 0; font-size: 14px; }
 .mounted-connection { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .mounted-connection-status { display: grid; justify-items: center; gap: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
