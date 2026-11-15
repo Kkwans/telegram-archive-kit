@@ -127,8 +127,7 @@ func (b *Bridge) clearMountSpace(mount *rcloneMount) {
 // the background so existing mounts adopt the corrected storage display without
 // requiring a remount.
 func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
-	if mount == nil || mount.endpoint.Kind != "ssh" || !mount.endpoint.SSHUseRoot ||
-		mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
+	if mount == nil || mount.endpoint.Kind != "ssh" || mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
 		return
 	}
 	b.mountMu.Lock()
@@ -266,15 +265,23 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		return "", nil, remoteError("missing_tools", "请先安装 rclone 和 WinFsp 挂载组件")
 	}
 	libraryFree, libraryTotal := int64(0), int64(0)
-	if endpoint.Kind == "ssh" && endpoint.SSHUseRoot && endpoint.Path != "" && endpoint.Path != "/" {
-		// Full-filesystem mode mounts the server root, whose statvfs is the
-		// small system overlay. Report total data capacity for that optional
-		// whole-server view. Ordinary SFTP mounts the library's parent share
-		// directly, so Windows already sees the real share capacity.
+	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
+		rawSpace, rawErr := sshAbout(ctx, exe, ":sftp:/", options, env)
 		proxyOptions := sshCapacityOptions(endpoint, options)
-		if proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env); proxyErr == nil {
+		proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env)
+		rawTotal := int64(0)
+		if rawErr == nil && rawSpace.Total != nil {
+			rawTotal = *rawSpace.Total
+		}
+		// Keep the full mount view in both cases. Use the capacity relay only
+		// when the native SFTP statvfs is clearly reporting the wrong
+		// filesystem (e.g. a small system overlay instead of NAS data disks).
+		if proxyErr == nil && proxySpace.Total != nil &&
+			(rawErr != nil || rawTotal <= 0 || *proxySpace.Total > rawTotal*3/2) {
 			options = proxyOptions
 			libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
+		} else if rawErr == nil && rawSpace.Total != nil {
+			libraryFree, libraryTotal = *rawSpace.Free, *rawSpace.Total
 		}
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
@@ -346,23 +353,10 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	mountPath := endpoint.Path
 	dirCacheTime := "30s"
 	if endpoint.Kind == "ssh" && strings.HasPrefix(endpoint.Path, "/") {
-		if endpoint.SSHUseRoot {
-			// Whole-server view: the drive exposes the Linux root while TAK
-			// opens only the chosen library.
-			root = filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(endpoint.Path, "/")))
-			mountPath = "/"
-		} else {
-			// Mount the library's parent share, not the SFTP root. This keeps
-			// the drive's reported capacity on the actual data volume without
-			// any capacity relay or vendor-specific /volume paths.
-			parent := path.Dir(endpoint.Path)
-			base := path.Base(endpoint.Path)
-			if parent == "." || parent == "/" {
-				parent = endpoint.Path
-			}
-			root = filepath.Join(root, base)
-			mountPath = parent
-		}
+		// The drive exposes the full SFTP view while TAK opens only the chosen
+		// library. Keep this for ordinary and full-filesystem modes alike.
+		root = filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(endpoint.Path, "/")))
+		mountPath = "/"
 		dirCacheTime = "1m"
 	}
 	// The write-back interval lets close-and-rename writes reach their final
