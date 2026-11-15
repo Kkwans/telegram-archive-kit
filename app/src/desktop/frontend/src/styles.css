@@ -423,14 +423,8 @@ body.glass-capturing dialog[aria-modal="true"][open]::backdrop { visibility: hid
   padding: calc(var(--overlay-top) + 16px) 16px 16px calc(var(--overlay-left) + 16px);
   clip-path: inset(var(--overlay-top) 0 0 var(--overlay-left));
 }
-:root {
-  --dialog-shade: rgb(17 24 39 / 28%);
-}
-:root[data-theme="dark"] {
-  --dialog-shade: rgb(5 9 18 / 48%);
-}
 :root body :is(.modal-backdrop, .remote-dialog-backdrop) {
-  background: var(--dialog-shade);
+  background: transparent;
 }
 dialog[aria-modal="true"] {
   inset: var(--overlay-top) 0 0 var(--overlay-left);
@@ -438,7 +432,7 @@ dialog[aria-modal="true"] {
   max-height: calc(100dvh - var(--overlay-top) - 32px) !important;
 }
 :root body dialog[aria-modal="true"][open]::backdrop {
-  background: var(--dialog-shade);
+  background: transparent;
   clip-path: inset(var(--overlay-top) 0 0 var(--overlay-left));
 }
 .modal-backdrop:not(.palette-backdrop) > .modal, .remote-dialog-backdrop > .remote-modal {
