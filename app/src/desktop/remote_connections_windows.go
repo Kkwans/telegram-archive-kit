@@ -699,7 +699,6 @@ func (s *remoteConnections) save(ctx context.Context, root, label, sshPassword s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, record, _ := s.recordLocked(id)
-	previousEndpoint := record.remoteEndpoint
 	previousTarget := s.credentialTarget(record)
 	record.ID, record.remoteEndpoint, record.AutoReconnect = id, endpoint, auto
 	target := s.credentialTarget(record)
@@ -742,14 +741,6 @@ func (s *remoteConnections) save(ctx context.Context, root, label, sshPassword s
 		return remoteConnectionDTO{}, err
 	}
 	delete(s.progress, id)
-	// Switching between ordinary SFTP and full-filesystem mode replaces the
-	// saved reconnect profile. Retire the old same-library mount so it cannot
-	// linger as an untracked drive after the mode change.
-	if previousEndpoint.Kind == "ssh" && endpoint.Kind == "ssh" && previousEndpoint.SSHUseRoot != endpoint.SSHUseRoot {
-		if drive := s.b.sshMountDrive(previousEndpoint); drive != "" {
-			_ = s.b.StopRcloneMount(drive)
-		}
-	}
 	if previousTarget != "" && previousTarget != target {
 		if err := deleteSSHPassword(previousTarget); err != nil {
 			return s.entryLocked(record), err

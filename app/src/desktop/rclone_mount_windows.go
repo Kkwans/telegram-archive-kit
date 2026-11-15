@@ -37,7 +37,7 @@ type sshFilesystemSpace struct {
 	Free  *int64 `json:"free"`
 }
 
-func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) []string {
+func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode, libraryID string) []string {
 	scope, prefix := "share", "exec"
 	if endpoint.SSHUseRoot {
 		scope, prefix = "system", "exec sudo -n -u root --"
@@ -48,7 +48,7 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) 
 	_ = writer.Close()
 	program := base64.StdEncoding.EncodeToString(packed.Bytes())
 	target := base64.StdEncoding.EncodeToString([]byte(endpoint.Path))
-	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s`, prefix, program, scope, mode, target)
+	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s %s`, prefix, program, scope, mode, target, libraryID)
 	options = slices.Clone(options)
 	for i := 0; i+1 < len(options); i++ {
 		if options[i] == "--sftp-server-command" {
@@ -62,7 +62,7 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) 
 // sshCapacityOptions makes the mounted drive report total usable capacity
 // without assuming any vendor-specific volume layout.
 func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
-	return sshCapacityCommand(endpoint, options, "all")
+	return sshCapacityCommand(endpoint, options, "all", "")
 }
 
 func sshAbout(ctx context.Context, exe, remote string, options, env []string) (sshFilesystemSpace, error) {
@@ -148,6 +148,9 @@ func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	capacityOptions := sshCapacityOptions(mount.endpoint, options)
+	if !mount.endpoint.SSHUseRoot {
+		capacityOptions = sshCapacityCommand(mount.endpoint, options, "library", "")
+	}
 	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, nil)
 	if err != nil || space.Total == nil || space.Free == nil {
 		return
@@ -266,22 +269,27 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 	libraryFree, libraryTotal := int64(0), int64(0)
 	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
-		rawSpace, rawErr := sshAbout(ctx, exe, ":sftp:/", options, env)
-		proxyOptions := sshCapacityOptions(endpoint, options)
-		proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env)
-		rawTotal := int64(0)
-		if rawErr == nil && rawSpace.Total != nil {
-			rawTotal = *rawSpace.Total
-		}
-		// Keep the full mount view in both cases. Use the capacity relay only
-		// when the native SFTP statvfs is clearly reporting the wrong
-		// filesystem (e.g. a small system overlay instead of NAS data disks).
-		if proxyErr == nil && proxySpace.Total != nil &&
-			(rawErr != nil || rawTotal <= 0 || *proxySpace.Total > rawTotal*3/2) {
-			options = proxyOptions
-			libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
-		} else if rawErr == nil && rawSpace.Total != nil {
-			libraryFree, libraryTotal = *rawSpace.Free, *rawSpace.Total
+		// Keep the full NAS view. Ordinary SFTP reports the library's real
+		// volume when it can be resolved generically; otherwise fall back to
+		// total data capacity. Full-filesystem mode always reports total.
+		if !endpoint.SSHUseRoot {
+			targetOptions := sshCapacityCommand(endpoint, options, "library", "")
+			if targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env); targetErr == nil {
+				options = targetOptions
+				libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
+			} else {
+				proxyOptions := sshCapacityOptions(endpoint, options)
+				if proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env); proxyErr == nil {
+					options = proxyOptions
+					libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
+				}
+			}
+		} else {
+			proxyOptions := sshCapacityOptions(endpoint, options)
+			if proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env); proxyErr == nil {
+				options = proxyOptions
+				libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
+			}
 		}
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
