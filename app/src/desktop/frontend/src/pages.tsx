@@ -4272,7 +4272,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                       <div className="ssh-browser-head"><b>{sshUseRoot ? "选择档案库目录 · 服务器文件系统" : "选择档案库目录 · SFTP"}</b>{sshDirectory.library && <span><CheckCircle2 size={13} /> 已识别档案库</span>}</div>
                       <div className="ssh-path"><button type="button" className="icon-btn" aria-label="上一级目录" data-tip="上一级目录" disabled={remoteFormBusy || sshDirectory.path === "/"} onClick={() => void browseSSH(sshDirectory.path.slice(0, sshDirectory.path.lastIndexOf("/")) || "/")}><ChevronLeft size={16} /></button>
                         <code data-tip={sshDirectory.path}>{sshDirectory.path}</code></div>
-                      <p className="ssh-path-note">{sshUseRoot ? "服务器绝对路径：请从 /volume1、/volume2 等卷进入后选择档案库目录。" : "SFTP 共享视图：显示 NAS 的共享文件夹和个人文件夹，不区分 volume1/volume2。"}</p>
+                      <p className="ssh-path-note">{sshUseRoot ? "服务器绝对路径：请从 /volume1、/volume2 等卷进入后选择档案库目录。" : "SFTP 共享视图：显示 NAS 的共享文件夹和个人文件夹；连接后挂载所选目录的父级共享，容量取实际数据卷。"}</p>
                       <div className="ssh-folders">{sshDirectory.folders.length ? sshDirectory.folders.map((name) => <button type="button" key={name} disabled={remoteFormBusy} onClick={() => void browseSSH(`${sshDirectory.path === "/" ? "" : sshDirectory.path}/${name}`)}><FolderOpen size={15} /><span>{name}</span><ChevronRight size={14} /></button>) : <p>没有子目录</p>}</div>
                     </section>}
                     {sshSystemDirectory && <section className="ssh-browser" aria-label="服务器文件系统">

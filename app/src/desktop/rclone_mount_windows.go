@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -38,7 +37,7 @@ type sshFilesystemSpace struct {
 	Free  *int64 `json:"free"`
 }
 
-func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode, libraryID string) []string {
+func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) []string {
 	scope, prefix := "share", "exec"
 	if endpoint.SSHUseRoot {
 		scope, prefix = "system", "exec sudo -n -u root --"
@@ -49,7 +48,7 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode, library
 	_ = writer.Close()
 	program := base64.StdEncoding.EncodeToString(packed.Bytes())
 	target := base64.StdEncoding.EncodeToString([]byte(endpoint.Path))
-	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s %s`, prefix, program, scope, mode, target, libraryID)
+	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s`, prefix, program, scope, mode, target)
 	options = slices.Clone(options)
 	for i := 0; i+1 < len(options); i++ {
 		if options[i] == "--sftp-server-command" {
@@ -60,20 +59,10 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode, library
 	return append(options, "--sftp-server-command", command)
 }
 
-// sshCapacityOptions makes the mounted drive report the whole NAS capacity,
-// because the drive exposes the server root with volume1 and volume2.
+// sshCapacityOptions makes the mounted drive report total usable capacity
+// without assuming any vendor-specific volume layout.
 func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
-	return sshCapacityCommand(endpoint, options, "all", "")
-}
-
-// sshTargetCapacityOptions reports the specific volume that holds the library;
-// the desktop shell registers this for storage cards and space checks.
-func sshTargetCapacityOptions(endpoint remoteEndpoint, options []string) []string {
-	return sshCapacityCommand(endpoint, options, "target", "")
-}
-
-func sshLibraryCapacityOptions(endpoint remoteEndpoint, options []string, libraryID string) []string {
-	return sshCapacityCommand(endpoint, options, "library", libraryID)
+	return sshCapacityCommand(endpoint, options, "all")
 }
 
 func sshAbout(ctx context.Context, exe, remote string, options, env []string) (sshFilesystemSpace, error) {
@@ -110,23 +99,6 @@ type rcloneMount struct {
 	report        mountReport
 }
 
-func mountLibraryID(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, ".runtime", "library-id"))
-	if err != nil {
-		return ""
-	}
-	id := strings.TrimSpace(string(data))
-	if len(id) != 32 {
-		return ""
-	}
-	for _, r := range id {
-		if !strings.ContainsRune("0123456789abcdef", r) {
-			return ""
-		}
-	}
-	return id
-}
-
 func (b *Bridge) registerMountSpace(mount *rcloneMount) {
 	if mount == nil {
 		return
@@ -155,7 +127,8 @@ func (b *Bridge) clearMountSpace(mount *rcloneMount) {
 // the background so existing mounts adopt the corrected storage display without
 // requiring a remount.
 func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
-	if mount == nil || mount.endpoint.Kind != "ssh" || mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
+	if mount == nil || mount.endpoint.Kind != "ssh" || !mount.endpoint.SSHUseRoot ||
+		mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
 		return
 	}
 	b.mountMu.Lock()
@@ -176,15 +149,6 @@ func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	capacityOptions := sshCapacityOptions(mount.endpoint, options)
-	if mount.endpoint.SSHUseRoot {
-		capacityOptions = sshTargetCapacityOptions(mount.endpoint, options)
-	} else {
-		id := mountLibraryID(mount.libraryRoot)
-		if id == "" {
-			return
-		}
-		capacityOptions = sshLibraryCapacityOptions(mount.endpoint, options, id)
-	}
 	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, nil)
 	if err != nil || space.Total == nil || space.Free == nil {
 		return
@@ -302,23 +266,15 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		return "", nil, remoteError("missing_tools", "请先安装 rclone 和 WinFsp 挂载组件")
 	}
 	libraryFree, libraryTotal := int64(0), int64(0)
-	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
-		// The capacity proxy keeps the forced-command SFTP view in ordinary
-		// mode and the Linux root in full-filesystem mode; only statvfs is
-		// replaced. The merged SFTP view has no single volume, so it reports
-		// the combined NAS capacity; full-filesystem mode reports the selected
-		// server volume.
-		mountOptions := sshCapacityOptions(endpoint, options)
-		if mountSpace, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
-			options = mountOptions
-			libraryFree, libraryTotal = *mountSpace.Free, *mountSpace.Total
-		}
-		if endpoint.SSHUseRoot {
-			targetOptions := sshTargetCapacityOptions(endpoint, options)
-			if targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env); targetErr == nil {
-				options = targetOptions
-				libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
-			}
+	if endpoint.Kind == "ssh" && endpoint.SSHUseRoot && endpoint.Path != "" && endpoint.Path != "/" {
+		// Full-filesystem mode mounts the server root, whose statvfs is the
+		// small system overlay. Report total data capacity for that optional
+		// whole-server view. Ordinary SFTP mounts the library's parent share
+		// directly, so Windows already sees the real share capacity.
+		proxyOptions := sshCapacityOptions(endpoint, options)
+		if proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env); proxyErr == nil {
+			options = proxyOptions
+			libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
 		}
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
@@ -390,9 +346,23 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	mountPath := endpoint.Path
 	dirCacheTime := "30s"
 	if endpoint.Kind == "ssh" && strings.HasPrefix(endpoint.Path, "/") {
-		// The drive exposes the SFTP root while TAK opens only the chosen library.
-		root = filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(endpoint.Path, "/")))
-		mountPath = "/"
+		if endpoint.SSHUseRoot {
+			// Whole-server view: the drive exposes the Linux root while TAK
+			// opens only the chosen library.
+			root = filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(endpoint.Path, "/")))
+			mountPath = "/"
+		} else {
+			// Mount the library's parent share, not the SFTP root. This keeps
+			// the drive's reported capacity on the actual data volume without
+			// any capacity relay or vendor-specific /volume paths.
+			parent := path.Dir(endpoint.Path)
+			base := path.Base(endpoint.Path)
+			if parent == "." || parent == "/" {
+				parent = endpoint.Path
+			}
+			root = filepath.Join(root, base)
+			mountPath = parent
+		}
 		dirCacheTime = "1m"
 	}
 	// The write-back interval lets close-and-rename writes reach their final
@@ -516,19 +486,6 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			b.mountMu.Unlock()
 			if mount.ready {
 				b.registerMountSpace(mount)
-				if !endpoint.SSHUseRoot {
-					if id := mountLibraryID(root); id != "" {
-						libCtx, libCancel := context.WithTimeout(context.Background(), 12*time.Second)
-						libOptions := sshLibraryCapacityOptions(endpoint, options, id)
-						if space, spaceErr := sshAbout(libCtx, exe, ":sftp:/", libOptions, env); spaceErr == nil {
-							b.mountMu.Lock()
-							mount.libraryFree, mount.libraryTotal = *space.Free, *space.Total
-							b.mountMu.Unlock()
-							b.registerMountSpace(mount)
-						}
-						libCancel()
-					}
-				}
 			}
 			if persistErr != nil {
 				_ = stopRemoteMount(mount)

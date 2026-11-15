@@ -1,7 +1,6 @@
 import base64
 import os
 import pwd
-import re
 import shutil
 import struct
 import subprocess
@@ -11,7 +10,6 @@ import threading
 scope = sys.argv[1] if len(sys.argv) > 1 else "share"
 capacity_mode = sys.argv[2] if len(sys.argv) > 2 else "target"
 target = base64.b64decode(sys.argv[3]).decode("utf-8") if len(sys.argv) > 3 else "/"
-library_id = sys.argv[4] if len(sys.argv) > 4 else ""
 
 
 def server_command():
@@ -133,11 +131,9 @@ def volume_values():
                 mounts.append(mountpoint)
     except OSError:
         return []
-    preferred = [item for item in mounts if re.match(r"^/volume[0-9]+(/|$)", item)]
-    candidates = preferred or [item for item in mounts if item != "/"]
     seen = set()
     total = free = 0
-    for mountpoint in candidates:
+    for mountpoint in mounts:
         try:
             device = os.stat(mountpoint).st_dev
             if device in seen:
@@ -153,49 +149,6 @@ def volume_values():
     return total, free
 
 
-def data_volume_mounts():
-    mounts = []
-    try:
-        with open("/proc/mounts", "r", encoding="utf-8") as source:
-            for line in source:
-                fields = line.split()
-                if len(fields) < 3 or fields[2] not in REAL_FILESYSTEMS:
-                    continue
-                mountpoint = fields[1].replace("\\040", " ")
-                mounts.append(mountpoint)
-    except OSError:
-        return []
-    preferred = [item for item in mounts if re.match(r"^/volume[0-9]+(/|$)", item)]
-    return preferred or [item for item in mounts if item != "/"]
-
-
-def library_target():
-    """Resolve the merged SFTP library path to its real data-volume path."""
-    def marker_matches(path):
-        try:
-            with open(os.path.join(path, ".runtime", "library-id"), "r", encoding="utf-8") as source:
-                return source.read().strip() == library_id
-        except OSError:
-            return False
-
-    if os.path.exists(target) and (not library_id or marker_matches(target)):
-        return target
-    relative = target.lstrip("/")
-    matches = []
-    fallback = []
-    for volume in data_volume_mounts():
-        candidate = os.path.join(volume, relative)
-        if os.path.isfile(os.path.join(candidate, "library.json")):
-            fallback.append(candidate)
-            if not library_id or marker_matches(candidate):
-                matches.append(candidate)
-    if len(matches) == 1:
-        return matches[0]
-    if not library_id and len(fallback) == 1:
-        return fallback[0]
-    return target
-
-
 def filesystem_values():
     if capacity_mode == "all":
         aggregate = volume_values()
@@ -204,8 +157,7 @@ def filesystem_values():
             block = 4096
             return (block, block, total // block, free // block, free // block,
                     0, 0, 0, 0, 0, 255)
-    path = library_target() if capacity_mode == "library" else target
-    info = os.statvfs(path)
+    info = os.statvfs(target)
     return (info.f_bsize, info.f_frsize, info.f_blocks, info.f_bfree,
             info.f_bavail, info.f_files, info.f_ffree, info.f_favail,
             getattr(info, "f_fsid", 0), info.f_flag & 3, info.f_namemax)
