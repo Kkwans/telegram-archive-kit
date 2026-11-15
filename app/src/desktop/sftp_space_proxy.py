@@ -115,12 +115,16 @@ def statvfs_request(packet):
 
 
 REAL_FILESYSTEMS = {
-    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "ntfs", "fuseblk", "zfs",
+    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "ntfs", "zfs",
 }
 
 
 def volume_values():
-    """Sum the NAS data volumes exposed below the mount root."""
+    """Sum the NAS data volumes exposed below the mount root.
+
+    FUSE filesystems are excluded because they usually represent removable or
+    external disks rather than the NAS storage pool.
+    """
     mounts = []
     try:
         with open("/proc/mounts", "r", encoding="utf-8") as source:
