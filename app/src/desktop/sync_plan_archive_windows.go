@@ -210,6 +210,16 @@ func (b *Bridge) stagePlanArchive(ctx context.Context, plan SyncPlan, target Syn
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return input, err
 	}
+	// Older builds could persist a staged checkpoint after an empty history
+	// fetch and then report the chat as successfully archived. Re-fetch it
+	// instead of importing the empty staged source.
+	if cp.Stage == "staged" && plan.FirstScope == "all" && cp.Cursor == 0 && cp.AddedMessages == 0 &&
+		cp.Through == 0 && len(cp.PendingMedia) == 0 && chat.LastMessageID > 0 {
+		cp.Stage, cp.Offset, cp.Through = "", 0, 0
+		if err := save(*cp); err != nil {
+			return input, err
+		}
+	}
 	if cp.Stage != "staged" {
 		var since int64
 		if cp.Cursor == 0 && target.Slug == "" {
