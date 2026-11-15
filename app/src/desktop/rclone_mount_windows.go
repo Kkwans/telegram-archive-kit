@@ -9,9 +9,11 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -63,6 +65,29 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode, library
 // without assuming any vendor-specific volume layout.
 func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
 	return sshCapacityCommand(endpoint, options, "all", "")
+}
+
+func sshTargetCapacityOptions(endpoint remoteEndpoint, options []string) []string {
+	return sshCapacityCommand(endpoint, options, "target", "")
+}
+
+func sshLibraryCapacityOptions(endpoint remoteEndpoint, options []string, libraryID string) []string {
+	return sshCapacityCommand(endpoint, options, "library", libraryID)
+}
+
+func mountLibraryID(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, ".runtime", "library-id"))
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(string(data))
+	if len(id) != 32 {
+		return ""
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return ""
+	}
+	return id
 }
 
 func sshAbout(ctx context.Context, exe, remote string, options, env []string) (sshFilesystemSpace, error) {
@@ -130,13 +155,6 @@ func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
 	if mount == nil || mount.endpoint.Kind != "ssh" || mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
 		return
 	}
-	b.mountMu.Lock()
-	done := mount.libraryTotal > 0
-	b.mountMu.Unlock()
-	if done {
-		b.registerMountSpace(mount)
-		return
-	}
 	exe := findRclone()
 	if exe == "" {
 		return
@@ -147,9 +165,9 @@ func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	capacityOptions := sshCapacityOptions(mount.endpoint, options)
+	capacityOptions := sshTargetCapacityOptions(mount.endpoint, options)
 	if !mount.endpoint.SSHUseRoot {
-		capacityOptions = sshCapacityCommand(mount.endpoint, options, "library", "")
+		capacityOptions = sshLibraryCapacityOptions(mount.endpoint, options, mountLibraryID(mount.libraryRoot))
 	}
 	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, nil)
 	if err != nil || space.Total == nil || space.Free == nil {
@@ -269,26 +287,18 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 	libraryFree, libraryTotal := int64(0), int64(0)
 	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
-		// Keep the full NAS view. Ordinary SFTP reports the library's real
-		// volume when it can be resolved generically; otherwise fall back to
-		// total data capacity. Full-filesystem mode always reports total.
-		if !endpoint.SSHUseRoot {
-			targetOptions := sshCapacityCommand(endpoint, options, "library", "")
-			if targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env); targetErr == nil {
-				options = targetOptions
-				libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
-			} else {
-				proxyOptions := sshCapacityOptions(endpoint, options)
-				if proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env); proxyErr == nil {
-					options = proxyOptions
-					libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
+		// The drive keeps the full NAS view and reports total data capacity in
+		// Explorer. The app separately overrides storage cards and space checks
+		// with the real volume that holds the library.
+		mountOptions := sshCapacityOptions(endpoint, options)
+		if mountSpace, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
+			options = mountOptions
+			libraryFree, libraryTotal = *mountSpace.Free, *mountSpace.Total
+			if endpoint.SSHUseRoot {
+				targetOptions := sshTargetCapacityOptions(endpoint, options)
+				if targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env); targetErr == nil {
+					libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
 				}
-			}
-		} else {
-			proxyOptions := sshCapacityOptions(endpoint, options)
-			if proxySpace, proxyErr := sshAbout(ctx, exe, ":sftp:/", proxyOptions, env); proxyErr == nil {
-				options = proxyOptions
-				libraryFree, libraryTotal = *proxySpace.Free, *proxySpace.Total
 			}
 		}
 	}
@@ -488,6 +498,18 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			b.mountMu.Unlock()
 			if mount.ready {
 				b.registerMountSpace(mount)
+				if !endpoint.SSHUseRoot {
+					libOptions := sshLibraryCapacityOptions(endpoint, options, mountLibraryID(root))
+					libCtx, libCancel := context.WithTimeout(context.Background(), 12*time.Second)
+					if space, spaceErr := sshAbout(libCtx, exe, ":sftp:/", libOptions, env); spaceErr == nil {
+						b.mountMu.Lock()
+						mount.libraryFree, mount.libraryTotal = *space.Free, *space.Total
+						b.mountMu.Unlock()
+						b.registerMountSpace(mount)
+						_ = b.rememberSSHMount(drive, mount)
+					}
+					libCancel()
+				}
 			}
 			if persistErr != nil {
 				_ = stopRemoteMount(mount)
