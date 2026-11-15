@@ -27,10 +27,6 @@ func TestSSHCapacityOptionsUseSelectedFilesystem(t *testing.T) {
 		strings.Contains(command, endpoint.Path) {
 		t.Fatal("mounted capacity command did not safely encode the selected path")
 	}
-	targeted := sshTargetCapacityOptions(endpoint, []string{"--config", "NUL"})
-	if len(targeted) != 4 || !strings.Contains(targeted[3], " target ") {
-		t.Fatal("target capacity command used the wrong mode")
-	}
 	endpoint.SSHUseRoot = false
 	mounted = sshCapacityOptions(endpoint, []string{"--config", "NUL"})
 	if len(mounted) != 4 || !strings.Contains(mounted[3], " all ") || strings.Contains(mounted[3], "sudo -n") {

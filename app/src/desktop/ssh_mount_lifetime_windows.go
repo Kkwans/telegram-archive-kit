@@ -114,6 +114,20 @@ func verifiedSSHMountProcess(record sshMountRecord) (windows.Handle, error) {
 	return 0, nil
 }
 
+func (b *Bridge) sshMountDrive(endpoint remoteEndpoint) string {
+	if endpoint.Kind != "ssh" {
+		return ""
+	}
+	b.mountMu.Lock()
+	defer b.mountMu.Unlock()
+	for drive, mount := range b.mounts {
+		if mount.ready && mount.endpoint.Kind == "ssh" && mount.endpoint.same(endpoint) {
+			return drive
+		}
+	}
+	return ""
+}
+
 func (b *Bridge) existingSSHMount(endpoint remoteEndpoint) string {
 	if endpoint.Kind != "ssh" {
 		return ""
