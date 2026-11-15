@@ -239,6 +239,8 @@ func TestSyncPlanRetryKeepsCheckpointAndCompletedTargets(t *testing.T) {
 		return SyncPlanTargetResult{Cursor: 15, AddedMessages: 8, TaskID: "download-second"}, nil
 	}})
 	draft := syncTestDraft()
+	legacyLimit := 2
+	draft.MaxRetries = &legacyLimit
 	draft.Targets = append(draft.Targets, SyncPlanTargetInput{Peer: "channel:20"})
 	if err := s.save(t.Context(), draft, true); err != nil {
 		t.Fatal(err)
@@ -268,6 +270,107 @@ func TestSyncPlanRetryKeepsCheckpointAndCompletedTargets(t *testing.T) {
 	if !reflect.DeepEqual(calls, want) || len(snap.Runs) != 2 || snap.Runs[0].State != "succeeded" ||
 		snap.Runs[0].Targets[0].TaskID != "download-first" || snap.Plans[0].Targets[1].Cursor != 15 {
 		t.Fatalf("retry = calls %v, snapshot %+v", calls, snap)
+	}
+}
+
+func TestSyncPlanRetriesAreBoundedPerTargetAcrossRestart(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	var firstCalls, secondCalls int
+	hooks := SyncPlanHooks{Execute: func(_ context.Context, _ SyncPlan, target SyncPlanTarget, cp SyncPlanCheckpoint, _ func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
+		if target.Peer == "channel:10" {
+			firstCalls++
+			return SyncPlanTargetResult{}, SyncPlanBlocked(SyncPlanBlockRemote, "fixture remote")
+		}
+		secondCalls++
+		return SyncPlanTargetResult{Cursor: cp.Cursor + 1}, nil
+	}}
+	s := syncTestService(t, dir, &now, hooks)
+	draft := syncTestDraft()
+	draft.Targets = append(draft.Targets, SyncPlanTargetInput{Peer: "channel:20"})
+	if err := s.save(t.Context(), draft, true); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		syncTestRun(t, s)
+		if attempt < 3 {
+			if got := s.snapshot().Runs[0].Targets[0].RetryCount; got != attempt+1 {
+				t.Fatalf("saved retry count = %d after attempt %d", got, attempt+1)
+			}
+			now = now.Add(5 * time.Minute)
+			if attempt == 1 {
+				s = syncTestService(t, dir, &now, hooks)
+			}
+		}
+	}
+	if target := s.snapshot().Runs[0].Targets[0]; target.State != "failed" || target.RetryCount != 3 {
+		t.Fatalf("retry limit did not finish the failed target: %+v", target)
+	}
+	syncTestRun(t, s)
+	if run := s.snapshot().Runs[0]; run.State != "failed" || run.Targets[1].State != "succeeded" || firstCalls != 4 || secondCalls != 1 {
+		t.Fatalf("other targets were not handled independently: %+v, calls %d/%d", run, firstCalls, secondCalls)
+	}
+}
+
+func TestSyncPlanSpaceFailureDoesNotRetry(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	var calls int
+	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{Execute: func(_ context.Context, _ SyncPlan, _ SyncPlanTarget, _ SyncPlanCheckpoint, _ func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
+		calls++
+		return SyncPlanTargetResult{}, SyncPlanBlocked(SyncPlanBlockSpace, "fixture space")
+	}})
+	if err := s.save(t.Context(), syncTestDraft(), true); err != nil {
+		t.Fatal(err)
+	}
+	syncTestRun(t, s)
+	if run := s.snapshot().Runs[0]; run.State != "failed" || run.Targets[0].RetryCount != 0 || !run.RetryAt.IsZero() {
+		t.Fatalf("space failure was scheduled for retry: %+v", run)
+	}
+	now = now.Add(time.Hour)
+	s.Wake()
+	if job, _, _ := s.advance(); job != nil || calls != 1 {
+		t.Fatal("space failure started an automatic retry")
+	}
+}
+
+func TestLegacyBlockedSpaceRunIsNotRestarted(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{})
+	if err := s.save(t.Context(), syncTestDraft(), true); err != nil {
+		t.Fatal(err)
+	}
+	state := s.state.clone()
+	state.Runs[0].State = "blocked"
+	state.Runs[0].BlockedReason = SyncPlanBlockSpace
+	state.Runs[0].Message = "fixture space"
+	state.Runs[0].Targets[0].State = "blocked"
+	state.Runs[0].Targets[0].BlockedReason = SyncPlanBlockSpace
+	state.Runs[0].Targets[0].Message = "fixture space"
+	if err := s.commitLocked(state); err != nil {
+		t.Fatal(err)
+	}
+	if job, _, _ := s.advance(); job != nil {
+		t.Fatal("legacy space failure was restarted")
+	}
+	if run := s.snapshot().Runs[0]; run.State != "failed" || run.Targets[0].State != "failed" {
+		t.Fatalf("legacy blocked run was not finished: %+v", run)
+	}
+}
+
+func TestSyncPlanRetryLimitCanBeZero(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{Execute: func(_ context.Context, _ SyncPlan, _ SyncPlanTarget, _ SyncPlanCheckpoint, _ func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
+		return SyncPlanTargetResult{}, SyncPlanTransient(SyncPlanReasonNetwork, "fixture network", 0)
+	}})
+	draft := syncTestDraft()
+	zero := 0
+	draft.MaxRetries = &zero
+	if err := s.save(t.Context(), draft, true); err != nil {
+		t.Fatal(err)
+	}
+	syncTestRun(t, s)
+	if run := s.snapshot().Runs[0]; run.State != "failed" || run.Targets[0].RetryCount != 0 {
+		t.Fatalf("zero retry limit was not respected: %+v", run)
 	}
 }
 

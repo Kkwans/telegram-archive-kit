@@ -258,6 +258,15 @@ func (b *Bridge) stagePlanArchive(ctx context.Context, plan SyncPlan, target Syn
 		if err != nil {
 			return input, err
 		}
+		if err := validateInitialPlanHistory(plan, target, chat, *cp, existing); err != nil {
+			// A previous version could persist an empty fetched checkpoint and
+			// report success. Force the next retry to request history again.
+			cp.Stage, cp.Offset, cp.Through = "", 0, 0
+			if saveErr := save(*cp); saveErr != nil {
+				return input, errors.Join(err, saveErr)
+			}
+			return input, err
+		}
 		cp.Stage = "staged"
 		if err = save(*cp); err != nil {
 			return input, err
@@ -267,6 +276,14 @@ func (b *Bridge) stagePlanArchive(ctx context.Context, plan SyncPlan, target Syn
 	}
 	input.NewMedia, input.Added = cp.PendingMedia, cp.AddedMessages
 	return input, nil
+}
+
+func validateInitialPlanHistory(plan SyncPlan, target SyncPlanTarget, chat OnlineChat, cp SyncPlanCheckpoint, existing map[string]bool) error {
+	if plan.FirstScope == "all" && cp.Cursor == 0 && cp.AddedMessages == 0 && cp.Through == 0 &&
+		len(existing) == 0 && chat.LastMessageID > 0 {
+		return SyncPlanFailed(SyncPlanReasonHistory, "在线聊天显示有历史消息，但本次未取得可归档内容，请刷新在线聊天后重试")
+	}
+	return nil
 }
 
 func planStagePages(dir string) ([]int, error) {

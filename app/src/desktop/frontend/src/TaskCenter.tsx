@@ -331,7 +331,7 @@ interface DownloadConfigDraft {
   reconnectTimeout: string;
 }
 
-export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void }) {
+export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, fromPlan = false }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void; fromPlan?: boolean }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
@@ -346,6 +346,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
   const [transfer, setTransfer] = useState<DownloadConfigDraft | null>(null);
   const meta = kindMeta(task.kind);
   const planned = task.kind === "sync-plan";
+  // Plan-sync tasks are download tasks too; only non-download records keep the
+  // compact summary layout without transfer modules.
+  const showTransfer = meta.group === "download";
   const running = task.state === "running";
   const failed = task.state === "failed";
   const partial = task.state === "partial";
@@ -401,7 +404,10 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
     doneSize: doneSizes[index],
   }));
   const recent = completed.slice(0, 5);
-  const showTransfer = !planned || totalCount > 0 || active.length > 0 || series.length > 0;
+  const planSuffix = task.chat ? ` · ${task.chat}` : "";
+  const planName = planned && planSuffix && task.title.endsWith(planSuffix)
+    ? task.title.slice(0, -planSuffix.length)
+    : task.title;
   const pageSize = 10;
   const recordPages = Math.max(1, Math.ceil(completed.length / pageSize));
   const safePage = Math.min(recordPage, recordPages);
@@ -428,7 +434,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
   };
 
   useEffect(() => {
-    if (!running || !showTransfer) return;
+    if (!running) return;
     call<Partial<DownloadConfigDraft>>("getSettings")
       .then((settings) => {
         setTransfer({
@@ -444,7 +450,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
         });
       })
       .catch(() => undefined);
-  }, [running, showTransfer, task.id, task.concurrent, task.threads]);
+  }, [running, task.id, task.concurrent, task.threads]);
 
   const openConfig = () => {
     const base = transfer ?? configDraft;
@@ -542,7 +548,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
     <>
       <div className="page-head download-detail-head">
         <button className="btn" onClick={onBack}>
-          <ArrowLeft size={14} /> 返回任务中心
+          <ArrowLeft size={14} /> {fromPlan ? "返回同步计划" : "返回任务中心"}
         </button>
         <div className="actions">
           {planned && <button className="btn ghost" onClick={() => onOpenPlans(task.planId, task.planRunId)}><CalendarClock size={13} /> 查看同步计划</button>}
@@ -641,12 +647,12 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
         {!showTransfer && <div className="stat"><span>新增消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>}
         {running && showTransfer && <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>}
         {showTransfer && <>
-        <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
-        <div className="stat">
-          <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
-          <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
-        </div>
-        <div className="stat"><span>已下载 / 总媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
+          <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
+          <div className="stat">
+            <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
+            <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
+          </div>
+          <div className="stat"><span>已下载 / 总媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
         </>}
         <div className="stat">
           <span>{running ? "预计还需" : "任务耗时"}</span>
@@ -790,12 +796,13 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast }:
         </div>
         <div className="download-info-grid">
           <div><span>类型</span><b>{meta.label}</b></div>
+          {planned && <div><span>关联计划</span><b>{planName || task.planId || "--"}</b></div>}
           <div><span>聊天</span><b>{task.chat || "--"}</b></div>
           <div><span>状态</span><b>{statusLabel(task.state)}</b></div>
           <div><span>开始时间</span><b>{dateTimePrecise(task.startedAt)}</b></div>
           <div><span>结束时间</span><b>{task.finishedAt ? dateTimePrecise(task.finishedAt) : "进行中"}</b></div>
           <div><span>耗时</span><b>{fmtDuration(elapsed)}</b></div>
-          {planned && showTransfer && <div><span>新增消息</span><b>{(task.messages ?? 0).toLocaleString()} 条</b></div>}
+          {planned && <div><span>新增消息</span><b>{(task.messages ?? 0).toLocaleString()} 条</b></div>}
           {showTransfer && <div><span>已下载 / 总媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>}
           <div><span>任务 ID</span><b className="mono">{task.id}</b></div>
           {showTransfer && <div><span>峰值速度</span><b>{rate(task.peakSpeed ?? 0)}</b></div>}
@@ -1009,6 +1016,7 @@ export function TasksPage({
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<TaskDetail | null>(null);
+  const [activeFromPlan, setActiveFromPlan] = useState(false);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
   const [modalFromPlan, setModalFromPlan] = useState(false);
   const [selectionVersion, setSelectionVersion] = useState(0);
@@ -1085,8 +1093,9 @@ export function TasksPage({
     const known = tasks.find((task) => task.id === taskID);
     const show = (detail: TaskDetail) => {
       setSelectionVersion(version);
-      if (!fromPlan && kindMeta(detail.kind).group === "download") {
+      if (kindMeta(detail.kind).group === "download") {
         setModalTask(null);
+        setActiveFromPlan(fromPlan);
         setActive(detail);
       } else {
         setActive(null);
@@ -1180,6 +1189,7 @@ export function TasksPage({
 
   if (active) {
     return <TaskDetailView key={active.id} task={active}
+      fromPlan={activeFromPlan}
       onBack={() => { selection.current++; setActive(null); }}
       onOpenTask={(taskID) => void loadTask(taskID)}
       onOpenPlans={(planId, runId) => {

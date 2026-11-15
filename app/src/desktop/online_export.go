@@ -247,6 +247,7 @@ func (s *OnlineService) scanMessages(ctx context.Context, ns, proxy string, chat
 			offset = scan.Offset
 		}
 		pages := 0
+		retriedInitialHistory := false
 		for {
 			var res tg.MessagesMessagesClass
 			for {
@@ -285,9 +286,22 @@ func (s *OnlineService) scanMessages(ctx context.Context, ns, proxy string, chat
 					return waitErr
 				}
 			}
+			switch res.(type) {
+			case *tg.MessagesMessages, *tg.MessagesMessagesSlice, *tg.MessagesChannelMessages:
+			default:
+				return fmt.Errorf("Telegram 返回了无法处理的历史消息结果（%T）", res)
+			}
 			msgs := historyMessages(res)
 			if len(msgs) == 0 {
 				if scan != nil {
+					if minID == 0 && scan.Since == 0 && scan.Offset == 0 && pages == 0 && chat.LastMessageID > 0 {
+						if !retriedInitialHistory {
+							retriedInitialHistory = true
+							offset = chat.LastMessageID + 1
+							continue
+						}
+						return SyncPlanFailed(SyncPlanReasonHistory, "在线聊天显示有历史消息，但 Telegram 返回了空结果，请刷新在线聊天后重试")
+					}
 					return scan.Page(nil, offset, highID, true)
 				}
 				break
@@ -364,7 +378,7 @@ func (s *OnlineService) scanMessages(ctx context.Context, ns, proxy string, chat
 				Percent: lastPercent, Messages: scanned, Media: mediaCount,
 			})
 			if scan != nil {
-				finished := len(msgs) < 100 || pageLowID == 0 || reachedSince
+				finished := pageLowID == 0 || reachedSince
 				if !finished && offset > 0 && pageLowID >= offset {
 					return errors.New("Telegram 历史读取游标没有推进")
 				}
@@ -379,7 +393,7 @@ func (s *OnlineService) scanMessages(ctx context.Context, ns, proxy string, chat
 			if limit > 0 && len(out) >= limit {
 				break
 			}
-			if len(msgs) < 100 || pageLowID == 0 {
+			if (scan == nil && len(msgs) < 100) || pageLowID == 0 {
 				break
 			}
 			offset = pageLowID

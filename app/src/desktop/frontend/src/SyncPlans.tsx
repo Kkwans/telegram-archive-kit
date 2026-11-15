@@ -51,6 +51,7 @@ interface Draft {
   firstScope: FirstScope;
   mediaKinds: MediaKind[];
   includeHistory: boolean;
+  maxRetries?: number;
 }
 
 interface Plan extends Draft {
@@ -106,6 +107,7 @@ const REASONS: Record<string, string> = {
   space: "档案库可用空间不足。请释放空间后重试。",
   network: "Telegram 网络连接异常。",
   floodWait: "Telegram 限流。计划会在等待结束后继续。",
+  history: "无法确认聊天历史，请刷新在线聊天后重试。",
 };
 
 const PLAN_METHOD = {
@@ -119,8 +121,8 @@ const ACTION_MESSAGES: Record<PlanAction, string> = {
 };
 
 function draftFromPlan(plan?: Plan): Draft {
-  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "all", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: false };
-  return { id: plan.id, name: plan.name, schedule: plan.schedule, targets: plan.targets ?? [], enabled: plan.enabled, firstScope: plan.firstScope || "30d", mediaKinds: plan.mediaKinds ?? [], includeHistory: plan.includeHistory };
+  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "all", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: false, maxRetries: 3 };
+  return { id: plan.id, name: plan.name, schedule: plan.schedule, targets: plan.targets ?? [], enabled: plan.enabled, firstScope: plan.firstScope || "30d", mediaKinds: plan.mediaKinds ?? [], includeHistory: plan.includeHistory, maxRetries: plan.maxRetries ?? 3 };
 }
 
 function scheduleText(schedule: Schedule) {
@@ -774,13 +776,18 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                 </span>
               </label>
             </>}
+            <div className="plan-retry-limit">
+              <span>每个聊天的自动重试上限</span>
+              <Select ariaLabel="每个聊天的自动重试上限" value={String(draft.maxRetries ?? 3)} disabled={saving}
+                options={Array.from({ length: 11 }, (_, count) => ({ value: String(count), label: count === 0 ? "不自动重试" : `${count} 次` }))}
+                onChange={(value) => set("maxRetries", Number(value))} />
+            </div>
           </div>
         </section>
       </div>
       <section className="panel plan-scope-section" aria-labelledby="plan-scope-heading">
         <div><h2 id="plan-scope-heading">首次归档范围</h2><p>仅用于未归档的聊天。已有归档从上次位置继续。</p></div>
         <Select ariaLabel="首次归档范围" value={draft.firstScope} options={SCOPE_OPTIONS} disabled={saving} onChange={(scope) => set("firstScope", scope as FirstScope)} />
-        {draft.firstScope === "all" && <p className="plan-field-hint" role="status"><AlertCircle size={14} /> 将读取所选未归档聊天的全部历史。</p>}
       </section>
     </fieldset>
     <footer className="panel plan-editor-footer">

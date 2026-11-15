@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"time"
@@ -115,6 +116,17 @@ func (s *SyncPlanService) advance() (*syncPlanJob, context.Context, bool) {
 			continue
 		}
 		plan := &state.Plans[planIndex]
+		// Older versions kept re-running downloads while the disk was full.
+		if run.State == "blocked" && run.BlockedReason == SyncPlanBlockSpace {
+			if targetIndex := slices.IndexFunc(run.Targets, func(t SyncPlanRunTarget) bool {
+				return t.State == "blocked" && t.BlockedReason == SyncPlanBlockSpace
+			}); targetIndex >= 0 {
+				run.Targets[targetIndex].State = "failed"
+				advanceSyncRunTarget(run, now)
+				changed = true
+				continue
+			}
+		}
 		if expiry := state.Cooldowns[plan.AccountID]; now.Before(expiry) {
 			if expiry.After(run.RetryAt) || run.State != "retrying" {
 				run.State, run.BlockedReason, run.Message = "retrying", SyncPlanReasonFloodWait, "正在等待 Telegram 限流解除"
@@ -296,7 +308,7 @@ func (s *SyncPlanService) finish(job syncPlanJob, result SyncPlanTargetResult, r
 		// state and retry the state write after the poll interval.
 		return false
 	default:
-		applySyncRunError(&state, run, entry, plan.AccountID, now, runErr)
+		applySyncRunError(&state, run, entry, plan.SyncPlan, now, runErr)
 	}
 	if err := s.commitLocked(state); err != nil {
 		s.deferred = &state
@@ -305,7 +317,7 @@ func (s *SyncPlanService) finish(job syncPlanJob, result SyncPlanTargetResult, r
 	return true
 }
 
-func applySyncRunError(state *syncPlanDiskState, run *syncRunRecord, target *SyncPlanRunTarget, account string, now time.Time, err error) {
+func applySyncRunError(state *syncPlanDiskState, run *syncRunRecord, target *SyncPlanRunTarget, plan SyncPlan, now time.Time, err error) {
 	var typed *syncPlanError
 	if !errors.As(err, &typed) {
 		var network net.Error
@@ -317,6 +329,11 @@ func applySyncRunError(state *syncPlanDiskState, run *syncRunRecord, target *Syn
 	}
 	run.BlockedReason, target.BlockedReason = typed.reason, typed.reason
 	run.Message, target.Message = typed.message, typed.message
+	if typed.reason == SyncPlanBlockSpace {
+		target.State = "failed"
+		advanceSyncRunTarget(run, now)
+		return
+	}
 	var retryAfter time.Time
 	if typed.retryAfter > 0 {
 		retryAfter = now.Add(typed.retryAfter)
@@ -325,9 +342,26 @@ func applySyncRunError(state *syncPlanDiskState, run *syncRunRecord, target *Syn
 		if state.Cooldowns == nil {
 			state.Cooldowns = make(map[string]time.Time)
 		}
-		if retryAfter.After(state.Cooldowns[account]) {
-			state.Cooldowns[account] = retryAfter
+		if retryAfter.After(state.Cooldowns[plan.AccountID]) {
+			state.Cooldowns[plan.AccountID] = retryAfter
 		}
+	}
+	maxRetries := 3
+	if plan.MaxRetries != nil {
+		maxRetries = *plan.MaxRetries
+	}
+	// Busy and unavailable prerequisites wait for recovery. A failed execution
+	// consumes the same per-chat budget as a transient network failure.
+	budgeted := typed.transient || typed.reason == SyncPlanReasonMedia ||
+		(typed.blocked && target.State == "running" && typed.reason != SyncPlanBlockBusy)
+	if budgeted {
+		if target.RetryCount >= maxRetries {
+			target.State = "failed"
+			target.Message = fmt.Sprintf("%s（已重试 %d 次）", typed.message, target.RetryCount)
+			advanceSyncRunTarget(run, now)
+			return
+		}
+		target.RetryCount++
 	}
 	switch {
 	case typed.blocked:
@@ -340,18 +374,18 @@ func applySyncRunError(state *syncPlanDiskState, run *syncRunRecord, target *Syn
 			delay = 5 * time.Minute
 		}
 		run.LastBlockedAt, run.RetryAt = now, now.Add(delay)
-	case typed.transient && run.RetryCount < 2:
+	case typed.transient || typed.reason == SyncPlanReasonMedia:
 		delay := time.Minute
-		if run.RetryCount == 1 {
+		if target.RetryCount > 1 {
 			delay = 5 * time.Minute
 		}
-		run.RetryCount++
+		run.RetryCount = target.RetryCount
 		run.RetryAt = now.Add(delay)
 		if retryAfter.After(run.RetryAt) {
 			run.RetryAt = retryAfter
 		}
 		run.State, target.State = "retrying", "retrying"
-	case !typed.transient && (typed.reason == SyncPlanBlockTarget || typed.reason == SyncPlanReasonMedia):
+	case !typed.transient && (typed.reason == SyncPlanBlockTarget || typed.reason == SyncPlanReasonHistory):
 		target.State = "failed"
 		advanceSyncRunTarget(run, now)
 	default:

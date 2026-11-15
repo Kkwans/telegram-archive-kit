@@ -238,6 +238,7 @@
 #task-plans .plan-media-option[aria-pressed="true"] svg { color: var(--accent); }
 #task-plans .plan-history-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
 #task-plans .plan-history-toggle .switch { flex: none; }
+#task-plans .plan-retry-limit { display: grid; grid-template-columns: minmax(0, 1fr) 126px; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; }
 #task-plans .plan-editor-footer { flex: 0 0 auto; gap: 8px 12px; padding: 10px 14px; }
 #task-plans .plan-editor-summary { display: flex; flex: 1 1 175px; flex-direction: column; align-items: flex-start; gap: 2px; }
 #task-plans .plan-editor-summary b { font-size: 13px; }

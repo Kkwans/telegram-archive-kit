@@ -128,6 +128,9 @@ func normalizeSyncPlanDraft(d *syncPlanDraft) error {
 	if _, err := d.Schedule.clock(); err != nil {
 		return err
 	}
+	if d.MaxRetries != nil && (*d.MaxRetries < 0 || *d.MaxRetries > 10) {
+		return errors.New("每个聊天的重试上限需在 0 到 10 次之间")
+	}
 	d.Schedule = d.Schedule.normalized()
 	switch d.FirstScope {
 	case "":
@@ -296,6 +299,7 @@ func (s *SyncPlanService) save(ctx context.Context, d syncPlanDraft, runNow bool
 	}
 	record.Name, record.Schedule, record.Enabled = d.Name, d.Schedule, d.Enabled
 	record.FirstScope, record.MediaKinds, record.IncludeHistory = d.FirstScope, d.MediaKinds, d.IncludeHistory
+	record.MaxRetries = d.MaxRetries
 	record.Targets = targets
 	record.Edit++
 	if err := syncPlanConflicts(record.SyncPlan, state.Plans); err != nil {

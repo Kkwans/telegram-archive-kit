@@ -29,3 +29,37 @@ func TestPlanStageMergesPagesWithoutReimportingKnownIDs(t *testing.T) {
 		t.Fatalf("staged history did not preserve message order: %+v, %v", export, err)
 	}
 }
+
+func TestInitialFullHistoryDoesNotSucceedOnUnexpectedEmptyResult(t *testing.T) {
+	plan := SyncPlan{FirstScope: "all"}
+	chat := OnlineChat{LastMessageID: 101827}
+	if err := validateInitialPlanHistory(plan, SyncPlanTarget{}, chat, SyncPlanCheckpoint{}, nil); err == nil {
+		t.Fatal("an unarchived chat with known history was accepted as complete")
+	}
+	if err := validateInitialPlanHistory(plan, SyncPlanTarget{}, OnlineChat{}, SyncPlanCheckpoint{}, nil); err != nil {
+		t.Fatalf("an actually empty chat was rejected: %v", err)
+	}
+	if err := validateInitialPlanHistory(SyncPlan{FirstScope: "30d"}, SyncPlanTarget{}, chat, SyncPlanCheckpoint{}, nil); err != nil {
+		t.Fatalf("a limited history scope may have no messages: %v", err)
+	}
+}
+
+func TestValidateInitialPlanHistoryRequiresScanEvidence(t *testing.T) {
+	plan := SyncPlan{FirstScope: "all"}
+	target := SyncPlanTarget{}
+	chat := OnlineChat{LastMessageID: 900}
+	existing := map[string]bool{}
+	empty := SyncPlanCheckpoint{}
+	if err := validateInitialPlanHistory(plan, target, chat, empty, existing); err == nil {
+		t.Fatal("empty initial scan was reported as success")
+	}
+	scanned := SyncPlanCheckpoint{Through: 899}
+	if err := validateInitialPlanHistory(plan, target, chat, scanned, existing); err != nil {
+		t.Fatalf("scan that saw history was rejected: %v", err)
+	}
+	archived := SyncPlanCheckpoint{}
+	existing["1"] = true
+	if err := validateInitialPlanHistory(plan, target, chat, archived, existing); err != nil {
+		t.Fatalf("already archived chat was rejected: %v", err)
+	}
+}

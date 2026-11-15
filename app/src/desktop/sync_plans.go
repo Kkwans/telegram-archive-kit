@@ -29,6 +29,7 @@ const (
 	SyncPlanReasonNetwork   = "network"
 	SyncPlanReasonFloodWait = "floodWait"
 	SyncPlanReasonMedia     = "media"
+	SyncPlanReasonHistory   = "history"
 
 	syncPlanStateVersion = 1
 	syncPlanHistorySize  = 30
@@ -87,6 +88,7 @@ type SyncPlan struct {
 	FirstScope     string           `json:"firstScope"`
 	MediaKinds     []string         `json:"mediaKinds"`
 	IncludeHistory bool             `json:"includeHistory"`
+	MaxRetries     *int             `json:"maxRetries,omitempty"`
 	Targets        []SyncPlanTarget `json:"targets"`
 	CreatedAt      int64            `json:"createdAt"`
 	NextRunAt      time.Time        `json:"nextRunAt,omitzero"`
@@ -138,6 +140,7 @@ type SyncPlanRunTarget struct {
 	TaskID        string    `json:"taskId,omitempty"`
 	BlockedReason string    `json:"blockedReason,omitempty"`
 	Message       string    `json:"message,omitempty"`
+	RetryCount    int       `json:"retryCount,omitempty"`
 }
 
 type SyncPlanRun struct {
@@ -196,6 +199,7 @@ type syncPlanDraft struct {
 	FirstScope     string                `json:"firstScope"`
 	MediaKinds     []string              `json:"mediaKinds"`
 	IncludeHistory bool                  `json:"includeHistory"`
+	MaxRetries     *int                  `json:"maxRetries,omitempty"`
 	Targets        []SyncPlanTargetInput `json:"targets"`
 }
 
@@ -235,6 +239,9 @@ func NewSyncPlanService(configDir string, hooks SyncPlanHooks) (*SyncPlanService
 			return nil, fmt.Errorf("不支持的同步计划版本 %d", state.Version)
 		}
 		for _, p := range state.Plans {
+			if p.MaxRetries != nil && (*p.MaxRetries < 0 || *p.MaxRetries > 10) {
+				return nil, errors.New("同步计划的重试上限无效")
+			}
 			if _, err := p.Schedule.clock(); err != nil {
 				return nil, err
 			}
@@ -316,6 +323,10 @@ func cloneSyncCheckpoint(c SyncPlanCheckpoint) SyncPlanCheckpoint {
 }
 
 func cloneSyncPlan(p SyncPlan) SyncPlan {
+	if p.MaxRetries != nil {
+		value := *p.MaxRetries
+		p.MaxRetries = &value
+	}
 	p.Schedule.Weekdays = slices.Clone(p.Schedule.Weekdays)
 	p.MediaKinds = slices.Clone(p.MediaKinds)
 	p.Targets = slices.Clone(p.Targets)
@@ -364,6 +375,12 @@ func (s *SyncPlanService) recoverInterrupted() error {
 	now := s.now()
 	for i := range state.Runs {
 		run := &state.Runs[i]
+		if run.RetryCount > 0 {
+			if index := slices.IndexFunc(run.Targets, func(t SyncPlanRunTarget) bool { return syncPending(t.State) }); index >= 0 && run.Targets[index].RetryCount == 0 {
+				run.Targets[index].RetryCount = run.RetryCount
+				changed = true
+			}
+		}
 		switch run.State {
 		case "running":
 			run.State, run.Message = "queued", "上次执行中断，等待从断点恢复"
