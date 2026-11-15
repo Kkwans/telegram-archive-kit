@@ -862,6 +862,37 @@ func (s *remoteConnections) forget(id string) error {
 	return nil
 }
 
+func (s *remoteConnections) unmountRoot(root string) error {
+	if root == "" {
+		return errors.New("未找到要卸载的挂载")
+	}
+	if err := s.beginActivation(); err != nil {
+		return err
+	}
+	defer s.activation.Unlock()
+	s.mu.Lock()
+	current := s.current
+	mount := s.b.remoteMountAt(root)
+	active := sameRemoteRoot(current.root, root)
+	s.mu.Unlock()
+	if mount == nil || mount.endpoint.Kind != "ssh" {
+		return errors.New("未找到 SSH 挂载")
+	}
+	if active {
+		if !s.b.archiveMu.TryLock() {
+			return takapp.ErrOperationRunning
+		}
+		defer s.b.archiveMu.Unlock()
+		if err := s.withPublicationSwitch(func() error {
+			return s.b.facade.ClearLibrarySelection(current.root, current.id)
+		}); err != nil {
+			return err
+		}
+		s.refreshSelection()
+	}
+	return stopRemoteMount(mount)
+}
+
 func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p struct {
 		ID            string `json:"id"`
@@ -893,6 +924,9 @@ func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.Raw
 	case "remoteConnectionForget":
 		return nil, s.forget(p.ID)
 	case "remoteConnectionUnmount":
+		if p.ID == "" {
+			return nil, s.unmountRoot(p.Root)
+		}
 		if err := s.beginActivation(); err != nil {
 			return nil, err
 		}

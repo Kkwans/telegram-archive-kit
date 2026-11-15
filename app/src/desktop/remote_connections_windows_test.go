@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -165,6 +166,93 @@ func TestUnmountCurrentConnectionPreservesSavedRecord(t *testing.T) {
 	}
 	if len(service.records) != 1 || service.records[0].ID != id {
 		t.Fatal("unmount removed the saved connection")
+	}
+}
+
+func TestUnmountUnsavedMountByRoot(t *testing.T) {
+	root, config := t.TempDir(), t.TempDir()
+	t.Setenv("TAK_CONFIG_DIR", config)
+	t.Setenv("TAK_LIBRARY_ROOT", root)
+	facade, err := takapp.OpenFacade()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.AcquireLibraryLock(); err != nil {
+		t.Fatal(err)
+	}
+	defer facade.ReleaseLibraryLock()
+	id, err := facade.RegisterCurrentLibrary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.SetCurrentLibraryIdentity(root, id); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := remoteEndpoint{Kind: "ssh", Name: "fixture@host", Path: "/archive"}
+	done := make(chan struct{})
+	close(done)
+	mount := &rcloneMount{endpoint: endpoint, libraryRoot: root, ready: true, done: done}
+	drive := strings.ToUpper(filepath.VolumeName(root)[:1])
+	bridge := &Bridge{facade: facade, mounts: map[string]*rcloneMount{drive: mount}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := &remoteConnections{
+		b: bridge, ctx: ctx, progress: make(map[string]remoteProgress),
+		current: remoteSelection{id: id, root: root, ready: true, mount: mount},
+	}
+	payload, err := json.Marshal(map[string]string{"root": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.rpc(ctx, "remoteConnectionUnmount", payload); err != nil {
+		t.Fatal(err)
+	}
+	if selected, identity := facade.CurrentLibrarySelection(); selected != "" || identity != "" {
+		t.Fatal("unsaved unmount retained the active library selection")
+	}
+	if len(service.records) != 0 {
+		t.Fatal("unsaved unmount created a saved connection")
+	}
+}
+
+func TestSaveUnsavedPasswordMountWithoutPassword(t *testing.T) {
+	root, config := t.TempDir(), t.TempDir()
+	t.Setenv("TAK_CONFIG_DIR", config)
+	t.Setenv("TAK_LIBRARY_ROOT", root)
+	facade, err := takapp.OpenFacade()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.AcquireLibraryLock(); err != nil {
+		t.Fatal(err)
+	}
+	defer facade.ReleaseLibraryLock()
+	id, err := facade.RegisterCurrentLibrary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.SetCurrentLibraryIdentity(root, id); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := remoteEndpoint{Kind: "ssh", Name: "fixture@host:22", SSHHost: "host", SSHUser: "fixture", SSHPort: 22, Path: "/archive"}
+	done := make(chan struct{})
+	close(done)
+	mount := &rcloneMount{endpoint: endpoint, libraryRoot: root, ready: true, done: done}
+	drive := strings.ToUpper(filepath.VolumeName(root)[:1])
+	bridge := &Bridge{facade: facade, mounts: map[string]*rcloneMount{drive: mount}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := &remoteConnections{
+		b: bridge, file: filepath.Join(config, "remote-connections.json"), ctx: ctx,
+		progress: make(map[string]remoteProgress), probes: make(map[string]*remoteProbe),
+		current: remoteSelection{id: id, root: root, ready: true, mount: mount},
+	}
+	entry, err := service.save(ctx, root, "NAS-ROOT", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ID != id || entry.AutoReconnect || entry.HasSavedPassword || len(service.records) != 1 {
+		t.Fatalf("unexpected saved mount: %+v, records=%d", entry, len(service.records))
 	}
 }
 

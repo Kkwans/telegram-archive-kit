@@ -149,7 +149,9 @@
 .mounted-connections-heading h3 { margin: 0; font-size: 14px; }
 .mounted-connection { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .mounted-connection-status { display: grid; justify-items: center; gap: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
-.mounted-connection-save { justify-content: center; min-width: 90px; white-space: nowrap; }
+.mounted-connection-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+.mounted-connection-error { grid-column: 2 / -1; color: var(--danger); font-size: 11px; }
+.mounted-connection-save, .mounted-connection-unmount { justify-content: center; min-width: 86px; white-space: nowrap; }
 .saved-connection-count { color: var(--muted); font-size: 11px; font-weight: 500; }
 .saved-connections .saved-connection-list { border-radius: 11px; overflow: visible; }
 .saved-connections .saved-connection-columns {
@@ -217,7 +219,8 @@
 @container (max-width: 460px) {
   .mounted-connection { grid-template-columns: 32px minmax(0, 1fr); }
   .mounted-connection-status { grid-column: 2; justify-items: start; }
-  .mounted-connection-save { grid-column: 2; justify-self: start; }
+  .mounted-connection-actions { grid-column: 2; justify-self: start; justify-content: flex-start; }
+  .mounted-connection-error { grid-column: 2; }
   .saved-connections .saved-connection-row { grid-template-columns: 32px minmax(0, 1fr); }
   .saved-connections .saved-connection-status { grid-column: 2; align-items: flex-start; }
   .saved-connections .saved-auto { grid-row: 3; }

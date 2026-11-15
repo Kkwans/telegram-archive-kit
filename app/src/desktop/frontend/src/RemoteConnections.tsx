@@ -74,6 +74,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
   const [rename, setRename] = useState<{ id: string; label: string } | null>(null);
   const [forget, setForget] = useState<SavedRemoteConnection | null>(null);
   const [unmount, setUnmount] = useState<SavedRemoteConnection | null>(null);
+  const [mountUnmount, setMountUnmount] = useState<SavedRemoteConnection | null>(null);
   const [waiting, setWaiting] = useState("");
   const waitRef = useRef("");
   const writeRef = useRef(false);
@@ -179,22 +180,29 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
             <span className={`task-state plan-status ${entry.tone}`}>{entry.label}</span>
             <span>{item.active ? "当前库 · 未保存" : "未保存"}</span>
           </div>
-          {item.canSave && <button type="button" className="btn sm mounted-connection-save" disabled={!!pending || !!waiting} onClick={() => {
-            if (item.sshHost) {
-              onPasswordConnection(item, true);
-            } else {
-              void perform(key, "remoteConnectionSave", { root: item.root, autoReconnect: true }, () => {
+          <div className="mounted-connection-actions">
+            {item.canSave && <button type="button" className="btn sm mounted-connection-save" disabled={!!pending || !!waiting} onClick={() => {
+              const autoReconnect = !item.sshHost || !!item.hasSavedPassword;
+              void perform(key, "remoteConnectionSave", { root: item.root, label: item.label, autoReconnect }, () => {
                 onConnected();
-                toast("已保存当前连接");
+                toast(autoReconnect ? "已保存当前连接" : "已保存当前连接；开启自动重连时需补录 SSH 密码");
               });
-            }
-          }}><Plus size={13} /> 保存连接</button>}
-          {!item.active && item.status === "mounted" && <button type="button" className="btn sm mounted-connection-save" disabled={!!pending || !!waiting} onClick={() => {
-            void perform(key, "switchLibrary", { root: item.root, newRemoteMount: true }, () => {
-              onConnected();
-              toast("已打开档案库");
-            });
-          }}><FolderOpen size={13} /> 打开档案库</button>}
+            }}><Plus size={13} /> 保存连接</button>}
+            {!item.active && item.status === "mounted" && <button type="button" className="btn sm mounted-connection-save" disabled={!!pending || !!waiting} onClick={() => {
+              void perform(key, "switchLibrary", { root: item.root, newRemoteMount: true }, () => {
+                onConnected();
+                toast("已打开档案库");
+              });
+            }}><FolderOpen size={13} /> 打开档案库</button>}
+            <button type="button" className="btn sm mounted-connection-unmount" disabled={!!pending || !!waiting} onClick={() => {
+              if (item.active) {
+                setMountUnmount(item);
+                return;
+              }
+              void perform(key, "remoteConnectionUnmount", { root: item.root }, () => toast("已卸载盘符"));
+            }}><WifiOff size={13} /> 卸载盘符</button>
+          </div>
+          {actionError?.id === key && <div className="mounted-connection-error" role="alert">{actionError.message}</div>}
         </article>;
       })}
     </div>}
@@ -285,6 +293,11 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
       const item = unmount;
       setUnmount(null);
       if (item) void perform(item.id, "remoteConnectionUnmount", { id: item.id }, () => { onConnected(); toast("已卸载盘符，可以重新连接"); });
+    }} />
+    <ConfirmDialog compact open={!!mountUnmount} title="卸载当前盘符？" message="当前档案库会关闭，未保存的连接不会保留。已归档的档案库文件不受影响。" confirmLabel="卸载盘符" danger onCancel={() => setMountUnmount(null)} onConfirm={() => {
+      const item = mountUnmount;
+      setMountUnmount(null);
+      if (item) void perform(`mount:${item.root}`, "remoteConnectionUnmount", { root: item.root }, () => { onConnected(); toast("已卸载盘符"); });
     }} />
     <ConfirmDialog compact open={!!forget} title={`移除连接「${forget?.label || (forget ? address(forget) : "")}」？`} message={forget?.active ? "移除后将关闭当前档案库并卸载盘符，档案库文件会保留。" : "移除此连接和自动重连设置，档案库文件会保留。"} confirmLabel="移除连接" danger onCancel={() => setForget(null)} onConfirm={() => { const item = forget; setForget(null); if (item) void perform(item.id, "remoteConnectionForget", { id: item.id }, () => { if (item.active) onConnected(); toast("已移除保存的连接"); }); }} />
   </section>;
