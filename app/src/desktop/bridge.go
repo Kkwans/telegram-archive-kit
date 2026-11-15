@@ -442,6 +442,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return map[string]int{"rebuilt": ok, "skipped": skipped}, nil
 	case "exportChat":
 		return nil, b.facade.ExportChat(p.Slug, p.Dst)
+	case "forgetLibrary":
+		return b.facade.ForgetLibraryHistory(p.Root)
 	case "switchLibrary":
 		if b.remoteConnections != nil {
 			return b.remoteConnections.switchLibrary(ctx, p.Root, p.NewRemoteMount)

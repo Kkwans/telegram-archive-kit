@@ -262,7 +262,7 @@ func verifySSHHost(ctx context.Context, host string, port int) (any, error) {
 	return map[string]string{"key": strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), "fingerprint": ssh.FingerprintSHA256(key), "type": key.Type()}, nil
 }
 
-var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s", "--contimeout", "8s"}
+var passwordMountOptions = []string{"--config", "NUL", "--log-level", "ERROR", "--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "3", "--low-level-retries", "5", "--timeout", "60s", "--contimeout", "20s"}
 
 // Use a system-installed executable rather than the firmware's SFTP subsystem.
 // The file server runs only for the lifetime of the authenticated SSH channel.
@@ -486,7 +486,7 @@ func readSSHDirectory(cmd *exec.Cmd, dir string) (sshDirectory, error) {
 
 func verifySSHLibrary(root string) error {
 	if info, err := os.Stat(filepath.Join(root, "library.json")); err != nil || !info.Mode().IsRegular() {
-		return errors.New("未能读取 library.json，请选择 远程档案库根目录")
+		return errors.New("未能读取 library.json：请选择包含 library.json 的档案库根目录；开启「挂载服务器文件系统」后需按服务器绝对路径重新选择（如 /volume1/Telegram/TG Library）")
 	}
 	return nil
 }

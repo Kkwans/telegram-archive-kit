@@ -366,8 +366,17 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		"--network-mode=false",
 		"--ask-password=false",
 	}
+	if endpoint.Kind == "ssh" {
+		// Larger read chunks avoid one SSH round trip per small video block.
+		args = append(args, "--vfs-read-chunk-size", "4M", "--vfs-read-chunk-size-limit", "64M", "--buffer-size", "16M")
+	}
 	if endpoint.SSHUseRoot || endpoint.SSHUser == "root" {
 		args = append(args, "--file-perms", "0600", "--dir-perms", "0700")
+	}
+	if endpoint.Kind == "ssh" && endpoint.SSHUseRoot {
+		// The full-filesystem view must not expose Linux pseudo filesystems;
+		// Explorer scanning them is a common source of mount stalls.
+		args = append(args, "--exclude", "/proc/**", "--exclude", "/sys/**", "--exclude", "/dev/**", "--exclude", "/run/**")
 	}
 	if endpoint.Kind == "ssh" && endpoint.SSHUseRoot {
 		// Keep elevated VFS writes separate from the ordinary mount's cache.
@@ -421,6 +430,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	defer cancel()
 	tick := time.NewTicker(300 * time.Millisecond)
 	defer tick.Stop()
+	validateFailures := 0
 	for {
 		select {
 		case <-mount.done:
@@ -439,6 +449,13 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 				select {
 				case err := <-ready:
 					if err != nil {
+						// WinFsp can expose the drive letter before the remote
+						// directory is readable. Retry briefly instead of failing
+						// a valid connection with "library.json missing".
+						validateFailures++
+						if validateFailures < 20 {
+							continue
+						}
 						_ = stopRemoteMount(mount)
 						return "", nil, err
 					}

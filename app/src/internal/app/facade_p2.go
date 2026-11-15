@@ -451,6 +451,26 @@ func (f *Facade) ExportChat(slug, dstRoot string) error {
 	return dst.buildLibrary()
 }
 
+// ForgetLibraryHistory removes one recent-library entry. It never deletes
+// archive files or changes the current library selection.
+func (f *Facade) ForgetLibraryHistory(root string) ([]string, error) {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "" || root == "." {
+		return nil, errors.New("无效的档案库路径")
+	}
+	f.mu.Lock()
+	next := make([]string, 0, len(f.a.Settings.LibraryHistory))
+	for _, item := range f.a.Settings.LibraryHistory {
+		if !strings.EqualFold(filepath.Clean(item), root) {
+			next = append(next, item)
+		}
+	}
+	f.a.Settings.LibraryHistory = next
+	err := f.a.saveSettings()
+	f.mu.Unlock()
+	return append([]string(nil), next...), err
+}
+
 func (f *Facade) SwitchLibrary(root string) error {
 	return f.switchLibrary(context.Background(), root, "", "", "", false)
 }

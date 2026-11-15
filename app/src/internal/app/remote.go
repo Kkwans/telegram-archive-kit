@@ -31,11 +31,15 @@ type RemoteStatusDTO struct {
 
 // RemoteStatus checks reachability without writing to the current library.
 func (f *Facade) RemoteStatus() RemoteStatusDTO {
-	if f.ManagedRemoteUnavailable() {
-		root, _ := f.CurrentLibrarySelection()
-		return RemoteStatusDTO{Root: root, Remote: true, Kind: "mapped", Error: "远程档案库等待重连", CacheLimitBytes: remoteCacheLimitBytes}
+	root := f.a.Settings.LibraryRoot
+	if strings.TrimSpace(root) == "" {
+		return RemoteStatusDTO{CacheLimitBytes: remoteCacheLimitBytes}
 	}
-	return f.remoteStatus(f.a.Settings.LibraryRoot, false)
+	if f.ManagedRemoteUnavailable() {
+		selected, _ := f.CurrentLibrarySelection()
+		return RemoteStatusDTO{Root: selected, Remote: true, Kind: "mapped", Error: "远程档案库等待重连", CacheLimitBytes: remoteCacheLimitBytes}
+	}
+	return f.remoteStatus(root, false)
 }
 
 // RemoteStatusFor is the explicit test in the connection dialog.
@@ -44,6 +48,9 @@ func (f *Facade) RemoteStatusFor(root string) RemoteStatusDTO {
 }
 
 func (f *Facade) remoteStatus(root string, testWrite bool) RemoteStatusDTO {
+	if strings.TrimSpace(root) == "" {
+		return RemoteStatusDTO{CacheLimitBytes: remoteCacheLimitBytes}
+	}
 	remote, kind := platform.NetworkPathKind(root)
 	if !remote && f.a.Settings.LastRemoteRoot != "" && strings.EqualFold(filepath.Clean(root), filepath.Clean(f.a.Settings.LastRemoteRoot)) {
 		// A mapped drive can vanish from Windows after a network drop. Keep the
@@ -62,9 +69,10 @@ func (f *Facade) remoteStatus(root string, testWrite bool) RemoteStatusDTO {
 	st, err := os.Stat(root)
 	out.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil || !st.IsDir() {
-		out.Error = "目录不可访问"
-		if err != nil {
-			out.Error = err.Error()
+		if os.IsNotExist(err) {
+			out.Error = "档案库路径不存在，请重新连接或选择档案库"
+		} else {
+			out.Error = "档案库目录不可访问，请检查连接和权限"
 		}
 		return out
 	}

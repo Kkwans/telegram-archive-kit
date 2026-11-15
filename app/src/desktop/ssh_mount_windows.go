@@ -99,7 +99,7 @@ func aliasMountOptions(target string, useSudo bool) ([]string, error) {
 	sshCommand := `"` + ssh + `" -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ` + target
 	options := []string{
 		"--config", "NUL", "--log-level", "ERROR", "--sftp-ssh", sshCommand,
-		"--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "1", "--timeout", "12s",
+		"--sftp-disable-hashcheck", "--sftp-shell-type", "none", "--retries", "3", "--low-level-retries", "5", "--timeout", "60s",
 	}
 	if useSudo {
 		options = append(options, "--sftp-server-command", sudoSFTPServer, "--transfers", "1")

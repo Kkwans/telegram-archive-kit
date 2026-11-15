@@ -2095,9 +2095,12 @@ html[data-theme="dark"] .palette {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; overflow-wrap: normal;
 }
 .recent-libraries { display: flex; flex-direction: column; padding: 8px; gap: 4px; flex: 1; }
-.recent-libraries button { display: flex; align-items: center; gap: 9px; padding: 8px 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; flex: 1; min-height: 54px; }
-.recent-libraries button:hover { background: var(--surface-2); }
-.recent-libraries button.on { border-color: rgba(47, 107, 255, .25); background: var(--accent-soft); }
+.recent-library-row { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 8px; }
+.recent-library-row:hover { background: var(--surface-2); }
+.recent-library-row.on { border-color: rgba(47, 107, 255, .25); background: var(--accent-soft); }
+.recent-library-main { display: flex; align-items: center; gap: 9px; padding: 8px 9px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; flex: 1; min-width: 0; min-height: 54px; }
+.recent-library-remove { flex: none; width: 30px; height: 30px; min-height: 0; margin-right: 6px; opacity: .5; }
+.recent-library-row:hover .recent-library-remove { opacity: 1; }
 .library-recent-card { display: flex; flex-direction: column; }
 .library-location-card { display: flex; flex-direction: column; }
 .library-location-card .library-location { flex: 1; }

@@ -3701,6 +3701,16 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     }
   };
 
+  const removeRecent = async (root: string) => {
+    try {
+      await call<string[]>("forgetLibrary", { root });
+      toast("已从最近使用中移除");
+      refresh();
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+
   const pickAndSwitch = async () => {
     try {
       const root = await pickFolder("switch-library", "选择或新建 Telegram Archive Library 目录");
@@ -4039,11 +4049,16 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           ) : (
             <div className="recent-libraries">
               {history.map((root) => (
-                <button key={root} onClick={() => switchTo(root)} className={root === boot?.libraryRoot ? "on" : ""}>
-                  <span className="folder-badge"><FolderOpen size={14} /></span>
-                  <span className="library-path" data-tip={root}>{root}</span>
-                  {root === boot?.libraryRoot && <span className="current-badge">当前</span>}
-                </button>
+                <div key={root} className={`recent-library-row ${root === boot?.libraryRoot ? "on" : ""}`}>
+                  <button type="button" className="recent-library-main" onClick={() => switchTo(root)}>
+                    <span className="folder-badge"><FolderOpen size={14} /></span>
+                    <span className="library-path" data-tip={root}>{root}</span>
+                    {root === boot?.libraryRoot && <span className="current-badge">当前</span>}
+                  </button>
+                  <button type="button" className="icon-btn recent-library-remove" data-tip="从最近使用中移除" aria-label={`从最近使用中移除 ${root}`} onClick={() => void removeRecent(root)}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -4072,7 +4087,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               </button>
             </div>
             <div className="remote-body" key={remoteMode}>
-              {remote && remoteMode === "saved" && (
+              {remote && boot?.libraryRoot && remoteMode === "saved" && (
                 <div className={`remote-current ${remote.remote ? "is-remote" : ""} ${remote.reachable ? "" : "is-offline"}`}>
                   <span className="remote-current-icon"><Database size={16} /></span>
                   <div>
@@ -4223,9 +4238,10 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                     <label className="ssh-root-option">
                       <b>挂载服务器文件系统</b>
                       <span className={`switch ${sshUseRoot ? "on" : ""}`}><input type="checkbox" role="switch" aria-label="挂载服务器文件系统" checked={sshUseRoot} disabled={remoteFormBusy} onChange={(event) => {
-                        setSSHUseRoot(event.target.checked); setSSHSavedPath(""); resetSSHTest();
+                        setSSHUseRoot(event.target.checked); setSSHSavedPath(""); setSSHDirectory(null); setSSHSystemDirectory(null); resetSSHTest();
                       }} /><i /></span>
                     </label>
+                    <p className="ssh-root-hint">开启后资源管理器会看到服务器根目录（包含所有卷和系统目录），浏览大目录或播放视频可能变慢；日常归档建议关闭，只挂载档案库目录。切换后需要重新选择服务器上的档案库目录。</p>
                     <label className="ssh-root-option">
                       <b>此库为当前库时自动重连</b>
                       <span className={`switch ${sshAutoReconnect ? "on" : ""}`}><input type="checkbox" role="switch" checked={sshAutoReconnect} disabled={remoteFormBusy} onChange={(event) => {
