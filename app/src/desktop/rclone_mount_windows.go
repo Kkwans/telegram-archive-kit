@@ -266,19 +266,24 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 	libraryFree, libraryTotal := int64(0), int64(0)
 	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
-		// The mount exposes the server root, so Explorer should see the combined
-		// NAS volumes. The app separately keeps the selected library volume's
-		// capacity for its storage cards and space checks.
-		mountOptions := sshCapacityOptions(endpoint, options)
+		// Query the library volume separately for the app's storage cards.
+		// Do NOT replace the SFTP server command in ordinary mode: the NAS's
+		// forced command exposes its merged shared/personal-folder view, while
+		// the capacity proxy would switch paths to the Linux volume root.
 		targetOptions := sshTargetCapacityOptions(endpoint, options)
 		targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env)
 		if targetErr == nil {
 			libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
 		}
-		if _, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
-			options = mountOptions
-		} else if targetErr == nil {
-			options = targetOptions
+		if endpoint.SSHUseRoot {
+			// Full-filesystem mode already uses the Linux root. The proxy only
+			// changes the reported statvfs to the combined NAS volumes.
+			mountOptions := sshCapacityOptions(endpoint, options)
+			if _, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
+				options = mountOptions
+			} else if targetErr == nil {
+				options = targetOptions
+			}
 		}
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
