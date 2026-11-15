@@ -36,10 +36,10 @@ type sshFilesystemSpace struct {
 	Free  *int64 `json:"free"`
 }
 
-func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
-	mode, prefix := "share", "exec"
+func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) []string {
+	prefix := "exec"
 	if endpoint.SSHUseRoot {
-		mode, prefix = "system", "exec sudo -n -u root --"
+		prefix = "exec sudo -n -u root --"
 	}
 	program := base64.StdEncoding.EncodeToString([]byte(sftpSpaceProxy))
 	target := base64.StdEncoding.EncodeToString([]byte(endpoint.Path))
@@ -52,6 +52,18 @@ func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
 		}
 	}
 	return append(options, "--sftp-server-command", command)
+}
+
+// sshCapacityOptions makes the mounted drive report the whole NAS capacity,
+// because the drive exposes the server root with volume1 and volume2.
+func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
+	return sshCapacityCommand(endpoint, options, "all")
+}
+
+// sshTargetCapacityOptions reports the specific volume that holds the library;
+// the desktop shell registers this for storage cards and space checks.
+func sshTargetCapacityOptions(endpoint remoteEndpoint, options []string) []string {
+	return sshCapacityCommand(endpoint, options, "target")
 }
 
 func sshAbout(ctx context.Context, exe, remote string, options, env []string) (sshFilesystemSpace, error) {
@@ -76,6 +88,8 @@ type rcloneMount struct {
 	cmd           *exec.Cmd
 	processHandle windows.Handle
 	libraryRoot   string
+	libraryFree   int64
+	libraryTotal  int64
 	done          chan struct{}
 	endpoint      remoteEndpoint
 	fullRoot      bool
@@ -84,6 +98,64 @@ type rcloneMount struct {
 	env           []string
 	ready         bool // protected by Bridge.mountMu
 	report        mountReport
+}
+
+func (b *Bridge) registerMountSpace(mount *rcloneMount) {
+	if mount == nil {
+		return
+	}
+	b.mountMu.Lock()
+	kind, root, free, total := mount.endpoint.Kind, mount.libraryRoot, mount.libraryFree, mount.libraryTotal
+	b.mountMu.Unlock()
+	if kind == "ssh" && total > 0 {
+		platform.SetSpaceOverride(root, free, total)
+	}
+}
+
+func (b *Bridge) clearMountSpace(mount *rcloneMount) {
+	if mount == nil {
+		return
+	}
+	b.mountMu.Lock()
+	kind, root := mount.endpoint.Kind, mount.libraryRoot
+	b.mountMu.Unlock()
+	if kind == "ssh" {
+		platform.ClearSpaceOverride(root)
+	}
+}
+
+// Older mount records do not contain the library volume capacity. Query it in
+// the background so existing mounts adopt the corrected storage display without
+// requiring a remount.
+func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
+	if mount == nil || mount.endpoint.Kind != "ssh" || mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
+		return
+	}
+	b.mountMu.Lock()
+	done := mount.libraryTotal > 0
+	b.mountMu.Unlock()
+	if done {
+		b.registerMountSpace(mount)
+		return
+	}
+	exe := findRclone()
+	if exe == "" {
+		return
+	}
+	options, err := aliasMountOptions(mount.endpoint.Name, mount.endpoint.SSHUseRoot)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	space, err := sshAbout(ctx, exe, ":sftp:/", sshTargetCapacityOptions(mount.endpoint, options), nil)
+	if err != nil || space.Total == nil || space.Free == nil {
+		return
+	}
+	b.mountMu.Lock()
+	mount.libraryFree, mount.libraryTotal = *space.Free, *space.Total
+	b.mountMu.Unlock()
+	b.registerMountSpace(mount)
 }
 
 func (b *Bridge) StartRcloneMount(ctx context.Context, remote, subpath, drive string) (string, error) {
@@ -192,14 +264,21 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	if exe == "" || !hasWinFsp() {
 		return "", nil, remoteError("missing_tools", "请先安装 rclone 和 WinFsp 挂载组件")
 	}
+	libraryFree, libraryTotal := int64(0), int64(0)
 	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
-		// rclone's SFTP backend cannot query a subdirectory's statvfs directly
-		// ("Operation unsupported"), so the proxy rewrites that request on the
-		// server. If the server cannot run it, keep the mount usable and let the
-		// underlying backend report whatever capacity it can.
-		candidate := sshCapacityOptions(endpoint, options)
-		if _, capacityErr := sshAbout(ctx, exe, ":sftp:/", candidate, env); capacityErr == nil {
-			options = candidate
+		// The mount exposes the server root, so Explorer should see the combined
+		// NAS volumes. The app separately keeps the selected library volume's
+		// capacity for its storage cards and space checks.
+		mountOptions := sshCapacityOptions(endpoint, options)
+		targetOptions := sshTargetCapacityOptions(endpoint, options)
+		targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env)
+		if targetErr == nil {
+			libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
+		}
+		if _, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
+			options = mountOptions
+		} else if targetErr == nil {
+			options = targetOptions
 		}
 	}
 	markerDir := prefix + path.Join(endpoint.Path, ".runtime")
@@ -226,6 +305,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		}
 		if mount.ready && (useAnyDrive || endpoint.Drive == "" || letter == endpoint.Drive) {
 			b.mountMu.Unlock()
+			b.registerMountSpace(mount)
 			if validate != nil {
 				if err := validate(mount.libraryRoot); err != nil {
 					return "", nil, err
@@ -298,7 +378,8 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	// identity and contain publication media paths.
 	cmd := exec.Command(exe, append(args, options...)...)
 	cmd.Env = env
-	mount := &rcloneMount{cmd: cmd, libraryRoot: root, done: make(chan struct{}), endpoint: endpoint, fullRoot: endpoint.SSHUseRoot, markerDir: markerDir, options: options, env: env}
+	mount := &rcloneMount{cmd: cmd, libraryRoot: root, libraryFree: libraryFree, libraryTotal: libraryTotal,
+		done: make(chan struct{}), endpoint: endpoint, fullRoot: endpoint.SSHUseRoot, markerDir: markerDir, options: options, env: env}
 	cmd.Stdout, cmd.Stderr = &mount.report, &mount.report
 	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -330,6 +411,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		delete(b.mounts, drive)
 		close(mount.done)
 		b.mountMu.Unlock()
+		b.clearMountSpace(mount)
 		if b.remoteConnections != nil {
 			b.remoteConnections.notify()
 		}
@@ -375,6 +457,9 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			}
 			mount.ready = stillOwned && persistErr == nil
 			b.mountMu.Unlock()
+			if mount.ready {
+				b.registerMountSpace(mount)
+			}
 			if persistErr != nil {
 				_ = stopRemoteMount(mount)
 				return "", nil, fmt.Errorf("无法登记 SSH 挂载：%w", persistErr)

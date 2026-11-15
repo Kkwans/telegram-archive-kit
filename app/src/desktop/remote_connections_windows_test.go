@@ -18,19 +18,22 @@ import (
 func TestSSHCapacityOptionsUseSelectedFilesystem(t *testing.T) {
 	endpoint := remoteEndpoint{Kind: "ssh", Path: "/volume2/测试 archive", SSHUseRoot: true}
 	original := []string{"--config", "NUL", "--sftp-server-command", "old"}
-	options := sshCapacityOptions(endpoint, original)
-	if original[3] != "old" || len(options) != len(original) {
-		t.Fatalf("options were modified or duplicated: %v", options)
+	mounted := sshCapacityOptions(endpoint, original)
+	if original[3] != "old" || len(mounted) != len(original) {
+		t.Fatalf("options were modified or duplicated: %v", mounted)
 	}
-	command := options[3]
-	if !strings.Contains(command, "sudo -n") || !strings.Contains(command, " system ") ||
+	if command := mounted[3]; !strings.Contains(command, "sudo -n") || !strings.Contains(command, " all ") ||
 		!strings.Contains(command, base64.StdEncoding.EncodeToString([]byte(endpoint.Path))) ||
 		strings.Contains(command, endpoint.Path) {
-		t.Fatal("system capacity command did not safely encode the selected path")
+		t.Fatal("mounted capacity command did not safely encode the selected path")
+	}
+	targeted := sshTargetCapacityOptions(endpoint, []string{"--config", "NUL"})
+	if len(targeted) != 4 || !strings.Contains(targeted[3], " target ") {
+		t.Fatal("target capacity command used the wrong mode")
 	}
 	endpoint.SSHUseRoot = false
-	options = sshCapacityOptions(endpoint, []string{"--config", "NUL"})
-	if len(options) != 4 || !strings.Contains(options[3], " share ") || strings.Contains(options[3], "sudo -n") {
+	mounted = sshCapacityOptions(endpoint, []string{"--config", "NUL"})
+	if len(mounted) != 4 || !strings.Contains(mounted[3], " all ") || strings.Contains(mounted[3], "sudo -n") {
 		t.Fatal("ordinary SSH capacity command used the wrong server mode")
 	}
 }

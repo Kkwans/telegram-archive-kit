@@ -1,12 +1,13 @@
 import base64
 import os
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import threading
 
-mode = sys.argv[1]
+mode = sys.argv[1] if len(sys.argv) > 1 else "target"
 target = base64.b64decode(sys.argv[2]).decode("utf-8")
 
 
@@ -93,13 +94,68 @@ def statvfs_request(packet):
     return size == 19 and packet[9:9 + size] == b"statvfs@openssh.com"
 
 
+REAL_FILESYSTEMS = {
+    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "ntfs", "fuseblk", "zfs",
+}
+
+
+def volume_values():
+    """Sum the NAS data volumes exposed below the mount root.
+
+    Explorer sees the whole server because the drive mounts "/", so its capacity
+    must be the sum of the real data volumes (volume1 + volume2), not the
+    overlay/system root. Bind mounts and subvolumes share st_dev and are counted
+    once.
+    """
+    mounts = []
+    try:
+        with open("/proc/mounts", "r", encoding="utf-8") as source:
+            for line in source:
+                fields = line.split()
+                if len(fields) < 3 or fields[2] not in REAL_FILESYSTEMS:
+                    continue
+                mountpoint = fields[1].replace("\040", " ")
+                mounts.append(mountpoint)
+    except OSError:
+        return []
+    preferred = [item for item in mounts if re.match(r"^/volume[0-9]+(/|$)", item)]
+    candidates = preferred or [item for item in mounts if item != "/"]
+    seen = set()
+    total = free = 0
+    for mountpoint in candidates:
+        try:
+            device = os.stat(mountpoint).st_dev
+            if device in seen:
+                continue
+            info = os.statvfs(mountpoint)
+        except OSError:
+            continue
+        seen.add(device)
+        total += info.f_blocks * info.f_frsize
+        free += info.f_bavail * info.f_frsize
+    if total <= 0:
+        return []
+    return total, free
+
+
+def filesystem_values():
+    if mode == "all":
+        aggregate = volume_values()
+        if aggregate:
+            total, free = aggregate
+            block = 4096
+            return (block, block, total // block, free // block, free // block,
+                    0, 0, 0, 0, 0, 255)
+    info = os.statvfs(target)
+    return (info.f_bsize, info.f_frsize, info.f_blocks, info.f_bfree,
+            info.f_bavail, info.f_files, info.f_ffree, info.f_favail,
+            getattr(info, "f_fsid", 0), info.f_flag & 3, info.f_namemax)
+
+
 def filesystem_reply(packet):
     request_id = struct.unpack_from(">I", packet, 1)[0]
     try:
-        info = os.statvfs(target)
-        values = (info.f_bsize, info.f_frsize, info.f_blocks, info.f_bfree,
-                  info.f_bavail, info.f_files, info.f_ffree, info.f_favail,
-                  getattr(info, "f_fsid", 0), info.f_flag & 3, info.f_namemax)
+        values = filesystem_values()
         return struct.pack(">BI11Q", 201, request_id, *values)
     except OSError:
         message = b"filesystem capacity unavailable"

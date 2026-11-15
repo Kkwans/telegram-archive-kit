@@ -12,12 +12,14 @@ import (
 )
 
 type sshMountRecord struct {
-	Endpoint   remoteEndpoint
-	Root       string
-	Executable string
-	PID        uint32
-	Created    windows.Filetime
-	FullRoot   bool
+	Endpoint     remoteEndpoint
+	Root         string
+	Executable   string
+	PID          uint32
+	Created      windows.Filetime
+	FullRoot     bool
+	LibraryFree  int64
+	LibraryTotal int64
 }
 
 func (b *Bridge) sshMountRecordPath(drive string) string {
@@ -25,7 +27,8 @@ func (b *Bridge) sshMountRecordPath(drive string) string {
 }
 
 func (b *Bridge) rememberSSHMount(drive string, mount *rcloneMount) error {
-	record := sshMountRecord{Endpoint: mount.endpoint, Root: mount.libraryRoot, Executable: mount.cmd.Path, PID: uint32(mount.cmd.Process.Pid), FullRoot: mount.fullRoot}
+	record := sshMountRecord{Endpoint: mount.endpoint, Root: mount.libraryRoot, Executable: mount.cmd.Path,
+		PID: uint32(mount.cmd.Process.Pid), FullRoot: mount.fullRoot, LibraryFree: mount.libraryFree, LibraryTotal: mount.libraryTotal}
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, record.PID)
 	if err != nil {
 		return err
@@ -69,11 +72,14 @@ func (b *Bridge) adoptSSHMounts() {
 		if err != nil || handle == 0 {
 			continue
 		}
-		mount := &rcloneMount{libraryRoot: record.Root, endpoint: record.Endpoint, fullRoot: record.FullRoot, done: make(chan struct{}), processHandle: handle, ready: true,
+		mount := &rcloneMount{libraryRoot: record.Root, libraryFree: record.LibraryFree, libraryTotal: record.LibraryTotal,
+			endpoint: record.Endpoint, fullRoot: record.FullRoot, done: make(chan struct{}), processHandle: handle, ready: true,
 			markerDir: ":sftp:" + path.Join(record.Endpoint.Path, ".runtime")}
 		b.mountMu.Lock()
 		b.mounts[drive] = mount
 		b.mountMu.Unlock()
+		b.registerMountSpace(mount)
+		go b.refreshMountSpace(mount)
 		unmark := platform.MarkManagedRemoteDrive(drive)
 		go func() {
 			_, _ = windows.WaitForSingleObject(handle, windows.INFINITE)
@@ -82,6 +88,7 @@ func (b *Bridge) adoptSSHMounts() {
 			delete(b.mounts, drive)
 			close(mount.done)
 			b.mountMu.Unlock()
+			b.clearMountSpace(mount)
 			_ = windows.CloseHandle(handle)
 		}()
 	}
