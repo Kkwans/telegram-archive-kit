@@ -72,9 +72,12 @@ func (b *Bridge) adoptSSHMounts() {
 		if err != nil || handle == 0 {
 			continue
 		}
-		mount := &rcloneMount{libraryRoot: record.Root, libraryFree: record.LibraryFree, libraryTotal: record.LibraryTotal,
+		mount := &rcloneMount{libraryRoot: record.Root,
 			endpoint: record.Endpoint, fullRoot: record.FullRoot, done: make(chan struct{}), processHandle: handle, ready: true,
 			markerDir: ":sftp:" + path.Join(record.Endpoint.Path, ".runtime")}
+		if record.Endpoint.SSHUseRoot {
+			mount.libraryFree, mount.libraryTotal = record.LibraryFree, record.LibraryTotal
+		}
 		b.mountMu.Lock()
 		b.mounts[drive] = mount
 		b.mountMu.Unlock()

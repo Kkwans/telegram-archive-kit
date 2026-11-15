@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -37,7 +38,7 @@ type sshFilesystemSpace struct {
 	Free  *int64 `json:"free"`
 }
 
-func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) []string {
+func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode, libraryID string) []string {
 	scope, prefix := "share", "exec"
 	if endpoint.SSHUseRoot {
 		scope, prefix = "system", "exec sudo -n -u root --"
@@ -48,7 +49,7 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) 
 	_ = writer.Close()
 	program := base64.StdEncoding.EncodeToString(packed.Bytes())
 	target := base64.StdEncoding.EncodeToString([]byte(endpoint.Path))
-	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s`, prefix, program, scope, mode, target)
+	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s %s`, prefix, program, scope, mode, target, libraryID)
 	options = slices.Clone(options)
 	for i := 0; i+1 < len(options); i++ {
 		if options[i] == "--sftp-server-command" {
@@ -62,13 +63,17 @@ func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) 
 // sshCapacityOptions makes the mounted drive report the whole NAS capacity,
 // because the drive exposes the server root with volume1 and volume2.
 func sshCapacityOptions(endpoint remoteEndpoint, options []string) []string {
-	return sshCapacityCommand(endpoint, options, "all")
+	return sshCapacityCommand(endpoint, options, "all", "")
 }
 
 // sshTargetCapacityOptions reports the specific volume that holds the library;
 // the desktop shell registers this for storage cards and space checks.
 func sshTargetCapacityOptions(endpoint remoteEndpoint, options []string) []string {
-	return sshCapacityCommand(endpoint, options, "target")
+	return sshCapacityCommand(endpoint, options, "target", "")
+}
+
+func sshLibraryCapacityOptions(endpoint remoteEndpoint, options []string, libraryID string) []string {
+	return sshCapacityCommand(endpoint, options, "library", libraryID)
 }
 
 func sshAbout(ctx context.Context, exe, remote string, options, env []string) (sshFilesystemSpace, error) {
@@ -103,6 +108,23 @@ type rcloneMount struct {
 	env           []string
 	ready         bool // protected by Bridge.mountMu
 	report        mountReport
+}
+
+func mountLibraryID(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, ".runtime", "library-id"))
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(string(data))
+	if len(id) != 32 {
+		return ""
+	}
+	for _, r := range id {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return ""
+		}
+	}
+	return id
 }
 
 func (b *Bridge) registerMountSpace(mount *rcloneMount) {
@@ -156,6 +178,12 @@ func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
 	capacityOptions := sshCapacityOptions(mount.endpoint, options)
 	if mount.endpoint.SSHUseRoot {
 		capacityOptions = sshTargetCapacityOptions(mount.endpoint, options)
+	} else {
+		id := mountLibraryID(mount.libraryRoot)
+		if id == "" {
+			return
+		}
+		capacityOptions = sshLibraryCapacityOptions(mount.endpoint, options, id)
 	}
 	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, nil)
 	if err != nil || space.Total == nil || space.Free == nil {
@@ -488,6 +516,19 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 			b.mountMu.Unlock()
 			if mount.ready {
 				b.registerMountSpace(mount)
+				if !endpoint.SSHUseRoot {
+					if id := mountLibraryID(root); id != "" {
+						libCtx, libCancel := context.WithTimeout(context.Background(), 12*time.Second)
+						libOptions := sshLibraryCapacityOptions(endpoint, options, id)
+						if space, spaceErr := sshAbout(libCtx, exe, ":sftp:/", libOptions, env); spaceErr == nil {
+							b.mountMu.Lock()
+							mount.libraryFree, mount.libraryTotal = *space.Free, *space.Total
+							b.mountMu.Unlock()
+							b.registerMountSpace(mount)
+						}
+						libCancel()
+					}
+				}
 			}
 			if persistErr != nil {
 				_ = stopRemoteMount(mount)
