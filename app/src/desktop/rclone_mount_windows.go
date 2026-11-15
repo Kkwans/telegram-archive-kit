@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -37,13 +38,17 @@ type sshFilesystemSpace struct {
 }
 
 func sshCapacityCommand(endpoint remoteEndpoint, options []string, mode string) []string {
-	prefix := "exec"
+	scope, prefix := "share", "exec"
 	if endpoint.SSHUseRoot {
-		prefix = "exec sudo -n -u root --"
+		scope, prefix = "system", "exec sudo -n -u root --"
 	}
-	program := base64.StdEncoding.EncodeToString([]byte(sftpSpaceProxy))
+	var packed bytes.Buffer
+	writer := zlib.NewWriter(&packed)
+	_, _ = writer.Write([]byte(sftpSpaceProxy))
+	_ = writer.Close()
+	program := base64.StdEncoding.EncodeToString(packed.Bytes())
 	target := base64.StdEncoding.EncodeToString([]byte(endpoint.Path))
-	command := fmt.Sprintf(`%s python3 -u -c 'import base64;exec(base64.b64decode("%s"))' %s %s`, prefix, program, mode, target)
+	command := fmt.Sprintf(`%s python3 -u -c 'import base64,zlib;exec(zlib.decompress(base64.b64decode("%s")))' %s %s %s`, prefix, program, scope, mode, target)
 	options = slices.Clone(options)
 	for i := 0; i+1 < len(options); i++ {
 		if options[i] == "--sftp-server-command" {
@@ -148,7 +153,11 @@ func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	space, err := sshAbout(ctx, exe, ":sftp:/", sshTargetCapacityOptions(mount.endpoint, options), nil)
+	capacityOptions := sshCapacityOptions(mount.endpoint, options)
+	if mount.endpoint.SSHUseRoot {
+		capacityOptions = sshTargetCapacityOptions(mount.endpoint, options)
+	}
+	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, nil)
 	if err != nil || space.Total == nil || space.Free == nil {
 		return
 	}
@@ -266,23 +275,21 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 	}
 	libraryFree, libraryTotal := int64(0), int64(0)
 	if endpoint.Kind == "ssh" && endpoint.Path != "" && endpoint.Path != "/" {
-		// Query the library volume separately for the app's storage cards.
-		// Do NOT replace the SFTP server command in ordinary mode: the NAS's
-		// forced command exposes its merged shared/personal-folder view, while
-		// the capacity proxy would switch paths to the Linux volume root.
-		targetOptions := sshTargetCapacityOptions(endpoint, options)
-		targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env)
-		if targetErr == nil {
-			libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
+		// The capacity proxy keeps the forced-command SFTP view in ordinary
+		// mode and the Linux root in full-filesystem mode; only statvfs is
+		// replaced. The merged SFTP view has no single volume, so it reports
+		// the combined NAS capacity; full-filesystem mode reports the selected
+		// server volume.
+		mountOptions := sshCapacityOptions(endpoint, options)
+		if mountSpace, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
+			options = mountOptions
+			libraryFree, libraryTotal = *mountSpace.Free, *mountSpace.Total
 		}
 		if endpoint.SSHUseRoot {
-			// Full-filesystem mode already uses the Linux root. The proxy only
-			// changes the reported statvfs to the combined NAS volumes.
-			mountOptions := sshCapacityOptions(endpoint, options)
-			if _, mountErr := sshAbout(ctx, exe, ":sftp:/", mountOptions, env); mountErr == nil {
-				options = mountOptions
-			} else if targetErr == nil {
+			targetOptions := sshTargetCapacityOptions(endpoint, options)
+			if targetSpace, targetErr := sshAbout(ctx, exe, ":sftp:/", targetOptions, env); targetErr == nil {
 				options = targetOptions
+				libraryFree, libraryTotal = *targetSpace.Free, *targetSpace.Total
 			}
 		}
 	}

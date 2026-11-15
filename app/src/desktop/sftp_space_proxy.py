@@ -1,5 +1,6 @@
 import base64
 import os
+import pwd
 import re
 import shutil
 import struct
@@ -7,25 +8,26 @@ import subprocess
 import sys
 import threading
 
-mode = sys.argv[1] if len(sys.argv) > 1 else "target"
-target = base64.b64decode(sys.argv[2]).decode("utf-8")
+scope = sys.argv[1] if len(sys.argv) > 1 else "share"
+capacity_mode = sys.argv[2] if len(sys.argv) > 2 else "target"
+target = base64.b64decode(sys.argv[3]).decode("utf-8") if len(sys.argv) > 3 else "/"
 
 
 def server_command():
-    # rclone's SFTP server is already required by the full-filesystem mode and
-    # also works for a normal SSH account. Prefer it because distro sftp-server
-    # wrappers are not consistently startable outside sshd.
-    candidates = ["/usr/local/bin/rclone", "/usr/bin/rclone"]
-    rclone = shutil.which("rclone")
-    if rclone:
-        candidates.append(rclone)
-    for candidate in candidates:
-        if os.path.isabs(candidate) and os.access(candidate, os.X_OK):
-            return [candidate, "serve", "sftp", "/", "--stdio",
-                    "--config", "/dev/null", "--log-level", "ERROR"]
-    for candidate in ("/usr/lib/openssh/sftp-server", "/usr/libexec/openssh/sftp-server",
-                      "/usr/libexec/sftp-server", "/usr/lib/ssh/sftp-server",
-                      "/usr/bin/sftp-server"):
+    if scope == "system":
+        candidates = ["/usr/local/bin/rclone", "/usr/bin/rclone"]
+        rclone = shutil.which("rclone")
+        if rclone:
+            candidates.append(rclone)
+        for candidate in candidates:
+            if os.path.isabs(candidate) and os.access(candidate, os.X_OK):
+                return [candidate, "serve", "sftp", "/", "--stdio",
+                        "--config", "/dev/null", "--log-level", "ERROR"]
+        return None
+    # Preserve the NAS's merged shared/personal-folder SFTP view. The forced
+    # command normally wraps every SSH command; invoking it with the SFTP
+    # subsystem request reproduces that view instead of exposing the Linux root.
+    for candidate in ("/etc/ssh/force_command.sh", "/usr/lib/openssh/sftp-server"):
         if os.path.isabs(candidate) and os.access(candidate, os.X_OK):
             return [candidate]
     return None
@@ -36,7 +38,25 @@ if not command:
     sys.stderr.write("TAK_SFTP_SERVER_MISSING\n")
     sys.exit(127)
 
-server = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+server_env = None
+if scope != "system":
+    server_env = os.environ.copy()
+    server_env["SSH_ORIGINAL_COMMAND"] = "internal-sftp"
+    server_env.setdefault("SHELL", "/bin/bash")
+    server_env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+    try:
+        account = pwd.getpwuid(os.getuid()).pw_name
+        server_env.setdefault("USER", account)
+        server_env.setdefault("LOGNAME", account)
+    except KeyError:
+        pass
+try:
+    server = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=sys.stderr, bufsize=0, env=server_env)
+except OSError as error:
+    sys.stderr.write("TAK_SFTP_SERVER_START_FAILED: %s\n" % error)
+    sys.exit(127)
+
 output_lock = threading.Lock()
 max_packet = 32 * 1024 * 1024
 
@@ -100,13 +120,7 @@ REAL_FILESYSTEMS = {
 
 
 def volume_values():
-    """Sum the NAS data volumes exposed below the mount root.
-
-    Explorer sees the whole server because the drive mounts "/", so its capacity
-    must be the sum of the real data volumes (volume1 + volume2), not the
-    overlay/system root. Bind mounts and subvolumes share st_dev and are counted
-    once.
-    """
+    """Sum the NAS data volumes exposed below the mount root."""
     mounts = []
     try:
         with open("/proc/mounts", "r", encoding="utf-8") as source:
@@ -114,7 +128,7 @@ def volume_values():
                 fields = line.split()
                 if len(fields) < 3 or fields[2] not in REAL_FILESYSTEMS:
                     continue
-                mountpoint = fields[1].replace("\040", " ")
+                mountpoint = fields[1].replace("\\040", " ")
                 mounts.append(mountpoint)
     except OSError:
         return []
@@ -139,7 +153,7 @@ def volume_values():
 
 
 def filesystem_values():
-    if mode == "all":
+    if capacity_mode == "all":
         aggregate = volume_values()
         if aggregate:
             total, free = aggregate
