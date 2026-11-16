@@ -104,9 +104,9 @@ func classifySyncPlanArchiveError(err error) error {
 		case "auth":
 			return SyncPlanBlocked(SyncPlanBlockSession, "Telegram 会话已失效，请重新登录")
 		case "network":
-			return SyncPlanTransient(SyncPlanReasonNetwork, "媒体下载连接暂时不可用", 0)
+			return SyncPlanTransient(SyncPlanReasonNetwork, "网络连接暂时不可用，正在重试", 0)
 		case "content":
-			return SyncPlanFailed(SyncPlanBlockTarget, "Telegram 暂时无法提供所选媒体")
+			return SyncPlanFailed(SyncPlanBlockTarget, "Telegram 无法读取所选媒体，可能已删除或当前账号无权访问")
 		}
 	}
 	var partial *takapp.PartialMediaError

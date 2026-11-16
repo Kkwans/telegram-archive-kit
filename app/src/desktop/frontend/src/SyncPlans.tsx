@@ -108,6 +108,7 @@ const REASONS: Record<string, string> = {
   network: "Telegram 网络连接异常。",
   floodWait: "Telegram 限流。计划会在等待结束后继续。",
   history: "无法确认聊天历史，请刷新在线聊天后重试。",
+  media: "仍有媒体未能补齐，请查看任务详情后重试。",
 };
 
 const PLAN_METHOD = {
@@ -121,7 +122,7 @@ const ACTION_MESSAGES: Record<PlanAction, string> = {
 };
 
 function draftFromPlan(plan?: Plan): Draft {
-  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "all", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: false, maxRetries: 3 };
+  if (!plan) return { name: "", schedule: { frequency: "daily", time: "02:00", weekday: 1 }, targets: [], enabled: true, firstScope: "all", mediaKinds: MEDIA.map(({ kind }) => kind), includeHistory: true, maxRetries: 3 };
   return { id: plan.id, name: plan.name, schedule: plan.schedule, targets: plan.targets ?? [], enabled: plan.enabled, firstScope: plan.firstScope || "30d", mediaKinds: plan.mediaKinds ?? [], includeHistory: plan.includeHistory, maxRetries: plan.maxRetries ?? 3 };
 }
 

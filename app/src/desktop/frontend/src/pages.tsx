@@ -4824,8 +4824,8 @@ export function SettingsPage({ ctx }: { ctx: PageCtx }) {
           <SettingsField label="通知停留时间（秒）" hint="成功、失败、警告与普通通知自动消失的时间（1–10 秒，默认 3 秒）">
             <input type="number" min={1} max={10} step={1} value={form.toastSeconds} onChange={(e) => set("toastSeconds", Number(e.target.value))} />
           </SettingsField>
-          <SettingsField label="弹窗遮罩范围" hint="弹窗和通知随遮罩范围居中。">
-            <Select ariaLabel="弹窗遮罩范围" value={overlayScope} options={[{ value: "main", label: "主内容区" }, { value: "window", label: "整个窗口" }]} onChange={(value) => {
+          <SettingsField label="弹窗与通知居中位置" hint="设置弹窗和通知相对主内容区（不含侧栏）或整个窗口的居中位置。">
+            <Select ariaLabel="弹窗与通知居中位置" value={overlayScope} options={[{ value: "main", label: "主内容区" }, { value: "window", label: "整个窗口" }]} onChange={(value) => {
               setOverlayScope(value);
               localStorage.setItem("tak-overlay-scope", value);
               document.documentElement.dataset.overlayScope = value;

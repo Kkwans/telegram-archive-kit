@@ -170,7 +170,7 @@ func containsAny(s string, xs ...string) bool {
 func summarizeTdlError(raw string) string {
 	clean := cleanTdlText(raw)
 	if clean == "" {
-		return "tdl 返回非 0，但没有输出错误详情"
+		return "下载引擎异常退出，未返回可识别的原因；请查看日志后重试"
 	}
 	low := strings.ToLower(clean)
 	known := []string{
@@ -221,12 +221,12 @@ func classifyTdlFailure(raw string, runErr error, logPath string) *TdlFailure {
 	f := &TdlFailure{Kind: tdlFailureUnknown, Summary: summarizeTdlError(clean), Detail: clean, LogPath: logPath, ExitCode: code}
 	if containsAny(low, "no space left on device", "not enough space", "disk full", "there is not enough space", "磁盘空间不足", "空间不足") {
 		f.Kind = tdlFailureContent
-		f.Summary = "磁盘空间不足，下载已停止；请清理空间后继续下载"
+		f.Summary = "档案库空间不足，下载已停止；请释放空间或更换档案库后重新下载"
 		return f
 	}
 	if containsAny(low, "not authorized", "auth_key_unregistered", "session_revoked", "auth_key_duplicated", "please login first") {
 		f.Kind = tdlFailureAuth
-		f.Summary = "Telegram 授权不可用，需要重新登录"
+		f.Summary = "Telegram 登录已失效，请重新登录后继续"
 		return f
 	}
 	if containsAny(low,
@@ -234,7 +234,7 @@ func classifyTdlFailure(raw string, runErr error, logPath string) *TdlFailure {
 		"network is unreachable", "no route to host", "dial tcp", "i/o timeout", "timed out", "unexpected eof",
 		"read length: eof", "engine forcibly closed", "wsarecv", "forcibly closed by the remote host") {
 		f.Kind = tdlFailureNetwork
-		f.Summary = "Telegram 网络连接中断"
+		f.Summary = "网络连接中断，本次下载已中止"
 		return f
 	}
 	// tdl sometimes collapses a short network interruption into only these generic
@@ -243,11 +243,12 @@ func classifyTdlFailure(raw string, runErr error, logPath string) *TdlFailure {
 	// the user back to a confirmation screen. The retry window is bounded by settings.
 	if containsAny(low, "error: group:", "error: callback:") {
 		f.Kind = tdlFailureNetwork
-		f.Summary = "tdl 任务组中断，按临时网络故障自动恢复"
+		f.Summary = "下载任务临时中断，本次尝试已中止"
 		return f
 	}
 	if containsAny(low, "invalid message", "chat_id_invalid", "username_invalid", "media_invalid", "message_id_invalid") {
 		f.Kind = tdlFailureContent
+		f.Summary = "Telegram 无法读取该消息或媒体，可能已被删除或当前账号无权访问"
 		return f
 	}
 	return f
@@ -670,7 +671,7 @@ func (a *App) downloadMissingWithin(ctx context.Context, slug, jsonPath string, 
 				ids = append(ids, id)
 			}
 			sort.Strings(ids)
-			return false, fmt.Errorf("%w: %d 个媒体分别重试 %d 次仍无法下载：Message ID %s；其他资源已保留", errDeferredExhausted, len(ids), a.Settings.StalledFileRetries, strings.Join(ids, ", "))
+			return false, fmt.Errorf("%w：%d 个媒体多轮重试仍无进度（Message ID %s）；其他媒体已保留", errDeferredExhausted, len(ids), strings.Join(ids, ", "))
 		}
 		return false, nil
 	}
@@ -783,9 +784,9 @@ func (a *App) downloadMissingWithin(ctx context.Context, slug, jsonPath string, 
 						deferred[id] = 0
 					}
 				}
-				deferredInfo = fmt.Sprintf("暂缓 %d 个无进展文件，先完成其余媒体；疑难文件每轮最多重试 %d 次", len(deferred), a.Settings.StalledFileRetries)
+				deferredInfo = fmt.Sprintf("本轮跳过 %d 个无进度媒体，其余媒体继续下载；这些媒体将在后续尝试中重试，每轮最多重试 %d 次", len(deferred), a.Settings.StalledFileRetries)
 			} else {
-				deferredInfo = fmt.Sprintf("媒体 #%s 重试 %d/%d 次仍无进展，转到队尾", activeDeferred, deferred[activeDeferred], a.Settings.StalledFileRetries)
+				deferredInfo = fmt.Sprintf("媒体 #%s 已重试 %d/%d 次仍无进度，已移至队尾", activeDeferred, deferred[activeDeferred], a.Settings.StalledFileRetries)
 			}
 			more, e := advanceDeferred()
 			if e != nil {
@@ -962,7 +963,7 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	}
 	if err := cmd.Start(); err != nil {
 		tdlStartMu.Unlock()
-		f := &TdlFailure{Kind: tdlFailureUnknown, Summary: "无法启动 tdl", Detail: err.Error(), LogPath: logPath, ExitCode: -1}
+		f := &TdlFailure{Kind: tdlFailureUnknown, Summary: "无法启动下载引擎，请检查 tdl 安装、权限或安全软件后重试", Detail: err.Error(), LogPath: logPath, ExitCode: -1}
 		return f, f
 	}
 	process, untrack := trackTdlPid(cmd.Process.Pid)
@@ -1080,7 +1081,7 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 				}
 				f := &TdlFailure{
 					Kind: tdlFailureNetwork, Stalled: true, ActiveIDs: activeIDs,
-					Summary: fmt.Sprintf("tdl 连续 %d 秒没有进展，暂缓当前媒体并继续其他文件", int(stallAfter.Seconds())),
+					Summary: fmt.Sprintf("下载停滞：%d 秒内没有进度，本次尝试已中止", int(stallAfter.Seconds())),
 					Detail:  "TAK_STALL_WATCHDOG", LogPath: logPath, ExitCode: -3,
 				}
 				return f, f
