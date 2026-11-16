@@ -294,7 +294,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         </div>
         <div className="stat">
           <span>{stats?.pendingMedia ? "已核对媒体" : "本地媒体"}</span>
-          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个{stats.pendingMedia ? ` · ${stats.pendingMedia} 个聊天待核对` : ""}</em></> : chatsStatus === "error" ? <b>不可用</b> : <span className="skeleton-line w-80" />}</div>
+          <div>{stats ? <><b>{stats.media.toLocaleString()}</b><em>个{stats.pendingMedia ? ` · ${stats.pendingMedia} 个聊天待自动核对` : ""}</em></> : chatsStatus === "error" ? <b>不可用</b> : <span className="skeleton-line w-80" />}</div>
         </div>
         <div className="stat">
           <span>缺失媒体</span>
@@ -306,7 +306,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         <section className="panel">
           <div className="panel-head">
             <h3><ChartPie size={14} /> 媒体构成</h3>
-            <span className="meta">{!stats ? chatsStatus === "error" ? "统计暂不可用" : "正在读取…" : stats.pendingMedia ? `已核对 ${totalMedia.toLocaleString()} 个 · ${stats.pendingMedia} 个聊天待核对` : `共 ${totalMedia.toLocaleString()} 个`}</span>
+            <span className="meta">{!stats ? chatsStatus === "error" ? "统计暂不可用" : "正在读取…" : stats.pendingMedia ? `已核对 ${totalMedia.toLocaleString()} 个 · ${stats.pendingMedia} 个聊天待自动核对` : `共 ${totalMedia.toLocaleString()} 个`}</span>
           </div>
           <div className="media-composition">
             <div className="kind-list">
@@ -346,7 +346,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               </div>
             </div>
             <div className="storage-facts">
-              <div><span>{stats?.pendingMedia ? "已核对媒体体积" : "媒体体积"}</span><b>{stats ? bytes(stats.mediaBytes) : "—"}</b>{Boolean(stats?.pendingMedia) && <small>{stats?.pendingMedia} 个聊天待核对</small>}</div>
+              <div><span>{stats?.pendingMedia ? "已核对媒体体积" : "媒体体积"}</span><b>{stats ? bytes(stats.mediaBytes) : "—"}</b>{Boolean(stats?.pendingMedia) && <small>{stats?.pendingMedia} 个聊天待自动核对</small>}</div>
               <div><span>网页</span><b>{stats ? `${stats.pages} 页` : "—"}</b></div>
               <div><span>官方导出</span><b>{stats ? `${stats.official} 个` : "—"}</b></div>
             </div>

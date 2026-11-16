@@ -72,6 +72,22 @@ func mediaCatalogKey(root, slug string) string {
 	return libraryFingerprint(root) + "\x00" + slug
 }
 
+// mediaCatalogKeyFor keeps media summaries attached to the library identity
+// instead of the mount path. Drive letters and the ordinary/full-filesystem
+// views change between connections, but the .runtime/library-id does not.
+func (f *Facade) mediaCatalogKeyFor(root, slug string) string {
+	id := ""
+	f.mu.Lock()
+	if f.a != nil && strings.EqualFold(filepath.Clean(root), filepath.Clean(f.a.Settings.LibraryRoot)) {
+		id = f.a.Settings.ExpectedLibraryID
+	}
+	f.mu.Unlock()
+	if id != "" {
+		return "library:" + strings.ToLower(id) + "\x00" + slug
+	}
+	return mediaCatalogKey(root, slug)
+}
+
 func (f *Facade) mediaCatalogPath(key string) string {
 	if f.a == nil || f.a.ConfigDir == "" {
 		return ""
@@ -324,7 +340,7 @@ func (f *Facade) cachedWorkspaceMediaSummary(libraryRoot, slug string) (MediaSum
 	if libraryRoot == "" || !validWorkspaceSlug(slug) {
 		return MediaSummary{}, false
 	}
-	key := mediaCatalogKey(libraryRoot, slug)
+	key := f.mediaCatalogKeyFor(libraryRoot, slug)
 	f.mediaMu.Lock()
 	defer f.mediaMu.Unlock()
 	e := f.mediaEntryLocked(key)
@@ -338,7 +354,7 @@ func (f *Facade) invalidateWorkspaceMedia(libraryRoot, slug string) {
 	if libraryRoot == "" || !validWorkspaceSlug(slug) {
 		return
 	}
-	key := mediaCatalogKey(libraryRoot, slug)
+	key := f.mediaCatalogKeyFor(libraryRoot, slug)
 	f.mediaMu.Lock()
 	e := f.mediaEntryLocked(key)
 	e.generation++
@@ -487,7 +503,7 @@ func (f *Facade) queryMediaCatalog(ctx context.Context, root string, q MediaQuer
 	if err := normalizeCatalogQuery(&q); err != nil {
 		return MediaPageDTO{}, err
 	}
-	key := mediaCatalogKey(root, q.Slug)
+	key := f.mediaCatalogKeyFor(root, q.Slug)
 	for {
 		if err := ctx.Err(); err != nil {
 			return MediaPageDTO{}, err
@@ -612,7 +628,7 @@ func (f *Facade) CachedMediaThumbnail(libraryRoot, slug, rel, version string) (i
 	if !ok || version == "" || libraryRoot == "" || !validWorkspaceSlug(slug) {
 		return 0, 0, false
 	}
-	key := mediaCatalogKey(libraryRoot, slug)
+	key := f.mediaCatalogKeyFor(libraryRoot, slug)
 	f.mediaMu.Lock()
 	defer f.mediaMu.Unlock()
 	e := f.mediaEntryLocked(key)

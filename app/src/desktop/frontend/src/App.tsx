@@ -28,7 +28,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, MediaSummary, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
+import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, MediaPage, MediaSummary, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
 import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
 import type { SyncPlanLocation } from "./SyncPlans";
@@ -130,6 +130,10 @@ export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [chats, setChats] = useState<ChatRow[]>([]);
   const [chatsStatus, setChatsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const chatsRef = useRef<ChatRow[]>([]);
+  chatsRef.current = chats;
+  const warmMedia = useRef(new Set<string>());
+  const readyMedia = useRef(new Set<string>());
   const [selected, setSelected] = useState("");
   const [page, setPage] = useState("home");
   const [dl, setDl] = useState<DownloadState | null>(null);
@@ -336,6 +340,55 @@ export default function App() {
       return updated === row ? rows : rows.map((item) => item === row ? updated : item);
     });
   }, []);
+
+  useEffect(() => {
+    const key = boot?.libraryKey;
+    if (!key) return;
+    for (const chat of chats) {
+      const id = `${key}:${chat.slug}`;
+      if (chat.mediaReady) readyMedia.current.add(id);
+      else if (readyMedia.current.delete(id)) warmMedia.current.delete(id);
+    }
+  }, [boot?.libraryKey, chats]);
+
+  useEffect(() => {
+    const key = boot?.libraryKey;
+    if (!key || chatsStatus !== "ready") return;
+    const controller = new AbortController();
+    let cancelled = false;
+    const delay = (ms: number) => new Promise<void>((resolve) => {
+      const timer = window.setTimeout(resolve, ms);
+      controller.signal.addEventListener("abort", () => { window.clearTimeout(timer); resolve(); }, { once: true });
+    });
+    const run = async () => {
+      await delay(700);
+      for (;;) {
+        if (cancelled || controller.signal.aborted || key !== activeLibraryKey.current) return;
+        const chat = chatsRef.current.find((row) => !row.mediaReady && !warmMedia.current.has(`${key}:${row.slug}`));
+        if (!chat) {
+          await delay(1500);
+          continue;
+        }
+        const id = `${key}:${chat.slug}`;
+        warmMedia.current.add(id);
+        try {
+          const page = await call<MediaPage>("chatMedia", {
+            slug: chat.slug, kind: "all", sort: "newest", query: "", page: 1, pageSize: 1, version: "", refresh: false, libraryKey: key,
+          }, controller.signal);
+          if (cancelled || key !== activeLibraryKey.current) return;
+          applyMediaSummary(key, chat.slug, page.summary);
+        } catch {
+          if (cancelled || controller.signal.aborted) return;
+          warmMedia.current.delete(id);
+          await delay(20_000);
+          continue;
+        }
+        await delay(180);
+      }
+    };
+    void run();
+    return () => { cancelled = true; controller.abort(); };
+  }, [boot?.libraryKey, chatsStatus, applyMediaSummary]);
 
   useEffect(() => {
     refresh();

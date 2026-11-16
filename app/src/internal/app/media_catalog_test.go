@@ -32,6 +32,35 @@ func catalogWrite(t *testing.T, path, data string) {
 	}
 }
 
+func TestMediaCatalogKeyUsesLibraryIdentityAcrossMountPaths(t *testing.T) {
+	f := &Facade{a: &App{Settings: Settings{LibraryRoot: `R:\library`, ExpectedLibraryID: "0123456789abcdef0123456789abcdef"}}}
+	first := f.mediaCatalogKeyFor(`R:\library`, "chat")
+	f.a.Settings.LibraryRoot = `Z:\volume2\library`
+	second := f.mediaCatalogKeyFor(`Z:\volume2\library`, "chat")
+	if first != second {
+		t.Fatalf("mount path changed the media cache key: %q != %q", first, second)
+	}
+	f.a.Settings.ExpectedLibraryID = ""
+	third := f.mediaCatalogKeyFor(`Z:\volume2\library`, "chat")
+	if third == second {
+		t.Fatal("unknown library identity must keep the path-based fallback")
+	}
+}
+
+func TestMediaCatalogSummarySurvivesMountPathChange(t *testing.T) {
+	f, root, slug := catalogFixture(t)
+	f.a.Settings.ExpectedLibraryID = "0123456789abcdef0123456789abcdef"
+	catalogWrite(t, filepath.Join(root, "chats", slug, "media", "one.jpg"), "image")
+	if _, err := f.ChatMedia(context.Background(), MediaQuery{Slug: slug}); err != nil {
+		t.Fatal(err)
+	}
+	f.a.Settings.LibraryRoot = `Z:olume1emounted-library`
+	summary, ok := f.cachedWorkspaceMediaSummary(`Z:olume1emounted-library`, slug)
+	if !ok || summary.Total != 1 || summary.Bytes != 5 {
+		t.Fatalf("summary was lost across mount paths: %+v %v", summary, ok)
+	}
+}
+
 func TestMediaCatalogUsesRealFilesAndTrustedThumbnails(t *testing.T) {
 	f, root, slug := catalogFixture(t)
 	ws := filepath.Join(root, "chats", slug)
