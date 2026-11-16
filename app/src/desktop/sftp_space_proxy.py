@@ -35,7 +35,8 @@ def server_command():
 
 command = server_command()
 if not command:
-    sys.stderr.write("TAK_SFTP_SERVER_MISSING\n")
+    token = "TAK_FULL_ROOT_RCLONE_MISSING" if scope == "system" else "TAK_SFTP_SERVER_MISSING"
+    sys.stderr.write(token + "\n")
     sys.exit(127)
 
 server_env = None
