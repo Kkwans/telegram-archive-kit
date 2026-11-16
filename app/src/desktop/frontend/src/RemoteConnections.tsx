@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AlertCircle, Check, Cloud, Ellipsis, FolderOpen, KeyRound, Loader2, Network, Pencil, Plus, RefreshCw, Server, Trash2, WifiOff, X } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime } from "./format";
@@ -156,6 +156,8 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
     }
   };
 
+  const actionWidth = items?.some((item) => !(item.active && item.status === "connected")) ? 188 : 76;
+
   const reconnect = (id: string) => void perform(id, "remoteConnectionReconnect", { id }, (entry) => {
     if (!entry) return;
     waitRef.current = id;
@@ -163,7 +165,7 @@ export function RemoteConnections({ onAdd, onConnected, onBusy, onPasswordConnec
     finishConnection([entry]);
   });
 
-  return <section className="saved-connections" aria-label="已保存的网络连接">
+  return <section className="saved-connections" aria-label="已保存的网络连接" style={{ "--saved-action-width": `${actionWidth}px` } as CSSProperties}>
     {!!mounts.length && <div className="mounted-connections" aria-label="已挂载的连接">
       <div className="mounted-connections-heading"><h3>已挂载的连接</h3></div>
       {mounts.map((item) => {

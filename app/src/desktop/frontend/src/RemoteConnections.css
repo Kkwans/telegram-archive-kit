@@ -168,9 +168,7 @@
 .saved-connections .saved-connection-columns > :first-child { grid-column: 1 / 3; }
 .saved-connections .saved-connection-columns > :not(:first-child) { text-align: center; }
 .saved-connections .saved-connection-columns > :last-child { text-align: center; }
-.saved-connections .saved-connection-columns { padding-inline-end: 11px; }
 .saved-connections .saved-connection-row { grid-template-columns: var(--saved-row-columns); gap: 12px; padding: 12px; min-height: 68px; }
-.saved-connections .saved-connection-row { padding-inline-end: 11px; }
 .saved-connections .saved-connection-name { gap: 5px; }
 .saved-connections .saved-connection-name > span { font-size: 11px; }
 .saved-connections .saved-connection-status { min-width: 0; align-items: center; gap: 5px; text-align: center; }
@@ -182,8 +180,9 @@
 .saved-connections .saved-auto .switch:not(.on) { background: var(--muted); border-color: transparent; }
 .saved-connections .saved-auto .switch input { width: 100%; height: 100%; z-index: 1; }
 .saved-connections .saved-auto .switch i { pointer-events: none; }
-.saved-connections .saved-connection-actions { display: grid; grid-template-columns: 104px 76px; justify-content: center; gap: 8px; }
-.saved-connections .is-current .saved-connection-actions { grid-template-columns: 76px; }
+.saved-connections .saved-connection-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; }
+.saved-connections .saved-connection-connect { flex: 0 0 104px; }
+.saved-connections .saved-connection-more { flex: 0 0 76px; }
 .saved-connections :is(.saved-connection-connect, .saved-connection-more > summary) { width: 100%; min-width: 0; height: 32px; justify-content: center; gap: 5px; padding: 0 7px; margin: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .saved-connections :is(.saved-connection-connect:hover:not(:disabled), .saved-connection-more > summary:hover) { background: var(--surface-3); }
 .saved-connections .saved-connection-connect:disabled { color: var(--muted); }
