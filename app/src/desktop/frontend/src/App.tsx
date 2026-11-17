@@ -945,7 +945,7 @@ export default function App() {
             {chats.map((c) => (
               <button
                 key={c.slug}
-                className={`chat-item ${c.slug === selected ? "on" : ""}`}
+                className={`chat-item ${c.slug === selected && page === "chats" ? "on" : ""}`}
                 onClick={() => {
                   setSelected(c.slug);
                   go("chats");

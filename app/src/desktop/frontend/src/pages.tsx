@@ -3311,7 +3311,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const sortHeader = (key: ChatSortKey, label: string, tip?: string) => (
     <button type="button" className="chat-sort" data-tip={tip} onClick={() => toggleChatSort(key)}>
       {label}
-      {chatSort.key === key
+      {chatSort.stage > 0 && chatSort.key === key
         ? (chatSort.dir === "asc" ? <ChevronUp size={11} className="chat-sort-icon" /> : <ChevronDown size={11} className="chat-sort-icon" />)
         : <ArrowUpDown size={11} className="chat-sort-icon chat-sort-idle" />}
     </button>
@@ -4017,13 +4017,13 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <th className="check-col">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="全选聊天" />
                 </th>
-                <th aria-sort={chatSort.key === "name" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("name", "聊天", "按聊天名称排序，中文按拼音")}</th>
-                <th aria-sort={chatSort.key === "messages" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("messages", "消息")}</th>
-                <th aria-sort={chatSort.key === "media" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("media", "媒体")}</th>
-                <th aria-sort={chatSort.key === "missing" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("missing", "缺失")}</th>
-                <th aria-sort={chatSort.key === "official" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("official", "官方")}</th>
-                <th aria-sort={chatSort.key === "pages" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"} className="hide-sm">{sortHeader("pages", "页面")}</th>
-                <th aria-sort={chatSort.key === "updatedAt" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("updatedAt", "最近更新")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "name" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("name", "聊天", "按聊天名称排序，中文按拼音")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "messages" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("messages", "消息")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "media" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("media", "媒体")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "missing" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("missing", "缺失")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "official" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("official", "官方")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "pages" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"} className="hide-sm">{sortHeader("pages", "页面")}</th>
+                <th aria-sort={chatSort.stage > 0 && chatSort.key === "updatedAt" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("updatedAt", "最近更新")}</th>
                 <th className="row-action">操作</th>
               </tr>
             </thead>
