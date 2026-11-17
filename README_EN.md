@@ -8,7 +8,7 @@ Windows desktop client + console edition. Powered by [tdl](https://github.com/iy
 it connects media download → incremental archiving → static web generation → everyday browsing. All chats and media stay on your own disk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-4.0.1-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.2-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-requirements)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
