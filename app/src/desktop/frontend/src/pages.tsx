@@ -154,6 +154,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   const { boot, chats, chatsStatus, selected, setSelected, toast, go, tasks, openTasks, openTask, pickFiles } = ctx;
   const [storage, setStorage] = useState<{ key: string; status: "loading" | "ready" | "error"; diskFree: number; diskTotal: number } | null>(null);
   const [storageRefresh, setStorageRefresh] = useState(0);
+  const storageRefreshRequested = useRef(false);
   const [syncSlug, setSyncSlug] = useState(selected);
   const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
   useEffect(() => {
@@ -163,13 +164,25 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   useEffect(() => {
     const key = boot?.libraryKey;
     if (!key) return;
+    const refreshing = storageRefreshRequested.current;
+    storageRefreshRequested.current = false;
     const controller = new AbortController();
     setStorage({ key, status: "loading", diskFree: 0, diskTotal: 0 });
-    call<{ diskFree: number; diskTotal: number }>("homeStorage", undefined, controller.signal)
-      .then((next) => { if (!controller.signal.aborted) setStorage({ key, status: "ready", ...next }); })
-      .catch(() => { if (!controller.signal.aborted) setStorage({ key, status: "error", diskFree: 0, diskTotal: 0 }); });
+    const request = call<{ diskFree: number; diskTotal: number }>(refreshing ? "refreshHomeStorage" : "homeStorage", undefined, controller.signal);
+    const minimum = refreshing ? new Promise<void>((resolve) => window.setTimeout(resolve, 450)) : Promise.resolve();
+    Promise.all([request, minimum])
+      .then(([next]) => {
+        if (controller.signal.aborted) return;
+        setStorage({ key, status: "ready", ...next });
+        if (refreshing) toast("存储容量已刷新", "success");
+      })
+      .catch((error: Error) => {
+        if (controller.signal.aborted) return;
+        setStorage({ key, status: "error", diskFree: 0, diskTotal: 0 });
+        if (refreshing) toast(`刷新存储容量失败：${error.message}`, true);
+      });
     return () => controller.abort();
-  }, [boot?.libraryKey, storageRefresh]);
+  }, [boot?.libraryKey, storageRefresh, toast]);
 
   const totals = useMemo(() => chats.reduce((out, chat) => {
     out.messages += chat.messages;
@@ -339,7 +352,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <span className="meta" data-tip={boot?.libraryRoot || "未配置"}>{boot?.libraryRoot || "未配置"}</span>
             <button type="button" className="icon-btn" aria-label="刷新存储容量" data-tip="刷新存储容量"
               disabled={!boot?.libraryKey || currentStorage?.status === "loading"}
-              onClick={() => setStorageRefresh((value) => value + 1)}>
+              onClick={() => { storageRefreshRequested.current = true; setStorageRefresh((value) => value + 1); }}>
               <RefreshCw size={13} className={currentStorage?.status === "loading" ? "spin" : ""} />
             </button>
           </div>

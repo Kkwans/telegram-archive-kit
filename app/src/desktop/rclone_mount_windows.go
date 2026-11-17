@@ -152,31 +152,74 @@ func (b *Bridge) clearMountSpace(mount *rcloneMount) {
 // the background so existing mounts adopt the corrected storage display without
 // requiring a remount.
 func (b *Bridge) refreshMountSpace(mount *rcloneMount) {
-	if mount == nil || mount.endpoint.Kind != "ssh" || mount.endpoint.Path == "" || mount.endpoint.Path == "/" {
-		return
+	_ = b.refreshMountSpaceNow(context.Background(), mount)
+}
+
+func (b *Bridge) refreshMountSpaceNow(ctx context.Context, mount *rcloneMount) error {
+	if mount == nil || mount.endpoint.Kind != "ssh" {
+		return nil
 	}
 	exe := findRclone()
 	if exe == "" {
-		return
+		return errors.New("未检测到 rclone")
 	}
-	options, err := aliasMountOptions(mount.endpoint.Name, mount.endpoint.SSHUseRoot)
-	if err != nil {
-		return
+	options := []string(nil)
+	env := mount.env
+	if mount.endpoint.SSHHost != "" {
+		if env == nil && b.remoteConnections != nil {
+			password, passwordErr := b.remoteConnections.passwordForEndpoint(mount.endpoint)
+			if passwordErr != nil {
+				return errors.New("该 SSH 连接未保存密码，请重新连接后再刷新容量")
+			}
+			var envErr error
+			env, envErr = passwordMountEnv(ctx, mount.endpoint, password)
+			if envErr != nil {
+				return envErr
+			}
+		}
+		if env == nil {
+			return errors.New("该 SSH 连接未保存密码，请重新连接后再刷新容量")
+		}
+		options = sshPasswordOptions(mount.endpoint)
+	} else {
+		var err error
+		options, err = aliasMountOptions(mount.endpoint.Name, mount.endpoint.SSHUseRoot)
+		if err != nil {
+			return err
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	capacityOptions := sshTargetCapacityOptions(mount.endpoint, options)
-	if !mount.endpoint.SSHUseRoot {
-		capacityOptions = sshLibraryCapacityOptions(mount.endpoint, options, mountLibraryID(mount.libraryRoot))
+	capacityOptions := sshCapacityOptions(mount.endpoint, options)
+	if mount.endpoint.Path != "" && mount.endpoint.Path != "/" {
+		if mount.endpoint.SSHUseRoot {
+			capacityOptions = sshTargetCapacityOptions(mount.endpoint, options)
+		} else {
+			capacityOptions = sshLibraryCapacityOptions(mount.endpoint, options, mountLibraryID(mount.libraryRoot))
+		}
 	}
-	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, nil)
+	space, err := sshAbout(ctx, exe, ":sftp:/", capacityOptions, env)
 	if err != nil || space.Total == nil || space.Free == nil {
-		return
+		return errors.New("无法读取远程存储容量")
 	}
 	b.mountMu.Lock()
 	mount.libraryFree, mount.libraryTotal = *space.Free, *space.Total
 	b.mountMu.Unlock()
 	b.registerMountSpace(mount)
+	return nil
+}
+
+// RefreshHomeStorage re-queries the mounted SSH volume. HomeStorage alone only
+// reads the in-memory override and would return the previous capacity forever.
+func (b *Bridge) RefreshHomeStorage(ctx context.Context) (takapp.HomeStorageDTO, error) {
+	root, _ := b.facade.CurrentLibrarySelection()
+	mount := b.remoteMountAt(root)
+	if mount != nil && mount.endpoint.Kind == "ssh" {
+		refreshCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		if err := b.refreshMountSpaceNow(refreshCtx, mount); err != nil {
+			return takapp.HomeStorageDTO{}, fmt.Errorf("刷新存储容量失败：%w", err)
+		}
+	}
+	return b.facade.HomeStorage(), nil
 }
 
 func (b *Bridge) StartRcloneMount(ctx context.Context, remote, subpath, drive string) (string, error) {

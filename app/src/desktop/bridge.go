@@ -363,6 +363,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.TaskDetail(p.ID)
 	case "homeStorage":
 		return b.facade.HomeStorage(), nil
+	case "refreshHomeStorage":
+		return b.RefreshHomeStorage(ctx)
 	case "clearTasks":
 		b.facade.ClearFinishedTasks()
 		return nil, nil
@@ -876,7 +878,7 @@ func needsOpenLibrary(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
-		"previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "openLibrary", "revealChat", "verifyChat":
+		"previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
 		return true
 	}
 	return false

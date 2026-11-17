@@ -893,6 +893,22 @@ func (s *remoteConnections) unmountRoot(root string) error {
 	return stopRemoteMount(mount)
 }
 
+func (s *remoteConnections) passwordForEndpoint(endpoint remoteEndpoint) (string, error) {
+	s.mu.Lock()
+	var found savedRemoteConnection
+	for _, record := range s.records {
+		if record.remoteEndpoint.same(endpoint) {
+			found = record
+			break
+		}
+	}
+	s.mu.Unlock()
+	if found.SSHHost == "" || !found.HasSavedPassword {
+		return "", errors.New("SSH 密码未保存")
+	}
+	return readSSHPassword(s.credentialTarget(found))
+}
+
 func (s *remoteConnections) rpc(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p struct {
 		ID            string `json:"id"`
