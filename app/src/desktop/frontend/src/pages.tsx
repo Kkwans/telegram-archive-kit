@@ -18,8 +18,11 @@ import {
   FolderOpen,
   HardDrive,
   Image as ImageIcon,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ArrowUpDown,
   Copy,
   ExternalLink,
   Eye,
@@ -3250,6 +3253,9 @@ interface LibrarySwitchOptions {
   onError?: (message: string) => void;
 }
 
+type ChatSortKey = "name" | "messages" | "media" | "missing" | "official" | "pages" | "updatedAt";
+const chatNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+
 export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClosed }: { ctx: PageCtx; remoteRequest?: number; onRemoteHandled?: () => void; onRemoteClosed?: () => void }) {
   const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
   const history = boot?.history ?? [];
@@ -3258,6 +3264,45 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [mode, setMode] = useState("managed");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [chatSort, setChatSort] = useState<{ key: ChatSortKey; dir: "asc" | "desc" }>({ key: "updatedAt", dir: "desc" });
+  const sortedChats = useMemo(() => {
+    const rows = [...chats];
+    const compare = (a: ChatRow, b: ChatRow) => {
+      let result = 0;
+      switch (chatSort.key) {
+        case "name":
+          result = chatNameCollator.compare(a.name || "", b.name || "");
+          if (result === 0) result = a.slug.localeCompare(b.slug);
+          break;
+        case "updatedAt":
+          result = (Date.parse(a.updatedAt || "") || 0) - (Date.parse(b.updatedAt || "") || 0);
+          break;
+        case "messages":
+        case "media":
+        case "missing":
+        case "official":
+        case "pages":
+          result = (a[chatSort.key] ?? 0) - (b[chatSort.key] ?? 0);
+          break;
+      }
+      if (result === 0) result = chatNameCollator.compare(a.name || "", b.name || "");
+      return chatSort.dir === "asc" ? result : -result;
+    };
+    rows.sort(compare);
+    return rows;
+  }, [chats, chatSort]);
+  const toggleChatSort = (key: ChatSortKey) => setChatSort((current) => {
+    if (current.key === key) return { key, dir: current.dir === "asc" ? "desc" : "asc" };
+    return { key, dir: key === "name" ? "asc" : "desc" };
+  });
+  const sortHeader = (key: ChatSortKey, label: string, tip?: string) => (
+    <button type="button" className="chat-sort" data-tip={tip} onClick={() => toggleChatSort(key)}>
+      {label}
+      {chatSort.key === key
+        ? (chatSort.dir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)
+        : <ArrowUpDown size={11} className="chat-sort-idle" />}
+    </button>
+  );
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
   const [pendingPublishSwitch, setPendingPublishSwitch] = useState<{ root: string; options?: LibrarySwitchOptions } | null>(null);
   const [detailChat, setDetailChat] = useState<ChatRow | null>(null);
@@ -3959,18 +4004,18 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <th className="check-col">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="全选聊天" />
                 </th>
-                <th>聊天</th>
-                <th>消息</th>
-                <th>媒体</th>
-                <th>缺失</th>
-                <th>官方</th>
-                <th className="hide-sm">页面</th>
-                <th>最近更新</th>
+                <th aria-sort={chatSort.key === "name" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("name", "聊天", "按聊天名称排序，中文按拼音")}</th>
+                <th aria-sort={chatSort.key === "messages" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("messages", "消息")}</th>
+                <th aria-sort={chatSort.key === "media" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("media", "媒体")}</th>
+                <th aria-sort={chatSort.key === "missing" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("missing", "缺失")}</th>
+                <th aria-sort={chatSort.key === "official" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("official", "官方")}</th>
+                <th aria-sort={chatSort.key === "pages" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"} className="hide-sm">{sortHeader("pages", "页面")}</th>
+                <th aria-sort={chatSort.key === "updatedAt" ? (chatSort.dir === "asc" ? "ascending" : "descending") : "none"}>{sortHeader("updatedAt", "最近更新")}</th>
                 <th className="row-action">操作</th>
               </tr>
             </thead>
             <tbody>
-              {chats.map((c) => (
+              {sortedChats.map((c) => (
                 <tr
                   key={c.slug}
                   tabIndex={0}
