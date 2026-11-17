@@ -3950,6 +3950,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <th>消息</th>
                 <th>媒体</th>
                 <th>缺失</th>
+                <th>官方</th>
                 <th className="hide-sm">页面</th>
                 <th>最近更新</th>
                 <th className="row-action">操作</th>
@@ -3989,6 +3990,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   <td>{c.messages.toLocaleString()}</td>
                   <td>{c.media.toLocaleString()}</td>
                   <td>{c.missing > 0 ? <span className="missing-pill">{c.missing}</span> : <span className="muted">0</span>}</td>
+                  <td>{c.official.toLocaleString()}</td>
                   <td className="hide-sm">{c.pages}</td>
                   <td className="muted">{dateTime(c.updatedAt)}</td>
                   <td className="row-action">

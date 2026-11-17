@@ -2045,8 +2045,8 @@ html[data-theme="dark"] .palette {
 
 /* archive table */
 .chats-table th, .chats-table td { text-align: left; vertical-align: middle; }
-.chats-table th:nth-child(n+3):nth-child(-n+7),
-.chats-table td:nth-child(n+3):nth-child(-n+7) { text-align: center; }
+.chats-table th:nth-child(n+3):nth-child(-n+8),
+.chats-table td:nth-child(n+3):nth-child(-n+8) { text-align: center; }
 .chats-table .row-action { text-align: center; width: 300px; }
 .chats-table .row-actions { justify-content: center; gap: 5px; }
 .chats-table .check-col { text-align: center; }
