@@ -66,6 +66,7 @@ import {
   X,
 } from "lucide-react";
 import Artplayer from "artplayer";
+import { pinyin } from "pinyin-pro";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -3255,6 +3256,15 @@ interface LibrarySwitchOptions {
 
 type ChatSortKey = "name" | "messages" | "media" | "missing" | "official" | "pages" | "updatedAt";
 const chatNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+const chatPinyinCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+const chatPinyinCache = new Map<string, string>();
+const chatPinyinKey = (name: string) => {
+  const cached = chatPinyinCache.get(name);
+  if (cached !== undefined) return cached;
+  const key = pinyin(name, { toneType: "none", type: "array" }).join("").toLocaleLowerCase();
+  chatPinyinCache.set(name, key);
+  return key;
+};
 
 export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClosed }: { ctx: PageCtx; remoteRequest?: number; onRemoteHandled?: () => void; onRemoteClosed?: () => void }) {
   const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
@@ -3271,7 +3281,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
       let result = 0;
       switch (chatSort.key) {
         case "name":
-          result = chatNameCollator.compare(a.name || "", b.name || "");
+          result = chatPinyinCollator.compare(chatPinyinKey(a.name || ""), chatPinyinKey(b.name || ""));
+          if (result === 0) result = chatNameCollator.compare(a.name || "", b.name || "");
           if (result === 0) result = a.slug.localeCompare(b.slug);
           break;
         case "updatedAt":
