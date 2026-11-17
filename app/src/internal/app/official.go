@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"telegramarchivekit/internal/archive"
+	"telegramarchivekit/internal/platform"
 )
 
 type officialIndexedExport struct {
@@ -189,7 +190,7 @@ func (a *App) buildOfficialArchive(slug string, persistRefresh bool) (*Archive, 
 // fetch only genuinely new messages instead of re-counting the whole history.
 func (a *App) persistOfficialSource(slug string, arc *Archive) error {
 	path := a.sourcePath(slug)
-	if fileExists(path) {
+	if sourceFileReady(path) {
 		return nil
 	}
 	root := officialResultRoot(arc)
@@ -200,11 +201,7 @@ func (a *App) persistOfficialSource(slug string, arc *Archive) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return platform.AtomicWriteFile(path, b, 0644)
 }
 
 func officialResultRoot(arc *Archive) map[string]any {
@@ -262,7 +259,7 @@ func (a *App) ensureOfficialSource(slug string) (bool, error) {
 	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
 		return false, err
 	}
-	if fileExists(a.sourcePath(slug)) || !a.hasOfficialExport(slug) {
+	if sourceFileReady(a.sourcePath(slug)) || !a.hasOfficialExport(slug) {
 		return false, nil
 	}
 	if err := a.guardWritable(); err != nil {

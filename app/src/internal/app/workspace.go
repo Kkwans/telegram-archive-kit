@@ -300,6 +300,24 @@ func (a *App) workspaceDir(slug string) string { return filepath.Join(a.chatsDir
 func (a *App) sourcePath(slug string) string {
 	return filepath.Join(a.workspaceDir(slug), "source", "result.json")
 }
+
+func sourceFileReady(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	var head [512]byte
+	n, _ := file.Read(head[:])
+	for _, b := range head[:n] {
+		if b == 32 || b == 9 || b == 13 || b == 10 {
+			continue
+		}
+		return b == 123
+	}
+	return false
+}
+
 func (a *App) mediaDir(slug string) string { return filepath.Join(a.workspaceDir(slug), "media") }
 
 // filesDir holds documents (zip, pdf, stickers...) that are not playable media.
@@ -590,7 +608,7 @@ func (a *App) importResultJSONWithIdentity(src string, buildNow, strict bool) (W
 
 	dst := a.sourcePath(slug)
 	var merged map[string]any
-	if _, err := os.Stat(dst); err == nil {
+	if sourceFileReady(dst) {
 		_, existingRoot, er := readRawExport(dst)
 		if strict && er != nil {
 			return WorkspaceMeta{}, existed, er
@@ -789,12 +807,16 @@ func (a *App) readWorkspaceArchive(slug string) (*Archive, RawExport, error) {
 	if _, err := checkedWorkspaceDir(a.Settings.LibraryRoot, slug); err != nil {
 		return nil, RawExport{}, err
 	}
-	raw, err := archive.ReadRawExport(a.sourcePath(slug))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) && a.hasOfficialExport(slug) {
+	sourcePath := a.sourcePath(slug)
+	if !sourceFileReady(sourcePath) {
+		if a.hasOfficialExport(slug) {
 			arc, err := a.buildOfficialArchive(slug, false)
 			return arc, RawExport{}, err
 		}
+		return nil, RawExport{}, fmt.Errorf("找不到聊天源数据: %s", sourcePath)
+	}
+	raw, err := archive.ReadRawExport(sourcePath)
+	if err != nil {
 		return nil, RawExport{}, err
 	}
 	arc, err := archive.BuildArchiveFromExport(raw, a.storageDirs(slug), a.officialMediaByID(slug, false))
@@ -842,7 +864,7 @@ func (a *App) buildWorkspaceWithCovers(ctx context.Context, slug string, rebuild
 	jsonPath := a.sourcePath(slug)
 	var arc *Archive
 	var err error
-	if fileExists(jsonPath) {
+	if sourceFileReady(jsonPath) {
 		arc, err = archive.BuildArchiveWithDirs(jsonPath, a.storageDirs(slug), a.officialMediaByID(slug, true))
 	} else if a.hasOfficialExport(slug) {
 		// Official HTML exports have no result.json. Parse their pages directly so

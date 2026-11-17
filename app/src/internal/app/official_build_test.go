@@ -101,6 +101,15 @@ func TestOfficialOnlyWorkspaceBuildsPagesWithoutResultJSON(t *testing.T) {
 	if got := arc.Messages[0].Media[0].Thumb; !strings.Contains(got, "photo.jpg_thumb.jpg") {
 		t.Fatalf("official thumbnail not reused: %q", got)
 	}
+	if err := os.WriteFile(a.sourcePath(slug), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ensureOfficialSource(slug); err != nil {
+		t.Fatal(err)
+	}
+	if !sourceFileReady(a.sourcePath(slug)) {
+		t.Fatal("empty official source was not rebuilt")
+	}
 }
 
 func TestBindChatIdentityMergesOfficialWorkspaceByID(t *testing.T) {
