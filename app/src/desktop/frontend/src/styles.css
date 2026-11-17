@@ -2047,11 +2047,11 @@ html[data-theme="dark"] .palette {
 .chats-table th, .chats-table td { text-align: left; vertical-align: middle; }
 .chats-table th:nth-child(n+3):nth-child(-n+8),
 .chats-table td:nth-child(n+3):nth-child(-n+8) { text-align: center; }
-.chats-table .chat-sort { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; white-space: nowrap; }
+.chats-table .chat-sort { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; white-space: nowrap; }
 .chats-table th:first-of-type + th .chat-sort { justify-content: flex-start; }
 .chats-table .chat-sort:hover { color: var(--text); }
 .chats-table .chat-sort-idle { opacity: .45; }
-.chats-table .chat-sort svg { flex: 0 0 auto; }
+.chats-table .chat-sort-icon { position: absolute; left: calc(100% + 4px); top: 50%; transform: translateY(-50%); flex: 0 0 auto; pointer-events: none; }
 .chats-table .row-action { text-align: center; width: 300px; }
 .chats-table .row-actions { justify-content: center; gap: 5px; }
 .chats-table .check-col { text-align: center; }

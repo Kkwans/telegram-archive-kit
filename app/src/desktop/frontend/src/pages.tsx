@@ -3274,7 +3274,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [mode, setMode] = useState("managed");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [chatSort, setChatSort] = useState<{ key: ChatSortKey; dir: "asc" | "desc" }>({ key: "updatedAt", dir: "desc" });
+  const [chatSort, setChatSort] = useState<{ key: ChatSortKey; dir: "asc" | "desc"; stage: 0 | 1 | 2 }>({ key: "updatedAt", dir: "desc", stage: 0 });
   const sortedChats = useMemo(() => {
     const rows = [...chats];
     const compare = (a: ChatRow, b: ChatRow) => {
@@ -3303,15 +3303,17 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     return rows;
   }, [chats, chatSort]);
   const toggleChatSort = (key: ChatSortKey) => setChatSort((current) => {
-    if (current.key === key) return { key, dir: current.dir === "asc" ? "desc" : "asc" };
-    return { key, dir: key === "name" ? "asc" : "desc" };
+    if (current.key !== key) return { key, dir: "asc", stage: 1 };
+    if (current.stage === 0) return { key, dir: "asc", stage: 1 };
+    if (current.stage === 1) return { key, dir: "desc", stage: 2 };
+    return { key: "updatedAt", dir: "desc", stage: 0 };
   });
   const sortHeader = (key: ChatSortKey, label: string, tip?: string) => (
     <button type="button" className="chat-sort" data-tip={tip} onClick={() => toggleChatSort(key)}>
       {label}
       {chatSort.key === key
-        ? (chatSort.dir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)
-        : <ArrowUpDown size={11} className="chat-sort-idle" />}
+        ? (chatSort.dir === "asc" ? <ChevronUp size={11} className="chat-sort-icon" /> : <ChevronDown size={11} className="chat-sort-icon" />)
+        : <ArrowUpDown size={11} className="chat-sort-icon chat-sort-idle" />}
     </button>
   );
   const [pendingDelete, setPendingDelete] = useState<ChatRow[]>([]);
@@ -4030,8 +4032,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                 <tr
                   key={c.slug}
                   tabIndex={0}
-                  aria-selected={c.slug === selected}
-                  className={c.slug === selected || sel.has(c.slug) ? "selected" : ""}
+                  aria-selected={sel.has(c.slug)}
+                  className={sel.has(c.slug) ? "selected" : ""}
                   onClick={() => showDetail(c)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
