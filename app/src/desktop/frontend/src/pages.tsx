@@ -153,6 +153,7 @@ const MEDIA_KINDS = [
 export function Home({ ctx }: { ctx: PageCtx }) {
   const { boot, chats, chatsStatus, selected, setSelected, toast, go, tasks, openTasks, openTask, pickFiles } = ctx;
   const [storage, setStorage] = useState<{ key: string; status: "loading" | "ready" | "error"; diskFree: number; diskTotal: number } | null>(null);
+  const [storageRefresh, setStorageRefresh] = useState(0);
   const [syncSlug, setSyncSlug] = useState(selected);
   const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
   useEffect(() => {
@@ -168,7 +169,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
       .then((next) => { if (!controller.signal.aborted) setStorage({ key, status: "ready", ...next }); })
       .catch(() => { if (!controller.signal.aborted) setStorage({ key, status: "error", diskFree: 0, diskTotal: 0 }); });
     return () => controller.abort();
-  }, [boot?.libraryKey]);
+  }, [boot?.libraryKey, storageRefresh]);
 
   const totals = useMemo(() => chats.reduce((out, chat) => {
     out.messages += chat.messages;
@@ -336,6 +337,11 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           <div className="panel-head">
             <h3><HardDrive size={14} /> 档案库存储</h3>
             <span className="meta" data-tip={boot?.libraryRoot || "未配置"}>{boot?.libraryRoot || "未配置"}</span>
+            <button type="button" className="icon-btn" aria-label="刷新存储容量" data-tip="刷新存储容量"
+              disabled={!boot?.libraryKey || currentStorage?.status === "loading"}
+              onClick={() => setStorageRefresh((value) => value + 1)}>
+              <RefreshCw size={13} className={currentStorage?.status === "loading" ? "spin" : ""} />
+            </button>
           </div>
           <div className="storage-body">
             <div>
