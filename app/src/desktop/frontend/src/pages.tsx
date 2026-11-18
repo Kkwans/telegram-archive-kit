@@ -71,7 +71,7 @@ import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RemoteConnections, type SavedRemoteConnection } from "./RemoteConnections";
-import { OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
+import { AllOnlineUpdateDialog, OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type {
   AccountInfo,
   AccountProfile,
@@ -161,6 +161,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
   const storageRefreshRequested = useRef(false);
   const [syncSlug, setSyncSlug] = useState(selected);
   const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
+  const [allOnlineOpen, setAllOnlineOpen] = useState(false);
   useEffect(() => {
     if (!syncSlug && selected) setSyncSlug(selected);
   }, [selected]);
@@ -232,13 +233,12 @@ export function Home({ ctx }: { ctx: PageCtx }) {
       mode: "sync",
     });
   };
-  const syncAllMissing = () => {
-    const missing = chats.filter((c) => c.missing > 0);
-    if (missing.length === 0) {
-      toast("所有聊天都没有缺失媒体");
+  const openAllOnline = () => {
+    if (!chats.length) {
+      toast("当前档案库还没有聊天", true);
       return;
     }
-    setUpdateTarget({ peer: "bulk:all", name: "全部缺失媒体", mode: "bulk" });
+    setAllOnlineOpen(true);
   };
   const importJSON = async () => {
     try {
@@ -294,8 +294,8 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <button className="btn primary" onClick={startSync} disabled={chats.length === 0}>
               <Play size={13} /> 同步所选
             </button>
-            <button className="btn" onClick={syncAllMissing} disabled={!chats.some((c) => c.missing > 0)}>
-              <RefreshCw size={13} /> 同步全部缺失
+            <button className="btn" onClick={openAllOnline} disabled={!chats.length} data-tip="逐个检查全部本地聊天，并从 Telegram 拉取最新消息">
+              <RefreshCw size={13} /> 更新全部聊天
             </button>
           </div>
         </section>
@@ -443,6 +443,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           toast={toast}
         />
       )}
+      {allOnlineOpen && <AllOnlineUpdateDialog chats={chats} onClose={() => setAllOnlineOpen(false)} toast={toast} />}
     </>
   );
 }
@@ -3286,6 +3287,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const [mode, setMode] = useState("managed");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [bulkTarget, setBulkTarget] = useState<OnlineUpdateTarget | null>(null);
   const [chatSort, setChatSort] = useState<{ key: ChatSortKey; dir: "asc" | "desc"; stage: 0 | 1 | 2 }>({ key: "updatedAt", dir: "desc", stage: 0 });
   const sortedChats = useMemo(() => {
     const rows = [...chats];
@@ -3904,6 +3906,14 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     }
   };
 
+  const openSyncAll = () => {
+    if (!chats.some((chat) => chat.missing > 0)) {
+      toast("所有聊天都没有缺失媒体");
+      return;
+    }
+    setBulkTarget({ peer: "bulk:all", name: "全部缺失媒体", mode: "bulk" });
+  };
+
   const openChat = (slug: string) => {
     setSelected(slug);
     go("chats");
@@ -3941,8 +3951,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           <button className="btn ghost" disabled={busy === "switch"} onClick={pickAndSwitch}>
             <FolderPlus size={13} /> 切换 / 新建
           </button>
-          <button className="btn primary" disabled={remoteOffline} onClick={importJSON}>
-            <Download size={13} /> 导入 result.json
+          <button className="btn primary" disabled={remoteOffline || !chats.some((chat) => chat.missing > 0)} onClick={openSyncAll}>
+            <RefreshCw size={13} /> 同步全部缺失
           </button>
         </div>
       </div>
@@ -4532,6 +4542,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         </div>,
         document.body
       )}
+
+      {bulkTarget && <OnlineUpdateDialog target={bulkTarget} onClose={() => setBulkTarget(null)} onStarted={() => setBulkTarget(null)} toast={toast} />}
 
       {officialLoading && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeOfficial(); }}>

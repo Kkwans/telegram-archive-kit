@@ -11,11 +11,12 @@ import {
   Music2,
   RefreshCw,
   Video,
+  X,
 } from "lucide-react";
 import { call } from "./rpc";
 import { bytes } from "./format";
 import { ConfirmDialog } from "./ConfirmDialog";
-import type { BackfillPreview, BulkPreview, OnlineExportPreview, OnlineExportProgress, OnlineExportResult } from "./types";
+import type { BackfillPreview, BulkPreview, ChatRow, OnlineChat, OnlineChats, OnlineExportPreview, OnlineExportProgress, OnlineExportResult, TaskDetail } from "./types";
 
 export interface OnlineUpdateTarget {
   peer: string;
@@ -482,5 +483,180 @@ export function OnlineUpdateDialog({
         onCancel={() => setCloseConfirm(false)}
       />
     </>
+  );
+}
+type AllUpdateStatus = "pending" | "checking" | "ready" | "up-to-date" | "missing" | "updating" | "done" | "failed";
+
+interface AllUpdateRow {
+  chat: ChatRow;
+  peer?: string;
+  status: AllUpdateStatus;
+  preview?: OnlineExportPreview;
+  error?: string;
+}
+
+const allUpdateStatusLabel: Record<AllUpdateStatus, string> = {
+  pending: "等待统计", checking: "统计中", ready: "待更新", "up-to-date": "已是最新",
+  missing: "未找到在线会话", updating: "更新中", done: "完成", failed: "失败",
+};
+
+function allUpdateFindPeer(online: OnlineChat[], chat: ChatRow): OnlineChat | undefined {
+  const slug = online.find((item) => item.localSlug === chat.slug);
+  if (slug) return slug;
+  const name = chat.name.trim().toLocaleLowerCase();
+  const exact = online.filter((item) => item.name.trim().toLocaleLowerCase() === name);
+  return exact.length === 1 ? exact[0] : undefined;
+}
+
+export function AllOnlineUpdateDialog({ chats, onClose, toast }: {
+  chats: ChatRow[];
+  onClose: () => void;
+  toast: (message: string, error?: boolean) => void;
+}) {
+  const [rows, setRows] = useState<AllUpdateRow[]>(() => chats.map((chat) => ({ chat, status: "pending" })));
+  const [scanIndex, setScanIndex] = useState(0);
+  const [scanning, setScanning] = useState(true);
+  const [running, setRunning] = useState(false);
+  const alive = useRef(true);
+
+  useEffect(() => () => { alive.current = false; }, []);
+  const updateRow = (slug: string, patch: Partial<AllUpdateRow>) => setRows((current) => current.map((row) => row.chat.slug === slug ? { ...row, ...patch } : row));
+  const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+  useEffect(() => {
+    const prepare = async () => {
+      try {
+        const online = await call<OnlineChats>("onlineChats", { timeout: 60 });
+        for (let index = 0; index < rows.length; index++) {
+          if (!alive.current) return;
+          const row = rows[index];
+          const peer = allUpdateFindPeer(online.chats, row.chat);
+          if (!peer) {
+            updateRow(row.chat.slug, { status: "missing" });
+            setScanIndex(index + 1);
+            continue;
+          }
+          updateRow(row.chat.slug, { peer: peer.peer, status: "checking" });
+          try {
+            const preview = await call<OnlineExportPreview>("onlineExportPreview", { peer: peer.peer, timeout: 300, slug: row.chat.slug });
+            if (!alive.current) return;
+            updateRow(row.chat.slug, { preview, status: preview.upToDate ? "up-to-date" : "ready" });
+          } catch (error) {
+            if (!alive.current) return;
+            updateRow(row.chat.slug, { status: "failed", error: (error as Error).message });
+          }
+          setScanIndex(index + 1);
+        }
+      } catch (error) {
+        if (alive.current) {
+          toast(`读取在线聊天失败：${(error as Error).message}`, true);
+          setRows((current) => current.map((row) => ({ ...row, status: "failed", error: (error as Error).message })));
+        }
+      } finally {
+        if (alive.current) setScanning(false);
+      }
+    };
+    void prepare();
+    // Run once when the dialog opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const start = async () => {
+    if (scanning || running) return;
+    setRunning(true);
+    let done = 0;
+    let failed = 0;
+    for (const row of rows) {
+      if (!alive.current) break;
+      const preview = row.preview;
+      if (!preview || row.status === "missing" || preview.upToDate) continue;
+      if (preview.spaceShort) {
+        updateRow(row.chat.slug, { status: "failed", error: "档案库空间不足" });
+        failed++;
+        continue;
+      }
+      if ((preview.messages ?? 0) === 0 && (preview.media ?? 0) === 0) {
+        updateRow(row.chat.slug, { status: "done" });
+        done++;
+        continue;
+      }
+      updateRow(row.chat.slug, { status: "updating", error: undefined });
+      try {
+        const result = await call<OnlineExportResult>("onlineExport", {
+          peer: preview.peer, timeout: 300, token: preview.token || "", slug: row.chat.slug,
+        });
+        if (!alive.current) return;
+        if (result.upToDate || !result.taskId) {
+          updateRow(row.chat.slug, { status: "done" });
+          done++;
+          continue;
+        }
+        for (;;) {
+          await wait(900);
+          if (!alive.current) return;
+          const detail = await call<TaskDetail>("taskDetail", { id: result.taskId });
+          if (detail.state === "running") continue;
+          if (detail.state === "done") {
+            updateRow(row.chat.slug, { status: "done" });
+            done++;
+          } else {
+            updateRow(row.chat.slug, { status: "failed", error: detail.error || "更新未完成" });
+            failed++;
+          }
+          break;
+        }
+      } catch (error) {
+        if (!alive.current) return;
+        updateRow(row.chat.slug, { status: "failed", error: (error as Error).message });
+        failed++;
+      }
+    }
+    if (!alive.current) return;
+    setRunning(false);
+    toast(failed ? `全部更新结束：完成 ${done} 个，失败 ${failed} 个` : `已更新 ${done} 个聊天`, failed > 0);
+  };
+
+  const total = rows.length;
+  const ready = rows.filter((row) => row.status === "ready").length;
+  const finished = rows.filter((row) => row.status === "done" || row.status === "failed" || row.status === "up-to-date").length;
+  const progress = scanning ? (total ? Math.round(scanIndex * 100 / total) : 0) : running ? Math.round(finished * 100 / Math.max(1, total)) : 100;
+
+  return createPortal(
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal export-preview-modal all-update-modal" role="dialog" aria-modal="true" aria-labelledby="all-update-title">
+        <div className="export-preview-head">
+          <span className="online-avatar" style={{ background: "linear-gradient(135deg, #5a7bff, #7c5cff)" }}><RefreshCw size={18} /></span>
+          <div className="export-preview-head-text">
+            <span className="export-preview-kicker">批量在线更新</span>
+            <h2 id="all-update-title">更新全部聊天</h2>
+            <p>逐个统计本地聊天在 Telegram 上的新增消息，然后依次更新到最新。</p>
+          </div>
+          <button className="icon-btn" aria-label="关闭全部更新" disabled={running} onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="all-update-progress" role="status">
+          <div><i style={{ width: `${progress}%` }} /></div>
+          <span>{scanning ? `统计中 ${scanIndex} / ${total}` : running ? `更新中 ${progress}%` : `统计完成 · ${ready} 个待更新`}</span>
+        </div>
+        <div className="all-update-list">
+          {rows.map((row) => <div className="all-update-row" key={row.chat.slug}>
+            <span className="online-avatar" style={{ background: "linear-gradient(135deg, hsl(220 54% 52%), hsl(258 58% 38%))" }}>{initials(row.chat.name)}</span>
+            <span className="all-update-name"><b>{row.chat.name}</b><small>{row.error || allUpdateStatusLabel[row.status]}</small></span>
+            {row.preview && <span className="all-update-stats">
+              <b>{row.preview.upToDate ? "已是最新" : `${row.preview.messages.toLocaleString()} 条 · ${row.preview.media.toLocaleString()} 媒体`}</b>
+              <small>{row.preview.bytes ? bytes(row.preview.bytes) : ""}</small>
+            </span>}
+            {row.status === "checking" || row.status === "updating" ? <Loader2 size={13} className="spin" /> : row.status === "done" || row.status === "up-to-date" ? <CheckCircle2 size={13} className="ok" /> : row.status === "failed" || row.status === "missing" ? <AlertCircle size={13} className="warn" /> : null}
+          </div>)}
+        </div>
+        <div className="modal-actions">
+          <button className="btn ghost" disabled={running} onClick={onClose}>取消</button>
+          <button className="btn primary" disabled={scanning || running || ready === 0} onClick={() => void start()}>
+            {scanning || running ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
+            {scanning ? "正在统计…" : running ? "正在更新…" : `开始更新 ${ready} 个聊天`}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

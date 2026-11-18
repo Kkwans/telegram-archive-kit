@@ -735,13 +735,31 @@ func (b *Bridge) annotateOnlineLocal(dto *OnlineChatsDTO) {
 		return
 	}
 	byID := make(map[string]takapp.ChatDTO, len(dto.Chats))
+	byName := make(map[string][]takapp.ChatDTO)
 	for _, c := range b.facade.ListChats() {
 		if c.ID != "" {
 			byID[c.ID] = c
 		}
+		if name := normalizeChatTitle(c.Name); name != "" {
+			byName[name] = append(byName[name], c)
+		}
+	}
+	onlineNames := make(map[string]int)
+	for _, c := range dto.Chats {
+		if name := normalizeChatTitle(c.Name); name != "" {
+			onlineNames[name]++
+		}
 	}
 	for i := range dto.Chats {
 		c, ok := byID[strconv.FormatInt(dto.Chats[i].ID, 10)]
+		if !ok {
+			// Official ChatExports have no Telegram id. A unique title is the
+			// only safe fallback; ambiguous titles remain unmatched.
+			name := normalizeChatTitle(dto.Chats[i].Name)
+			if name != "" && onlineNames[name] == 1 && len(byName[name]) == 1 {
+				c, ok = byName[name][0], true
+			}
+		}
 		dto.Chats[i].LocalSlug = c.Slug
 		dto.Chats[i].LocalMessages = c.Messages
 		dto.Chats[i].LocalMedia = c.Media

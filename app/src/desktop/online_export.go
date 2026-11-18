@@ -869,7 +869,26 @@ type localOnlineArchive struct {
 }
 
 func (b *Bridge) localOnlineArchive(chat OnlineChat) localOnlineArchive {
-	return b.localWorkspaceByID(strconv.FormatInt(chat.ID, 10))
+	if found := b.localWorkspaceByID(strconv.FormatInt(chat.ID, 10)); found.existed {
+		return found
+	}
+	name := normalizeChatTitle(chat.Name)
+	if name == "" {
+		return localOnlineArchive{}
+	}
+	var match localOnlineArchive
+	matches := 0
+	for _, c := range b.facade.ListChats() {
+		if normalizeChatTitle(c.Name) != name {
+			continue
+		}
+		matches++
+		match = localOnlineArchive{slug: c.Slug, dir: c.Dir, existed: true, messages: c.Messages, media: c.Media, updatedAt: c.UpdatedAt}
+	}
+	if matches == 1 {
+		return match
+	}
+	return localOnlineArchive{}
 }
 
 func (b *Bridge) localWorkspaceByID(id string) localOnlineArchive {
