@@ -511,7 +511,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
     try {
       const nextTask = await call<string>("startOneClick", { slug: task.slug });
       toast("已继续下载，已完成文件和进度会保留");
-      if (nextTask && nextTask !== task.id) onOpenTask(nextTask);
+      onOpenTask(nextTask || task.id);
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
