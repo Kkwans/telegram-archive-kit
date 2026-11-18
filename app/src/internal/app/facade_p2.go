@@ -35,9 +35,11 @@ type OfficialMetaDTO struct {
 }
 
 type OfficialPreviewDTO struct {
-	Meta      OfficialMetaDTO `json:"meta"`
-	MatchSlug string          `json:"matchSlug,omitempty"`
-	Chats     []ChatDTO       `json:"chats"`
+	Meta      OfficialMetaDTO        `json:"meta"`
+	MatchSlug string                 `json:"matchSlug,omitempty"`
+	Chats     []ChatDTO              `json:"chats"`
+	Batch     []OfficialBatchItemDTO `json:"batch,omitempty"`
+	BatchRoot string                 `json:"batchRoot,omitempty"`
 }
 
 type StatsDTO struct {
@@ -211,6 +213,11 @@ func (f *Facade) ImportJSONFiles(paths []string) ([]ChatDTO, error) {
 }
 
 func (f *Facade) AnalyzeOfficial(folder string) (OfficialPreviewDTO, error) {
+	if !fileExists(filepath.Join(folder, "messages.html")) {
+		if batch, err := f.AnalyzeOfficialBatch(folder); err == nil {
+			return OfficialPreviewDTO{Meta: OfficialMetaDTO{Root: batch.Root}, Batch: batch.Items, BatchRoot: batch.Root, Chats: f.ListChats()}, nil
+		}
+	}
 	meta, _, err := archive.AnalyzeOfficialExport(folder, f.a.Settings.LibraryRoot, "referenced")
 	if err != nil {
 		return OfficialPreviewDTO{}, err

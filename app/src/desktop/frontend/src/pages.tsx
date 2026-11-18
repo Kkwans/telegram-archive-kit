@@ -3246,6 +3246,8 @@ interface OfficialPreview {
   meta: OfficialMeta;
   matchSlug?: string;
   chats: ChatRow[];
+  batch?: OfficialBatchItem[];
+  batchRoot?: string;
 }
 
 interface OfficialBatchItem {
@@ -3255,11 +3257,6 @@ interface OfficialBatchItem {
   mediaFiles: number;
   totalBytes: number;
 }
-interface OfficialBatchPreview {
-  root: string;
-  items: OfficialBatchItem[];
-}
-
 interface LibrarySwitchOptions {
   newRemoteMount?: boolean;
   afterSwitch?: () => Promise<void>;
@@ -3282,9 +3279,6 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
   const history = boot?.history ?? [];
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
-  const [batchOfficial, setBatchOfficial] = useState<OfficialBatchPreview | null>(null);
-  const [batchMode, setBatchMode] = useState("managed");
-  const [batchBusy, setBatchBusy] = useState(false);
   const [target, setTarget] = useState("");
   const [mode, setMode] = useState("managed");
   const [busy, setBusy] = useState("");
@@ -3843,7 +3837,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
       setBusy("analyze");
       const preview = await call<OfficialPreview>("analyzeOfficial", { folder });
       setOfficial(preview);
-      setTarget(preview.matchSlug || "");
+      setTarget(preview.batch?.length ? "" : preview.matchSlug || "");
       setMode("managed");
     } catch (e) {
       toast((e as Error).message, true);
@@ -3852,45 +3846,18 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     }
   };
 
-  const analyzeOfficialBatch = async () => {
-    if (batchBusy) return;
-    setBatchBusy(true);
-    try {
-      const folder = await pickFolder("official-batch-folder", "选择包含多个官方 ChatExport 的父目录");
-      if (!folder) return;
-      const preview = await call<OfficialBatchPreview>("analyzeOfficialBatch", { root: folder });
-      if (!preview.items.length) {
-        toast("所选目录下没有可导入的官方聊天", true);
-        return;
-      }
-      setBatchOfficial(preview);
-      setBatchMode("managed");
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setBatchBusy(false);
-    }
-  };
-
-  const confirmOfficialBatch = async () => {
-    if (!batchOfficial || batchBusy) return;
-    setBatchBusy(true);
-    try {
-      const { taskId } = await call<{ taskId: string }>("startImportOfficialBatch", { root: batchOfficial.root, mode: batchMode });
-      toast(`已加入批量导入任务 · ${batchOfficial.items.length} 个聊天`, "success", { label: "查看任务", run: () => openTask(taskId) });
-      setBatchOfficial(null);
-      refresh();
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setBatchBusy(false);
-    }
-  };
-
   const confirmOfficial = async () => {
     if (!official || busy === "official") return;
     setBusy("official");
     try {
+      if (official.batch?.length) {
+        const root = official.batchRoot || official.meta.root;
+        const { taskId } = await call<{ taskId: string }>("startImportOfficialBatch", { root, mode });
+        toast(`已加入批量导入任务 · ${official.batch.length} 个聊天`, "success", { label: "查看任务", run: () => openTask(taskId) });
+        setOfficial(null);
+        refresh();
+        return;
+      }
       const { taskId } = await call<{ taskId: string }>("startImportOfficial", { folder: official.meta.root, slug: target, mode });
       toast("官方导出任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
       setOfficial(null);
@@ -4015,15 +3982,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
             <span className="action-icon"><FolderOpen size={18} /></span>
             <span className="action-text">
               <b>继承官方 ChatExport</b>
-              <em>分析目录后引用、复制或纳管官方媒体</em>
-            </span>
-            <ChevronRight size={16} />
-          </button>
-          <button className="action-card" disabled={batchBusy} onClick={() => void analyzeOfficialBatch()}>
-            <span className="action-icon">{batchBusy ? <Loader2 size={18} className="spin" /> : <FolderOpen size={18} />}</span>
-            <span className="action-text">
-              <b>{batchBusy ? "正在扫描官方导出…" : "批量导入官方 ChatExport"}</b>
-              <em>选择父目录，自动识别并导入其下的每个官方聊天</em>
+              <em>单个目录或包含多个 ChatExport 的父目录均可</em>
             </span>
             <ChevronRight size={16} />
           </button>
@@ -4481,48 +4440,6 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         document.body
       )}
 
-      {batchOfficial && createPortal(
-        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !batchBusy) setBatchOfficial(null); }}>
-          <div className="modal official-import-modal" role="dialog" aria-modal="true" aria-labelledby="official-batch-title">
-            <div className="task-modal-head">
-              <div>
-                <h2 id="official-batch-title">批量导入官方 ChatExport</h2>
-                <p className="modal-sub">检测到 {batchOfficial.items.length} 个官方聊天，将按选择的方式依次导入。</p>
-              </div>
-              <button className="icon-btn" aria-label="关闭批量导入" disabled={batchBusy} onClick={() => setBatchOfficial(null)}>
-                <X size={15} />
-              </button>
-            </div>
-            <div className="official-import-summary">
-              <b>{batchOfficial.items.length} 个官方聊天</b>
-              <span data-tip={batchOfficial.root}>{batchOfficial.root}</span>
-            </div>
-            <div className="official-batch-list" aria-label="待导入的官方聊天">
-              {batchOfficial.items.map((item) => (
-                <div key={item.root}>
-                  <b>{item.name}</b>
-                  <span>{item.messageCount.toLocaleString()} 条消息 · {item.mediaFiles.toLocaleString()} 个文件 · {bytes(item.totalBytes)}</span>
-                </div>
-              ))}
-            </div>
-            <label className="official-import-field">
-              <span>导入方式</span>
-              <Select ariaLabel="批量导入方式" value={batchMode} disabled={batchBusy}
-                options={[{ value: "managed", label: "纳管到档案库（推荐）" }, { value: "copy", label: "复制到档案库" }, { value: "reference", label: "引用原目录" }]}
-                onChange={setBatchMode} />
-            </label>
-            <div className="modal-actions">
-              <button type="button" className="btn ghost" disabled={batchBusy} onClick={() => setBatchOfficial(null)}>取消</button>
-              <button type="button" className="btn primary" disabled={batchBusy} onClick={() => void confirmOfficialBatch()}>
-                {batchBusy ? <Loader2 size={13} className="spin" /> : <Download size={13} />}
-                {batchBusy ? "正在加入…" : "开始导入"}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
       {detailChat && detailLibraryKey === boot?.libraryKey && createPortal(
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailChat(null); }}>
           <div className="modal chat-detail-modal" role="dialog" aria-modal="true" aria-labelledby="chat-detail-title">
@@ -4598,37 +4515,51 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           <div className="modal official-import-modal" role="dialog" aria-modal="true" aria-labelledby="official-import-title">
             <div className="task-modal-head">
               <div>
-                <h2 id="official-import-title">导入官方 ChatExport</h2>
-                <p className="modal-sub">确认目标聊天与导入方式后开始分析并建立索引。</p>
+                <h2 id="official-import-title">{official.batch?.length ? "批量导入官方 ChatExport" : "导入官方 ChatExport"}</h2>
+                <p className="modal-sub">{official.batch?.length ? `检测到 ${official.batch.length} 个官方聊天，将按选择的方式依次导入。` : "确认目标聊天与导入方式后开始分析并建立索引。"}</p>
               </div>
               <button className="icon-btn" aria-label="关闭官方导入" disabled={busy === "official"} onClick={() => setOfficial(null)}>
                 <X size={15} />
               </button>
             </div>
 
-            <div className="official-import-summary">
-              <b>{official.meta.name}</b>
-              <span>
-                {official.meta.messageCount.toLocaleString()} 条消息 · {official.meta.mediaMessages.toLocaleString()} 条含媒体 · {official.meta.mediaFiles.toLocaleString()} 个文件 · {bytes(official.meta.totalBytes)}
-              </span>
-              <div className="official-import-stats">
-                <span><Images size={12} /> 图片 <b>{official.meta.images.toLocaleString()}</b></span>
-                <span><Video size={12} /> 视频 <b>{official.meta.videos.toLocaleString()}</b></span>
-                <span><Music size={12} /> 音频 <b>{official.meta.audio.toLocaleString()}</b></span>
-                <span><FileText size={12} /> 文件 <b>{official.meta.files.toLocaleString()}</b></span>
+            {official.batch?.length ? <>
+              <div className="official-import-summary">
+                <b>{official.batch.length} 个官方聊天</b>
+                <span data-tip={official.batchRoot || official.meta.root}>{official.batchRoot || official.meta.root}</span>
               </div>
-              <code data-tip={official.meta.root}>{official.meta.root}</code>
-            </div>
-
-            <label className="official-import-field">
-              <span>导入到</span>
-              <Select
-                ariaLabel="官方导出导入目标"
-                value={target}
-                onChange={setTarget}
-                options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}
-              />
-            </label>
+              <div className="official-batch-list" aria-label="待导入的官方聊天">
+                {official.batch.map((item) => (
+                  <div key={item.root}>
+                    <b>{item.name}</b>
+                    <span>{item.messageCount.toLocaleString()} 条消息 · {item.mediaFiles.toLocaleString()} 个文件 · {bytes(item.totalBytes)}</span>
+                  </div>
+                ))}
+              </div>
+            </> : <>
+              <div className="official-import-summary">
+                <b>{official.meta.name}</b>
+                <span>
+                  {official.meta.messageCount.toLocaleString()} 条消息 · {official.meta.mediaMessages.toLocaleString()} 条含媒体 · {official.meta.mediaFiles.toLocaleString()} 个文件 · {bytes(official.meta.totalBytes)}
+                </span>
+                <div className="official-import-stats">
+                  <span><Images size={12} /> 图片 <b>{official.meta.images.toLocaleString()}</b></span>
+                  <span><Video size={12} /> 视频 <b>{official.meta.videos.toLocaleString()}</b></span>
+                  <span><Music size={12} /> 音频 <b>{official.meta.audio.toLocaleString()}</b></span>
+                  <span><FileText size={12} /> 文件 <b>{official.meta.files.toLocaleString()}</b></span>
+                </div>
+                <code data-tip={official.meta.root}>{official.meta.root}</code>
+              </div>
+              <label className="official-import-field">
+                <span>导入到</span>
+                <Select
+                  ariaLabel="官方导出导入目标"
+                  value={target}
+                  onChange={setTarget}
+                  options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}
+                />
+              </label>
+            </>}
 
             <div className="official-mode-field">
               <div className="official-mode-head">
@@ -4664,7 +4595,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               <button className="btn ghost" disabled={busy === "official"} onClick={() => setOfficial(null)}>取消</button>
               <button className="btn primary" disabled={busy === "official"} onClick={() => void confirmOfficial()}>
                 {busy === "official" ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
-                {busy === "official" ? "正在加入…" : "开始导入"}
+                {busy === "official" ? "正在加入…" : official.batch?.length ? "开始批量导入" : "开始导入"}
               </button>
             </div>
           </div>

@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -151,12 +153,16 @@ func runFileDialog(owner uintptr, opt fileDialogOptions) ([]string, error) {
 		}
 	}
 	if opt.InitialDir != "" {
-		if initial, err := windows.UTF16PtrFromString(opt.InitialDir); err == nil {
-			var item unsafe.Pointer
-			hr, _, _ := procSHCreate.Call(uintptr(unsafe.Pointer(initial)), 0, uintptr(unsafe.Pointer(&iidShellItem)), uintptr(unsafe.Pointer(&item)))
-			if int32(hr) >= 0 && item != nil {
-				comCall(dlg, 12, uintptr(item)) // IFileDialog::SetFolder
-				comRelease(item)
+		initialDir := filepath.Clean(opt.InitialDir)
+		if info, err := os.Stat(initialDir); err == nil && info.IsDir() {
+			if initial, err := windows.UTF16PtrFromString(initialDir); err == nil {
+				var item unsafe.Pointer
+				hr, _, _ := procSHCreate.Call(uintptr(unsafe.Pointer(initial)), 0, uintptr(unsafe.Pointer(&iidShellItem)), uintptr(unsafe.Pointer(&item)))
+				if int32(hr) >= 0 && item != nil {
+					comCall(dlg, 11, uintptr(item)) // IFileDialog::SetDefaultFolder
+					comCall(dlg, 12, uintptr(item)) // IFileDialog::SetFolder
+					comRelease(item)
+				}
 			}
 		}
 	}
