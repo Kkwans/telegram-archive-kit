@@ -408,8 +408,10 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("读取聊天失败: %w", err)
 	}
-	if !fileExists(a.sourcePath(slug)) {
-		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+	if !sourceFileReady(a.sourcePath(slug)) {
+		if _, err := a.ensureOfficialSource(slug); err != nil || !sourceFileReady(a.sourcePath(slug)) {
+			return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+		}
 	}
 	plan, _, planErr := a.estimateMissingPlan(slug)
 	if planErr == nil && plan.Total > 0 && plan.KnownBytes > 0 {

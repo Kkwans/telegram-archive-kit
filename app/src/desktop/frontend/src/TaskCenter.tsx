@@ -34,7 +34,6 @@ import {
 import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { OnlineUpdateDialog, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import { SyncPlans, type SyncPlanLocation } from "./SyncPlans";
 import type { Bootstrap, TaskDetail, TaskInfo } from "./types";
 import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
@@ -335,7 +334,6 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
-  const [updateTarget, setUpdateTarget] = useState<OnlineUpdateTarget | null>(null);
   const [pauseRequested, setPauseRequested] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
@@ -507,14 +505,18 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
     }
   };
 
-  const resume = () => {
+  const resume = async () => {
     if (!task.slug || busyAction) return;
-    setUpdateTarget({
-      peer: "local:" + task.slug,
-      name: task.chat || task.title,
-      slug: task.slug,
-      mode: "sync",
-    });
+    setBusyAction("resume");
+    try {
+      const nextTask = await call<string>("startOneClick", { slug: task.slug });
+      toast("已继续下载，已完成文件和进度会保留");
+      if (nextTask && nextTask !== task.id) onOpenTask(nextTask);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
   };
 
   const rebuild = async () => {
@@ -962,14 +964,6 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
           </div>
         </div>,
         document.body
-      )}
-      {updateTarget && (
-        <OnlineUpdateDialog
-          target={updateTarget}
-          onClose={() => setUpdateTarget(null)}
-          onStarted={(taskId) => { setUpdateTarget(null); if (taskId) onOpenTask(taskId); }}
-          toast={toast}
-        />
       )}
     </>
   );
