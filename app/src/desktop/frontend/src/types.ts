@@ -265,6 +265,14 @@ export interface HomeStats {
   libraryBytes: number;
 }
 
+export interface TaskBatchItem {
+  name: string;
+  messages?: number;
+  media?: number;
+  bytes?: number;
+  status?: string;
+}
+
 export interface TaskInfo {
   id: string;
   kind: string;
@@ -308,6 +316,7 @@ export interface TaskInfo {
   finishedAt?: number;
   error?: string;
   recordsComplete?: boolean;
+  batch?: TaskBatchItem[];
 }
 
 export interface SpeedPoint {

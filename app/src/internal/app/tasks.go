@@ -15,59 +15,69 @@ import (
 	"telegramarchivekit/internal/archive"
 )
 
+// TaskBatchItemDTO is one chat in a multi-chat import task.
+type TaskBatchItemDTO struct {
+	Name     string `json:"name"`
+	Messages int    `json:"messages,omitempty"`
+	Media    int    `json:"media,omitempty"`
+	Bytes    int64  `json:"bytes,omitempty"`
+	Status   string `json:"status,omitempty"`
+}
+
 // TaskDTO is one background operation shown in the desktop task center.
 type TaskDTO struct {
-	ID                  string  `json:"id"`
-	Kind                string  `json:"kind"`
-	PlanID              string  `json:"planId,omitempty"`
-	PlanRunID           string  `json:"planRunId,omitempty"`
-	Title               string  `json:"title"`
-	Chat                string  `json:"chat,omitempty"`
-	ChatID              string  `json:"chatId,omitempty"`
-	Slug                string  `json:"slug,omitempty"`
-	Mode                string  `json:"mode,omitempty"`
-	Source              string  `json:"source,omitempty"`
-	Target              string  `json:"target,omitempty"`
-	Messages            int     `json:"messages,omitempty"`
-	Media               int     `json:"media,omitempty"`
-	Images              int     `json:"images,omitempty"`
-	Videos              int     `json:"videos,omitempty"`
-	Audio               int     `json:"audio,omitempty"`
-	Files               int     `json:"files,omitempty"`
-	DoneImages          int     `json:"doneImages,omitempty"`
-	DoneVideos          int     `json:"doneVideos,omitempty"`
-	DoneAudio           int     `json:"doneAudio,omitempty"`
-	DoneFiles           int     `json:"doneFiles,omitempty"`
-	DoneStats           bool    `json:"doneStats,omitempty"`
-	PlanKnown           bool    `json:"planKnown,omitempty"`
-	PlanTotal           int     `json:"planTotal,omitempty"`
-	PlanBytes           int64   `json:"planBytes,omitempty"`
-	BaselineTotal       int     `json:"baselineTotal,omitempty"`
-	BaselineBytes       int64   `json:"baselineBytes,omitempty"`
-	BaselineImages      int     `json:"baselineImages,omitempty"`
-	BaselineVideos      int     `json:"baselineVideos,omitempty"`
-	BaselineAudio       int     `json:"baselineAudio,omitempty"`
-	BaselineFiles       int     `json:"baselineFiles,omitempty"`
-	FilesDone           int     `json:"filesDone,omitempty"`
-	FilesTotal          int     `json:"filesTotal,omitempty"`
-	Detail              string  `json:"detail,omitempty"`
-	State               string  `json:"state"` // running|done|failed
-	Percent             int     `json:"percent"`
-	AvgSpeed            float64 `json:"avgSpeed,omitempty"`
-	PeakSpeed           float64 `json:"peakSpeed,omitempty"`
-	Bytes               int64   `json:"bytes,omitempty"`
-	TotalBytes          int64   `json:"totalBytes,omitempty"`
-	TotalBytesEstimated bool    `json:"totalBytesEstimated,omitempty"`
-	Done                int     `json:"done,omitempty"`
-	Total               int     `json:"total,omitempty"`
-	ETAMs               int64   `json:"etaMs,omitempty"`
-	ElapsedMs           int64   `json:"elapsedMs,omitempty"`
-	Concurrent          int     `json:"concurrent,omitempty"`
-	Threads             int     `json:"threads,omitempty"`
-	StartedAt           int64   `json:"startedAt"`
-	FinishedAt          int64   `json:"finishedAt,omitempty"`
-	Error               string  `json:"error,omitempty"`
-	RecordsComplete     bool    `json:"recordsComplete,omitempty"`
+	ID                  string             `json:"id"`
+	Kind                string             `json:"kind"`
+	PlanID              string             `json:"planId,omitempty"`
+	PlanRunID           string             `json:"planRunId,omitempty"`
+	Title               string             `json:"title"`
+	Chat                string             `json:"chat,omitempty"`
+	ChatID              string             `json:"chatId,omitempty"`
+	Slug                string             `json:"slug,omitempty"`
+	Mode                string             `json:"mode,omitempty"`
+	Source              string             `json:"source,omitempty"`
+	Target              string             `json:"target,omitempty"`
+	Messages            int                `json:"messages,omitempty"`
+	Media               int                `json:"media,omitempty"`
+	Images              int                `json:"images,omitempty"`
+	Videos              int                `json:"videos,omitempty"`
+	Audio               int                `json:"audio,omitempty"`
+	Files               int                `json:"files,omitempty"`
+	DoneImages          int                `json:"doneImages,omitempty"`
+	DoneVideos          int                `json:"doneVideos,omitempty"`
+	DoneAudio           int                `json:"doneAudio,omitempty"`
+	DoneFiles           int                `json:"doneFiles,omitempty"`
+	DoneStats           bool               `json:"doneStats,omitempty"`
+	PlanKnown           bool               `json:"planKnown,omitempty"`
+	PlanTotal           int                `json:"planTotal,omitempty"`
+	PlanBytes           int64              `json:"planBytes,omitempty"`
+	BaselineTotal       int                `json:"baselineTotal,omitempty"`
+	BaselineBytes       int64              `json:"baselineBytes,omitempty"`
+	BaselineImages      int                `json:"baselineImages,omitempty"`
+	BaselineVideos      int                `json:"baselineVideos,omitempty"`
+	BaselineAudio       int                `json:"baselineAudio,omitempty"`
+	BaselineFiles       int                `json:"baselineFiles,omitempty"`
+	FilesDone           int                `json:"filesDone,omitempty"`
+	FilesTotal          int                `json:"filesTotal,omitempty"`
+	Detail              string             `json:"detail,omitempty"`
+	State               string             `json:"state"` // running|done|failed
+	Percent             int                `json:"percent"`
+	AvgSpeed            float64            `json:"avgSpeed,omitempty"`
+	PeakSpeed           float64            `json:"peakSpeed,omitempty"`
+	Bytes               int64              `json:"bytes,omitempty"`
+	TotalBytes          int64              `json:"totalBytes,omitempty"`
+	TotalBytesEstimated bool               `json:"totalBytesEstimated,omitempty"`
+	Done                int                `json:"done,omitempty"`
+	Total               int                `json:"total,omitempty"`
+	ETAMs               int64              `json:"etaMs,omitempty"`
+	ElapsedMs           int64              `json:"elapsedMs,omitempty"`
+	Concurrent          int                `json:"concurrent,omitempty"`
+	Threads             int                `json:"threads,omitempty"`
+	StartedAt           int64              `json:"startedAt"`
+	FinishedAt          int64              `json:"finishedAt,omitempty"`
+	Error               string             `json:"error,omitempty"`
+	RecordsComplete     bool               `json:"recordsComplete,omitempty"`
+	Batch               []TaskBatchItemDTO `json:"batch,omitempty"`
 }
 
 // SpeedPoint is one persisted sample of a download task's speed curve.
@@ -163,6 +173,20 @@ func (t *backgroundTask) setStats(messages, media int) {
 	}
 	if media > 0 {
 		t.dto.Media = media
+	}
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setBatch(items []TaskBatchItemDTO) {
+	t.mu.Lock()
+	t.dto.Batch = append([]TaskBatchItemDTO(nil), items...)
+	t.mu.Unlock()
+}
+
+func (t *backgroundTask) setBatchItemStatus(index int, status string) {
+	t.mu.Lock()
+	if index >= 0 && index < len(t.dto.Batch) {
+		t.dto.Batch[index].Status = status
 	}
 	t.mu.Unlock()
 }
@@ -1133,7 +1157,7 @@ func (f *Facade) StartImportOfficial(folder, slug, mode string) (string, error) 
 	if st, err := os.Stat(folder); err != nil || !st.IsDir() {
 		return "", fmt.Errorf("所选目录无效")
 	}
-	return f.startTask("import-official", "继承官方 ChatExport", func(t *backgroundTask) error {
+	return f.startTask("import-official", "导入官方 ChatExport", func(t *backgroundTask) error {
 		t.setInfo("", mode, folder, "", 0, 0)
 		if name := strings.TrimSpace(filepath.Base(folder)); name != "" && name != "." {
 			t.setChat(name)

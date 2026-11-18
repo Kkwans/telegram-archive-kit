@@ -1470,6 +1470,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .download-media-card small { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .download-media-card small.done-size { color: var(--faint); }
 .download-record-note { margin: 0 14px 14px; color: var(--faint); font-size: 10.5px; line-height: 1.6; }
+.task-batch-table .col-count { width: 100px; }
+.task-batch-table .col-status { width: 90px; }
+.task-batch-table td.col-file { color: var(--text); }
 .task-files-table { table-layout: fixed; width: 100%; }
 .task-files-table .col-file { width: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-files-table .col-kind { width: 78px; }

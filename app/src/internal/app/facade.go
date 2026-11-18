@@ -410,7 +410,7 @@ func (f *Facade) StartOneClick(slug string) (string, error) {
 	}
 	if !sourceFileReady(a.sourcePath(slug)) {
 		if _, err := a.ensureOfficialSource(slug); err != nil || !sourceFileReady(a.sourcePath(slug)) {
-			return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+			return "", errors.New("该聊天只有官方导入，请先导入 result.json")
 		}
 	}
 	plan, _, planErr := a.estimateMissingPlan(slug)
@@ -612,7 +612,7 @@ func (f *Facade) SyncCurrentChat() (string, error) {
 	}
 	slug := selectedSlug(f.a.selectedWorkspace(list))
 	if !fileExists(f.a.sourcePath(slug)) {
-		return "", errors.New("该聊天只有官方导出，请先导入 result.json")
+		return "", errors.New("该聊天只有官方导入，请先导入 result.json")
 	}
 	_, err := f.StartOneClick(slug)
 	if err != nil {

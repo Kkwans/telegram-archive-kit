@@ -43,7 +43,7 @@ const KIND_META: Record<string, { label: string; group: string; icon: typeof Dow
   "sync-all": { label: "批量下载", group: "download", icon: Download },
   "sync-plan": { label: "计划同步", group: "download", icon: CalendarClock },
   "import-json": { label: "导入 JSON", group: "import", icon: FileJson },
-  "import-official": { label: "官方导出", group: "import", icon: FolderInput },
+  "import-official": { label: "官方导入", group: "import", icon: FolderInput },
   "import-official-batch": { label: "批量官方导入", group: "import", icon: FolderInput },
   export: { label: "导出", group: "export", icon: FolderInput },
   refresh: { label: "重建", group: "build", icon: RefreshCw },
@@ -611,9 +611,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
           {running ? <b>{Math.round(percent)}%</b> : stopped ? <Square size={28} strokeWidth={2.2} /> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
-          <span className="download-hero-kicker">{planned ? "计划同步" : "下载聊天"}</span>
+          <span className="download-hero-kicker">{planned ? "计划同步" : task.kind === "import-official-batch" ? "批量官方导入" : "下载聊天"}</span>
           <div className="download-hero-title">
-            <h2>{task.chat || taskTitle(task)}</h2>
+            <h2>{task.kind === "import-official-batch" ? task.title : task.chat || taskTitle(task)}</h2>
           </div>
           {running && showTransfer ? (
             <div className="download-hero-configline">
@@ -662,6 +662,23 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
           <div><b>{running ? ((task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--") : fmtDuration(elapsed)}</b></div>
         </div>
       </section>
+
+      {task.kind === "import-official-batch" && !!task.batch?.length && <section className="panel task-batch-panel">
+        <div className="panel-head">
+          <h3><FolderInput size={14} /> 导入聊天</h3>
+          <span className="meta">{task.batch.length} 个聊天</span>
+        </div>
+        <table className="table task-files-table task-batch-table">
+          <thead><tr><th className="col-file">聊天</th><th className="col-count center">消息</th><th className="col-count center">媒体</th><th className="col-size">大小</th><th className="col-status center">状态</th></tr></thead>
+          <tbody>{task.batch.map((item, index) => <tr key={`${item.name}-${index}`}>
+            <td className="col-file" data-tip={item.name}>{item.name}</td>
+            <td className="col-count center">{(item.messages ?? 0).toLocaleString()}</td>
+            <td className="col-count center">{(item.media ?? 0).toLocaleString()}</td>
+            <td className="col-size">{item.bytes ? bytes(item.bytes) : "—"}</td>
+            <td className="col-status center">{item.status || "—"}</td>
+          </tr>)}</tbody>
+        </table>
+      </section>}
 
       {showTransfer && <section className="panel download-media-panel">
         <div className="panel-head">
@@ -1403,7 +1420,7 @@ export function TasksPage({
                       </div>
                       {(t.error || t.detail) && <span className={t.error && (t.state === "failed" || t.state === "partial") ? "err" : ""} data-tip={t.error || t.detail}>{t.error || t.detail}</span>}
                     </td>
-                    <td className="task-chat" data-tip={t.chat || undefined}>{t.chat || "—"}</td>
+                    <td className="task-chat" data-tip={t.chat || undefined}>{t.kind === "import-official-batch" ? "-" : t.chat || "—"}</td>
                     <td className="muted task-started"><time>{dateTime(t.startedAt)}</time></td>
                     <td className="task-duration"><TaskElapsed state={t.state} elapsedMs={t.elapsedMs} startedAt={t.startedAt} finishedAt={t.finishedAt} /></td>
                     <td>

@@ -371,7 +371,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <div className="storage-facts">
               <div><span>{stats?.pendingMedia ? "已核对媒体体积" : "媒体体积"}</span><b>{stats ? bytes(stats.mediaBytes) : "—"}</b>{Boolean(stats?.pendingMedia) && <small>{stats?.pendingMedia} 个聊天待自动核对</small>}</div>
               <div><span>网页</span><b>{stats ? `${stats.pages} 页` : "—"}</b></div>
-              <div><span>官方导出</span><b>{stats ? `${stats.official} 个` : "—"}</b></div>
+              <div><span>官方导入</span><b>{stats ? `${stats.official} 个` : "—"}</b></div>
             </div>
             <div className="storage-path">
               <div>
@@ -674,7 +674,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         <div className="chat-facts-grid chat-facts-three">
           <div className="fact"><span>类型</span><b>{current.type || "--"}</b></div>
           <div className="fact"><span>Chat ID</span><b className="mono">{current.id || (current.official > 0 ? "在线更新时识别" : "--")}</b></div>
-          <div className="fact"><span>官方导出</span><b>{current.official} 个</b></div>
+          <div className="fact"><span>官方导入</span><b>{current.official} 个</b></div>
           <div className="fact"><span>首次消息</span><b>{dateTime(current.firstTs)}</b></div>
           <div className="fact"><span>最后消息</span><b>{dateTime(current.lastTs)}</b></div>
           <div className="fact"><span>最近更新</span><b>{dateTime(current.updatedAt)}</b></div>
@@ -3882,7 +3882,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         return;
       }
       const { taskId } = await call<{ taskId: string }>("startImportOfficial", { folder: official.meta.root, slug: target, mode });
-      toast("官方导出任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
+      toast("官方导入任务已加入任务中心", "success", { label: "查看任务", run: () => openTask(taskId) });
       setOfficial(null);
       refresh();
     } catch (e) {
@@ -4004,7 +4004,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           <button className="action-card" disabled={busy === "analyze"} onClick={analyzeOfficial}>
             <span className="action-icon"><FolderOpen size={18} /></span>
             <span className="action-text">
-              <b>继承官方 ChatExport</b>
+              <b>导入官方 ChatExport</b>
               <em>单个目录或包含多个 ChatExport 的父目录均可</em>
             </span>
             <ChevronRight size={16} />
@@ -4600,7 +4600,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               <label className="official-import-field">
                 <span>导入到</span>
                 <Select
-                  ariaLabel="官方导出导入目标"
+                  ariaLabel="官方导入导入目标"
                   value={target}
                   onChange={setTarget}
                   options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}

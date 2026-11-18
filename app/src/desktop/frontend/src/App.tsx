@@ -72,7 +72,7 @@ function chatTooltip(chat: ChatRow) {
   return [
     `${chat.type || "聊天"} · ID ${chat.id || "--"}`,
     `${chat.messages.toLocaleString()} 条消息 · ${chat.media.toLocaleString()} 个媒体`,
-    `${chat.pages} 页网页 · ${chat.official} 个官方导出`,
+    `${chat.pages} 页网页 · ${chat.official} 个官方导入`,
     chat.updatedAt ? `最近更新 ${chat.updatedAt.slice(0, 10)}` : "尚无更新时间",
     chat.missing > 0 ? `缺失 ${chat.missing} 个媒体` : "",
   ].filter(Boolean).join("\n");
@@ -786,7 +786,7 @@ export default function App() {
       }
       await call<Bootstrap>("bootstrap").then(setBoot).catch(() => undefined);
       refresh();
-      if (ok > 0) toast(`已导入 ${ok} 个官方导出`);
+      if (ok > 0) toast(`已导入 ${ok} 个官方导入`);
       closePending();
       setPage("chats");
     } finally {
@@ -1111,9 +1111,9 @@ export default function App() {
             {(pending.folders?.length ?? 0) > 0 && (
               <>
                 <div className="field">
-                  <label>官方导出导入方式</label>
+                  <label>官方导入方式</label>
                   <Select
-                    ariaLabel="官方导出导入方式"
+                    ariaLabel="官方导入方式"
                     value={dropMode}
                     onChange={setDropMode}
                     options={[
@@ -1124,7 +1124,7 @@ export default function App() {
                   />
                 </div>
                 <button className="btn primary" disabled={dropBusy} onClick={importDroppedOfficial}>
-                  导入 {pending.folders?.length} 个官方导出
+                  导入 {pending.folders?.length} 个官方导入
                 </button>
               </>
             )}

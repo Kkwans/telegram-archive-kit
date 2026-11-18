@@ -132,7 +132,7 @@ func (a *App) actionImportOfficialExportPath(folder string) {
 		}
 		items = append(items, menuItem{Key: "back", Icon: "←", Label: "取消", Desc: ""})
 		status := []string{
-			"检测到官方导出   " + probe.Name,
+			"检测到官方导入   " + probe.Name,
 			fmt.Sprintf("消息 %d · 媒体消息 %d · 媒体文件 %d", probe.MessageCount, probe.MediaMessages, probe.MediaFiles),
 			"源目录           " + folder,
 		}
@@ -155,7 +155,7 @@ func (a *App) actionImportOfficialExportPath(folder string) {
 
 	targetMeta, _ := a.readWorkspaceMeta(targetSlug)
 	status := []string{
-		"官方导出     " + probe.Name,
+		"官方导入     " + probe.Name,
 		fmt.Sprintf("识别到       %d 条消息 · %d 个媒体文件", probe.MessageCount, probe.MediaFiles),
 		"目标聊天     " + targetMeta.Chat.Name,
 		"来源目录     " + folder,
@@ -265,7 +265,7 @@ func (a *App) actionImportOfficialExportInto(targetSlug string) {
 		return
 	}
 	status := []string{
-		"官方导出     " + probe.Name,
+		"官方导入     " + probe.Name,
 		fmt.Sprintf("识别到       %d 条消息 · %d 个媒体文件", probe.MessageCount, probe.MediaFiles),
 		"目标聊天     " + targetMeta.Chat.Name,
 		"来源目录     " + folder,
@@ -279,7 +279,7 @@ func (a *App) actionImportOfficialExportInto(targetSlug string) {
 		{Key: "copy", Icon: "⧉", Label: "复制到当前聊天", Desc: "保留原目录，但需要额外磁盘空间"},
 		{Key: "back", Icon: "←", Label: "取消", Desc: ""},
 	}
-	mode := runMenu("继承官方 ChatExport", "已有消息和媒体会参与完整性判断；全量 result.json 只补真正缺失/新增的部分", status, modes, true)
+	mode := runMenu("导入官方 ChatExport", "已有消息和媒体会参与完整性判断；全量 result.json 只补真正缺失/新增的部分", status, modes, true)
 	if mode == "" || mode == "back" {
 		return
 	}

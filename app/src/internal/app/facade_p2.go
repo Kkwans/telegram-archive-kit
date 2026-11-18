@@ -318,19 +318,21 @@ func (f *Facade) StartImportOfficialBatch(root, mode string) (string, error) {
 		return "", err
 	}
 	items := preview.Items
+	batch := make([]TaskBatchItemDTO, len(items))
+	for i, item := range items {
+		batch[i] = TaskBatchItemDTO{Name: item.Name, Messages: item.MessageCount, Media: item.MediaFiles, Bytes: item.TotalBytes, Status: "待导入"}
+	}
 	return f.startTask("import-official-batch", "批量导入官方 ChatExport", func(t *backgroundTask) error {
+		t.setInfo("", mode, root, "", 0, 0)
+		t.setBatch(batch)
 		t.update(1, fmt.Sprintf("准备导入 %d 个官方聊天", len(items)))
 		imported := 0
 		var firstErr error
 		for i, item := range items {
-			t.setChat(item.Name)
 			base := i * 100 / len(items)
+			t.setBatchItemStatus(i, "导入中")
 			t.update(base, fmt.Sprintf("正在导入 %d/%d · %s", i+1, len(items), item.Name))
-			chat, importErr := f.importOfficial(item.Root, "", mode, func(meta archive.OfficialExportMeta) {
-				t.setChat(meta.Name)
-				t.setInfo("", mode, item.Root, "", meta.MessageCount, meta.MediaFiles)
-				t.setMediaStats(meta.Images, meta.Videos, meta.Audio, meta.Files)
-				t.setTotalBytes(meta.TotalBytes)
+			_, importErr := f.importOfficial(item.Root, "", mode, func(meta archive.OfficialExportMeta) {
 				t.update(base+3, fmt.Sprintf("%d/%d · %s · %d 条消息 · %d 个媒体", i+1, len(items), meta.Name, meta.MessageCount, meta.MediaFiles))
 			}, func(p OperationProgress) {
 				if p.Percent > 0 {
@@ -342,11 +344,12 @@ func (f *Facade) StartImportOfficialBatch(root, mode string) (string, error) {
 				if firstErr == nil {
 					firstErr = importErr
 				}
+				t.setBatchItemStatus(i, "失败")
 				t.update(base+(i+1)*100/len(items), fmt.Sprintf("已跳过失败：%s", item.Name))
 				continue
 			}
 			imported++
-			t.setSlug(chat.Slug)
+			t.setBatchItemStatus(i, "已导入")
 			t.update((i+1)*100/len(items), fmt.Sprintf("已导入 %d/%d · %s", imported, len(items), item.Name))
 		}
 		if err := f.a.buildLibrary(); err != nil && firstErr == nil {
@@ -391,7 +394,7 @@ func (f *Facade) importOfficial(folder, slug, mode string, onMeta func(archive.O
 	switch mode {
 	case "reference":
 		if progress != nil {
-			progress(OperationProgress{Stage: "登记官方导出", Detail: "引用原目录，不复制文件", Percent: 20})
+			progress(OperationProgress{Stage: "登记官方导入", Detail: "引用原目录，不复制文件", Percent: 20})
 		}
 		if _, err := f.a.registerOfficialExport(slug, folder, "referenced"); err != nil {
 			return ChatDTO{}, err

@@ -263,7 +263,7 @@ func (a *App) runMainLoop() {
 			{Key: "add", Icon: "➕", Label: "添加 / 更新聊天", Desc: "选择 result.json → 增量合并 → 自动补齐媒体 → 刷新网页"},
 			{Key: "refresh", Icon: "🔄", Label: "仅刷新网页 / UI", Desc: "用内置最新前端重建全部网页；不校验、不下载媒体，统计保持不变"},
 			{Key: "official", Icon: "📥", Label: "继承 Telegram 官方 ChatExport", Desc: "导入旧 messages.html + photos/video_files/files；复用历史媒体，不重复下载"},
-			{Key: "chats", Icon: "🗂️", Label: "聊天管理", Desc: "切换聊天、单独同步、继承官方导出、导入媒体、删除归档"},
+			{Key: "chats", Icon: "🗂️", Label: "聊天管理", Desc: "切换聊天、单独同步、导入官方导入、导入媒体、删除归档"},
 			{Key: "open", Icon: "🌐", Label: "打开归档库", Desc: "一个网页里切换所有聊天，查看时间线 / 图片 / 视频 / 日期导航"},
 			{Key: "syncall", Icon: "🔄", Label: "同步全部聊天", Desc: "逐个补齐缺失媒体并刷新整个归档库"},
 			{Key: "storage", Icon: "💾", Label: "档案库与存储", Desc: "切换磁盘、合并档案库、管理多盘聊天"},
@@ -718,7 +718,7 @@ func (a *App) actionAddChats(autoSync bool) []WorkspaceMeta {
 	for {
 		items := []menuItem{
 			{Key: "browse", Icon: "▣", Label: "选择 result.json", Desc: "支持一次选择多个 JSON；导入后默认继续补齐媒体"},
-			{Key: "official", Icon: "⇢", Label: "继承官方 ChatExport 文件夹", Desc: "旧版 Telegram Desktop HTML 可直接纳管；已有媒体会被识别并跳过下载"},
+			{Key: "official", Icon: "⇢", Label: "导入官方 ChatExport 文件夹", Desc: "旧版 Telegram Desktop HTML 可直接纳管；已有媒体会被识别并跳过下载"},
 			{Key: "paste", Icon: "⌁", Label: "粘贴 / 输入文件路径", Desc: "也可以把 result.json 直接拖到 TelegramArchiveKit.exe 上"},
 			{Key: "library", Icon: "◫", Label: "更换保存位置", Desc: "当前：" + a.Settings.LibraryRoot},
 			{Key: "back", Icon: "←", Label: "返回", Desc: ""},
@@ -890,7 +890,7 @@ func (a *App) refreshWorkspaceWebInteractive(slug, name string) {
 func (a *App) actionOneClickEntry() {
 	list := a.listWorkspaces()
 	if len(list) == 0 {
-		showMessage("还没有聊天", "先导入 result.json 或继承官方 ChatExport，再回来执行一键完成")
+		showMessage("还没有聊天", "先导入 result.json 或导入官方 ChatExport，再回来执行一键完成")
 		a.actionAddChats(true)
 		return
 	}
@@ -945,7 +945,7 @@ func (a *App) actionOneClick(selected *WorkspaceMeta) {
 			{Key: "open", Icon: "◎", Label: "先打开现有官方归档", Desc: "当前只有旧 ChatExport，还没有可自动更新的 JSON 数据源"},
 			{Key: "back", Icon: "←", Label: "返回", Desc: ""},
 		}
-		c := runMenu("缺少 result.json", selected.Chat.Name, []string{"已继承官方 ChatExport，但要继续补齐到最新消息，需要导入一次全量 result.json。"}, items, true)
+		c := runMenu("缺少 result.json", selected.Chat.Name, []string{"已导入官方 ChatExport，但要继续补齐到最新消息，需要导入一次全量 result.json。"}, items, true)
 		if c == "json" {
 			a.actionAddChats(true)
 		} else if c == "open" {
