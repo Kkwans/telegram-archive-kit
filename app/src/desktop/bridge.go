@@ -327,6 +327,12 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return map[string]string{"taskId": id}, nil
+	case "startImportOfficialBatch":
+		id, err := b.facade.StartImportOfficialBatch(p.Root, p.Mode)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"taskId": id}, nil
 	case "startExportChat":
 		id, err := b.facade.StartExportChat(p.Slug, p.Dst)
 		if err != nil {
@@ -415,10 +421,10 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return nil, b.facade.OpenFolderPath(p.Path)
 
 	case "pickJSON":
-		b.startPicker("json", "选择 Telegram Desktop 导出的 result.json（可多选）", p.Purpose)
+		b.startPicker("json", "选择 Telegram Desktop 导出的 result.json（可多选）", p.Purpose, p.Initial)
 		return map[string]bool{"started": true}, nil
 	case "pickFolder":
-		b.startPicker("folder", p.Title, p.Purpose)
+		b.startPicker("folder", p.Title, p.Purpose, p.Initial)
 		return map[string]bool{"started": true}, nil
 	case "ackDialog":
 		b.ackDialog(p.Seq)
@@ -428,6 +434,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.ImportJSONFiles(p.Paths)
 	case "analyzeOfficial":
 		return b.facade.AnalyzeOfficial(p.Folder)
+	case "analyzeOfficialBatch":
+		return b.facade.AnalyzeOfficialBatch(p.Root)
 	case "importOfficial":
 		return b.facade.ImportOfficial(p.Folder, p.Slug, p.Mode)
 	case "deleteChat":
@@ -665,7 +673,7 @@ func (b *Bridge) queue(raw []string, source string) {
 	b.mu.Unlock()
 }
 
-func (b *Bridge) startPicker(kind, title, purpose string) {
+func (b *Bridge) startPicker(kind, title, purpose, initial string) {
 	if purpose == "" {
 		purpose = kind
 	}
@@ -677,10 +685,11 @@ func (b *Bridge) startPicker(kind, title, purpose string) {
 				Title:      title,
 				FilterName: "JSON 文件",
 				FilterSpec: "*.json",
+				InitialDir: initial,
 				Multiple:   true,
 			})
 		} else {
-			paths, err = showFileDialog(b.owner(), fileDialogOptions{Title: title, Folder: true})
+			paths, err = showFileDialog(b.owner(), fileDialogOptions{Title: title, InitialDir: initial, Folder: true})
 		}
 		if err != nil {
 			log.Printf("picker %s failed: %v", kind, err)
@@ -864,7 +873,7 @@ func (b *Bridge) syncCurrent() (map[string]string, error) {
 
 func archiveMutation(method string) bool {
 	switch method {
-	case "startImportJSON", "startImportOfficial", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
+	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "setSettings", "onlineExport",
 		"startLogin", "logoutTdl", "rcloneUnmount":
@@ -875,7 +884,7 @@ func archiveMutation(method string) bool {
 
 func needsOpenLibrary(method string) bool {
 	switch method {
-	case "startImportJSON", "startImportOfficial", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
+	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
 		"previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":

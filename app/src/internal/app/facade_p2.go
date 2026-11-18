@@ -233,6 +233,132 @@ func (f *Facade) AnalyzeOfficial(folder string) (OfficialPreviewDTO, error) {
 	return out, nil
 }
 
+type OfficialBatchItemDTO struct {
+	Root         string `json:"root"`
+	Name         string `json:"name"`
+	MessageCount int    `json:"messageCount"`
+	MediaFiles   int    `json:"mediaFiles"`
+	TotalBytes   int64  `json:"totalBytes"`
+}
+
+type OfficialBatchPreviewDTO struct {
+	Root  string                 `json:"root"`
+	Items []OfficialBatchItemDTO `json:"items"`
+}
+
+func officialExportFolders(root string) ([]string, error) {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil, errors.New("所选目录无效")
+	}
+	if fileExists(filepath.Join(root, "messages.html")) {
+		return []string{root}, nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var folders []string
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		candidate := filepath.Join(root, entry.Name())
+		if fileExists(filepath.Join(candidate, "messages.html")) {
+			folders = append(folders, candidate)
+		}
+	}
+	sort.Strings(folders)
+	return folders, nil
+}
+
+func (f *Facade) AnalyzeOfficialBatch(root string) (OfficialBatchPreviewDTO, error) {
+	folders, err := officialExportFolders(root)
+	if err != nil {
+		return OfficialBatchPreviewDTO{}, err
+	}
+	if len(folders) == 0 {
+		return OfficialBatchPreviewDTO{}, errors.New("所选目录下没有找到包含 messages.html 的官方 ChatExport")
+	}
+	out := OfficialBatchPreviewDTO{Root: root}
+	for _, folder := range folders {
+		meta, _, err := archive.AnalyzeOfficialExport(folder, f.a.Settings.LibraryRoot, "referenced")
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(meta.Name)
+		if name == "" {
+			name = filepath.Base(folder)
+		}
+		out.Items = append(out.Items, OfficialBatchItemDTO{
+			Root: folder, Name: name, MessageCount: meta.MessageCount, MediaFiles: meta.MediaFiles, TotalBytes: meta.TotalBytes,
+		})
+	}
+	if len(out.Items) == 0 {
+		return OfficialBatchPreviewDTO{}, errors.New("目录中存在 messages.html，但没有可识别的官方聊天")
+	}
+	return out, nil
+}
+
+func (f *Facade) StartImportOfficialBatch(root, mode string) (string, error) {
+	switch mode {
+	case "reference", "copy", "move", "managed":
+	default:
+		return "", errors.New("未知的导入模式")
+	}
+	preview, err := f.AnalyzeOfficialBatch(root)
+	if err != nil {
+		return "", err
+	}
+	items := preview.Items
+	return f.startTask("import-official-batch", "批量导入官方 ChatExport", func(t *backgroundTask) error {
+		t.update(1, fmt.Sprintf("准备导入 %d 个官方聊天", len(items)))
+		imported := 0
+		var firstErr error
+		for i, item := range items {
+			t.setChat(item.Name)
+			base := i * 100 / len(items)
+			t.update(base, fmt.Sprintf("正在导入 %d/%d · %s", i+1, len(items), item.Name))
+			chat, importErr := f.importOfficial(item.Root, "", mode, func(meta archive.OfficialExportMeta) {
+				t.setChat(meta.Name)
+				t.setInfo("", mode, item.Root, "", meta.MessageCount, meta.MediaFiles)
+				t.setMediaStats(meta.Images, meta.Videos, meta.Audio, meta.Files)
+				t.setTotalBytes(meta.TotalBytes)
+				t.update(base+3, fmt.Sprintf("%d/%d · %s · %d 条消息 · %d 个媒体", i+1, len(items), meta.Name, meta.MessageCount, meta.MediaFiles))
+			}, func(p OperationProgress) {
+				if p.Percent > 0 {
+					pct := base + min(90, p.Percent*90/100)
+					t.update(pct, p.Stage)
+				}
+			})
+			if importErr != nil {
+				if firstErr == nil {
+					firstErr = importErr
+				}
+				t.update(base+(i+1)*100/len(items), fmt.Sprintf("已跳过失败：%s", item.Name))
+				continue
+			}
+			imported++
+			t.setSlug(chat.Slug)
+			t.update((i+1)*100/len(items), fmt.Sprintf("已导入 %d/%d · %s", imported, len(items), item.Name))
+		}
+		if err := f.a.buildLibrary(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if imported == 0 {
+			if firstErr != nil {
+				return firstErr
+			}
+			return errors.New("没有导入任何官方聊天")
+		}
+		if firstErr != nil {
+			return fmt.Errorf("成功 %d/%d：%w", imported, len(items), firstErr)
+		}
+		t.update(100, fmt.Sprintf("已导入 %d 个官方聊天", imported))
+		return nil
+	}), nil
+}
+
 func (f *Facade) ImportOfficial(folder, slug, mode string) (ChatDTO, error) {
 	return f.importOfficial(folder, slug, mode, nil, nil)
 }

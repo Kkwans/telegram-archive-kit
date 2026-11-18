@@ -268,17 +268,33 @@ export default function App() {
     }
   }, [toast]);
 
-  const requestPick = (method: string, purpose: string, title: string) =>
+  const requestPick = (method: string, purpose: string, title: string, initial = "") =>
     new Promise<string[]>((resolve, reject) => {
       pickerWaiters.current.set(purpose, { resolve, reject });
-      call(method, { purpose, title }).catch((e: Error) => {
+      call(method, { purpose, title, initial }).catch((e: Error) => {
         pickerWaiters.current.delete(purpose);
         reject(e);
       });
     });
-  const pickFiles = (purpose: string) => requestPick("pickJSON", purpose, "");
+  const lastPickerDir = () => localStorage.getItem("tak-last-picker-dir") || "";
+  const rememberPickerDir = (path: string) => {
+    if (path) localStorage.setItem("tak-last-picker-dir", path);
+  };
+  const directoryOf = (path: string) => {
+    let clean = path;
+    while (clean.endsWith("\\") || clean.endsWith("/")) clean = clean.slice(0, -1);
+    const cut = Math.max(clean.lastIndexOf("\\"), clean.lastIndexOf("/"));
+    return cut > 0 ? clean.slice(0, cut) : clean;
+  };
+  const pickFiles = (purpose: string) => requestPick("pickJSON", purpose, "", lastPickerDir()).then((paths) => {
+    if (paths[0]) rememberPickerDir(directoryOf(paths[0]));
+    return paths;
+  });
   const pickFolder = (purpose: string, title: string) =>
-    requestPick("pickFolder", purpose, title).then((paths) => paths[0] ?? "");
+    requestPick("pickFolder", purpose, title, lastPickerDir()).then((paths) => {
+      if (paths[0]) rememberPickerDir(paths[0]);
+      return paths[0] ?? "";
+    });
 
   const refresh = useCallback(() => {
     libraryLoad.current?.abort();

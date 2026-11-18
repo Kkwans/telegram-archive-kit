@@ -27,8 +27,12 @@ var (
 	procPeekMessage = user32Native.NewProc("PeekMessageW")
 	procGetAncestor = user32Native.NewProc("GetAncestor")
 
+	shell32Native = windows.NewLazySystemDLL("shell32.dll")
+	procSHCreate  = shell32Native.NewProc("SHCreateItemFromParsingName")
+
 	clsidFileOpenDialog = comGUID{0xDC1C5A9C, 0xE88A, 0x4DDE, [8]byte{0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7}}
 	iidFileOpenDialog   = comGUID{0xD57C7288, 0xD4AD, 0x4768, [8]byte{0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60}}
+	iidShellItem        = comGUID{0x43826D1E, 0xE718, 0x42EE, [8]byte{0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE}}
 )
 
 const (
@@ -55,6 +59,7 @@ type fileDialogOptions struct {
 	Title      string
 	FilterName string
 	FilterSpec string
+	InitialDir string
 	Multiple   bool
 	Folder     bool
 }
@@ -143,6 +148,16 @@ func runFileDialog(owner uintptr, opt fileDialogOptions) ([]string, error) {
 		if e1 == nil && e2 == nil {
 			filters := []comFilterSpec{{Name: name, Spec: spec}}
 			comCall(dlg, 4, 1, uintptr(unsafe.Pointer(&filters[0])))
+		}
+	}
+	if opt.InitialDir != "" {
+		if initial, err := windows.UTF16PtrFromString(opt.InitialDir); err == nil {
+			var item unsafe.Pointer
+			hr, _, _ := procSHCreate.Call(uintptr(unsafe.Pointer(initial)), 0, uintptr(unsafe.Pointer(&iidShellItem)), uintptr(unsafe.Pointer(&item)))
+			if int32(hr) >= 0 && item != nil {
+				comCall(dlg, 12, uintptr(item)) // IFileDialog::SetFolder
+				comRelease(item)
+			}
 		}
 	}
 
