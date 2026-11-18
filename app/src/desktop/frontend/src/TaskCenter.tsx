@@ -44,6 +44,7 @@ const KIND_META: Record<string, { label: string; group: string; icon: typeof Dow
   "sync-plan": { label: "计划同步", group: "download", icon: CalendarClock },
   "import-json": { label: "导入 JSON", group: "import", icon: FileJson },
   "import-official": { label: "官方导出", group: "import", icon: FolderInput },
+  "import-official-batch": { label: "批量官方导入", group: "import", icon: FolderInput },
   export: { label: "导出", group: "export", icon: FolderInput },
   refresh: { label: "重建", group: "build", icon: RefreshCw },
   "refresh-all": { label: "重建全部", group: "build", icon: RefreshCw },
@@ -140,7 +141,7 @@ function taskInfoCards(task: TaskDetail): TaskInfoCard[] {
     if (value && value !== "--") cards.push({ label, value, ...opts });
   };
   const content = [task.messages ? `${task.messages.toLocaleString()} 条消息` : "", task.media ? `${task.media.toLocaleString()} 个媒体` : ""].filter(Boolean).join(" · ");
-  if (task.kind === "import-official") {
+  if (task.kind === "import-official" || task.kind === "import-official-batch") {
     add("导入方式", modeLabel(task.mode));
     if (task.totalBytes) add("数据大小", bytes(task.totalBytes));
     add("内容", content);

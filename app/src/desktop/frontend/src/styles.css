@@ -1210,6 +1210,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   min-width: 0; color: var(--faint); font: 10.5px/1.5 "Cascadia Mono", Consolas, monospace;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.official-batch-loading { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 26px 16px; color: var(--muted); text-align: center; }
+.official-batch-loading > svg { color: var(--accent); }
+.official-batch-loading b { color: var(--text); font-size: 13px; }
+.official-batch-loading span { font-size: 11.5px; }
+.official-batch-loading code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 10.5px; }
 .official-batch-list { max-height: 230px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .official-batch-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .official-batch-list > div:last-child { border-bottom: 0; }

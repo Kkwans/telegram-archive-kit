@@ -3279,6 +3279,9 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
   const { boot, chats, selected, setSelected, refresh, toast, pickFolder, pickFiles, go, openTask } = ctx;
   const history = boot?.history ?? [];
   const [official, setOfficial] = useState<OfficialPreview | null>(null);
+  const [officialLoading, setOfficialLoading] = useState(false);
+  const [officialFolder, setOfficialFolder] = useState("");
+  const officialRequest = useRef<AbortController | null>(null);
   const [target, setTarget] = useState("");
   const [mode, setMode] = useState("managed");
   const [busy, setBusy] = useState("");
@@ -3830,18 +3833,38 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
     }
   };
 
+  const closeOfficial = () => {
+    officialRequest.current?.abort();
+    officialRequest.current = null;
+    setOfficialLoading(false);
+    setOfficial(null);
+    setOfficialFolder("");
+  };
+
   const analyzeOfficial = async () => {
+    const folder = await pickFolder("official-folder", "选择 Telegram Desktop 导出的 ChatExport 文件夹或父目录");
+    if (!folder) return;
+    officialRequest.current?.abort();
+    const controller = new AbortController();
+    officialRequest.current = controller;
+    setOfficial(null);
+    setOfficialLoading(true);
+    setOfficialFolder(folder);
+    setBusy("analyze");
     try {
-      const folder = await pickFolder("official-folder", "选择 Telegram Desktop 导出的 ChatExport 文件夹");
-      if (!folder) return;
-      setBusy("analyze");
-      const preview = await call<OfficialPreview>("analyzeOfficial", { folder });
+      const preview = await call<OfficialPreview>("analyzeOfficial", { folder }, controller.signal);
+      if (controller.signal.aborted) return;
       setOfficial(preview);
+      setOfficialLoading(false);
       setTarget(preview.batch?.length ? "" : preview.matchSlug || "");
       setMode("managed");
     } catch (e) {
+      if (controller.signal.aborted) return;
+      setOfficialLoading(false);
+      setOfficialFolder("");
       toast((e as Error).message, true);
     } finally {
+      if (officialRequest.current === controller) officialRequest.current = null;
       setBusy("");
     }
   };
@@ -4504,6 +4527,30 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
               <button className="btn primary" onClick={() => openChat(detailChat.slug)}>
                 <ArrowUpRight size={12} /> 打开聊天
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {officialLoading && createPortal(
+        <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) closeOfficial(); }}>
+          <div className="modal official-import-modal" role="dialog" aria-modal="true" aria-labelledby="official-import-loading-title">
+            <div className="task-modal-head">
+              <div>
+                <h2 id="official-import-loading-title">正在扫描官方 ChatExport</h2>
+                <p className="modal-sub">正在识别所选目录中的官方聊天，请稍候。</p>
+              </div>
+              <button className="icon-btn" aria-label="取消扫描" onClick={closeOfficial}><X size={15} /></button>
+            </div>
+            <div className="official-batch-loading" role="status">
+              <Loader2 size={22} className="spin" />
+              <b>正在扫描目录</b>
+              <span>正在读取每个官方聊天的消息和媒体信息。</span>
+              <code data-tip={officialFolder}>{officialFolder}</code>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn ghost" onClick={closeOfficial}>取消</button>
             </div>
           </div>
         </div>,
