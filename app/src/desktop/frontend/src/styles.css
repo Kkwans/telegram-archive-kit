@@ -2581,6 +2581,7 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 
 @media (max-width: 1100px) {
   .all-update-summary { grid-template-columns: 1fr 1fr; }
+  .all-update-table { --all-update-cols: minmax(0, 1.2fr) 46px 52px 52px 52px 52px 52px 86px 78px; }
 }
 .export-preview-modal { width: min(540px, 100%); gap: 14px; }
 .export-preview-head { display: flex; align-items: center; gap: 12px; }
