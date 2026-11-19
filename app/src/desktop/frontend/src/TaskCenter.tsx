@@ -356,7 +356,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
   const planned = task.kind === "sync-plan";
   const batchTask = task.kind === "online-update-batch";
   const batchItems = task.batch ?? [];
-  const batchCompleted = batchItems.filter((item) => item.state && item.state !== "running").length;
+  const batchCompleted = batchItems.filter((item) => item.state === "done").length;
   // Plan-sync tasks are download tasks too; only non-download records keep the
   // compact summary layout without transfer modules.
   const showTransfer = meta.group === "download" && !batchTask;
