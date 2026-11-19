@@ -20,6 +20,7 @@ type TaskBatchItemDTO struct {
 	Name       string  `json:"name"`
 	OnlineName string  `json:"onlineName,omitempty"`
 	Slug       string  `json:"slug,omitempty"`
+	Peer       string  `json:"peer,omitempty"`
 	TaskID     string  `json:"taskId,omitempty"`
 	Messages   int     `json:"messages,omitempty"`
 	Media      int     `json:"media,omitempty"`
@@ -143,6 +144,7 @@ type backgroundTask struct {
 	activeSince  time.Time
 	ctx          context.Context
 	cancel       context.CancelFunc
+	workerDone   chan struct{}
 }
 
 // context returns the cancellation context owned by this task. Persisted tasks
@@ -668,12 +670,22 @@ func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error)
 // StartBatchTask creates a caller-driven batch task. The runner owns the
 // sequencing so long online prefetch/export work can live in the desktop
 // bridge while the task center keeps showing live per-item progress.
-func (f *Facade) StartBatchTask(dto TaskDTO, run func(ctx context.Context, update func(index int, patch BatchItemUpdate), progress func(percent int, detail string)) error) (string, error) {
+func (f *Facade) StartBatchTask(dto TaskDTO, run func(ctx context.Context, update func(index int, patch BatchItemUpdate), progress func(percent int, detail string), paused func() bool) error) (string, error) {
 	if len(dto.Batch) == 0 {
 		return "", errors.New("没有可执行的项目")
 	}
 	task := f.createTaskRecord(dto)
+	f.launchBatchTask(task, run)
+	return task.snapshot().ID, nil
+}
+
+func (f *Facade) launchBatchTask(task *backgroundTask, run func(ctx context.Context, update func(index int, patch BatchItemUpdate), progress func(percent int, detail string), paused func() bool) error) {
+	done := make(chan struct{})
+	task.mu.Lock()
+	task.workerDone = done
+	task.mu.Unlock()
 	go func() {
+		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
 				task.finish(fmt.Errorf("任务异常：%v", r))
@@ -684,11 +696,152 @@ func (f *Facade) StartBatchTask(dto TaskDTO, run func(ctx context.Context, updat
 			task.updateBatchItem(index, patch)
 		}, func(percent int, detail string) {
 			task.update(percent, detail)
-		})
+		}, task.pausedNow)
 		task.finish(err)
 		f.saveTasks()
 	}()
-	return task.snapshot().ID, nil
+}
+
+func (t *backgroundTask) pausedNow() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.dto.State == "paused"
+}
+
+func (t *backgroundTask) workerDoneChannel() chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.workerDone
+}
+
+// restartForResume reopens a batch task after pause, failure or manual stop.
+// Worker callbacks from the previous run must be finished before this is called.
+func (t *backgroundTask) restartForResume() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch t.dto.State {
+	case "paused", "failed", "stopped", "partial":
+	default:
+		return false
+	}
+	if t.activeBaseMs <= 0 && t.dto.ElapsedMs > 0 {
+		t.activeBaseMs = t.dto.ElapsedMs
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.ctx, t.cancel = ctx, cancel
+	t.dto.State = "running"
+	t.dto.Error = ""
+	t.dto.FinishedAt = 0
+	t.dto.ETAMs = 0
+	t.dto.Detail = "继续更新"
+	if len(t.dto.Batch) > 0 {
+		done := 0
+		for _, item := range t.dto.Batch {
+			if item.State == "done" {
+				done++
+			}
+		}
+		t.dto.Percent = done * 100 / len(t.dto.Batch)
+	} else {
+		t.dto.Percent = 0
+	}
+	t.active = nil
+	t.activeSince = time.Now()
+	return true
+}
+
+// ResumeBatchTask restarts one stored online-update batch. It waits briefly for
+// a previous paused worker to unwind, then reuses the existing item list so the
+// user does not need to scan or rematch all chats again.
+func (f *Facade) ResumeBatchTask(id string, run func(ctx context.Context, update func(index int, patch BatchItemUpdate), progress func(percent int, detail string), paused func() bool) error) (string, error) {
+	f.taskMu.Lock()
+	var task *backgroundTask
+	for _, candidate := range f.tasks {
+		if candidate.snapshot().ID == id {
+			task = candidate
+			break
+		}
+	}
+	if task == nil {
+		f.taskMu.Unlock()
+		return "", errors.New("任务不存在")
+	}
+	dto := task.snapshot()
+	if dto.Kind != "online-update-batch" {
+		f.taskMu.Unlock()
+		return "", errors.New("该任务不支持继续更新")
+	}
+	done := task.workerDoneChannel()
+	f.taskMu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			return "", errors.New("上一次更新仍在停止，请稍候再继续")
+		}
+	}
+
+	f.taskMu.Lock()
+	task = nil
+	for _, candidate := range f.tasks {
+		if candidate.snapshot().ID == id {
+			task = candidate
+			break
+		}
+	}
+	if task == nil {
+		f.taskMu.Unlock()
+		return "", errors.New("任务不存在")
+	}
+	if !task.restartForResume() {
+		state := task.snapshot().State
+		f.taskMu.Unlock()
+		return "", fmt.Errorf("任务当前不可继续（%s）", state)
+	}
+	f.taskMu.Unlock()
+	f.launchBatchTask(task, run)
+	f.saveTasks()
+	return id, nil
+}
+
+// PauseBatchTask pauses the batch runner and the child download that is
+// currently in flight, preserving both item progress and the child task record.
+func (f *Facade) PauseBatchTask(id string) (bool, error) {
+	f.taskMu.Lock()
+	for _, task := range f.tasks {
+		dto := task.snapshot()
+		if dto.ID != id {
+			continue
+		}
+		if dto.Kind != "online-update-batch" {
+			f.taskMu.Unlock()
+			return false, errors.New("仅批量在线更新支持暂停")
+		}
+		if dto.State != "running" {
+			f.taskMu.Unlock()
+			return false, errors.New("该任务当前不可暂停")
+		}
+		task.pause()
+		task.mu.Lock()
+		task.dto.Detail = "批量更新已暂停，可继续更新"
+		task.dto.Error = task.dto.Detail
+		task.mu.Unlock()
+		f.taskMu.Unlock()
+		f.saveTasks()
+
+		f.mu.Lock()
+		op := f.op
+		if op != nil {
+			op.paused = true
+		}
+		f.mu.Unlock()
+		if op != nil {
+			op.cancel()
+		}
+		return true, nil
+	}
+	f.taskMu.Unlock()
+	return false, errors.New("找不到任务")
 }
 
 func (f *Facade) Tasks() []TaskDTO {

@@ -580,6 +580,10 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.OnlineExport(p.Peer, p.Timeout, p.Limit, p.Token, p.Slug)
 	case "startOnlineUpdateBatch":
 		return b.StartOnlineUpdateBatch(p.Batch)
+	case "pauseBatchTask":
+		return b.PauseOnlineUpdateBatch(p.ID)
+	case "resumeOnlineUpdateBatch":
+		return b.ResumeOnlineUpdateBatch(p.ID)
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":
@@ -879,7 +883,7 @@ func archiveMutation(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "setSettings", "onlineExport",
-		"startOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount":
+		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount":
 		return true
 	}
 	return false
@@ -890,7 +894,7 @@ func needsOpenLibrary(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
-		"startOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
+		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
 		return true
 	}
 	return false

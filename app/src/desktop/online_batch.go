@@ -12,7 +12,8 @@ import (
 
 // onlineBatchRequestItem is one ready chat produced by the batch preview. The
 // prepared token lets the batch reuse the exact statistics the user confirmed
-// instead of reading the Telegram history a second time.
+// instead of reading the Telegram history a second time. State and TaskID are
+// present when the same list is reused to continue a paused or stopped run.
 type onlineBatchRequestItem struct {
 	Slug       string `json:"slug"`
 	Name       string `json:"name"`
@@ -27,6 +28,8 @@ type onlineBatchRequestItem struct {
 	Files      int    `json:"files"`
 	Bytes      int64  `json:"bytes"`
 	UpToDate   bool   `json:"upToDate,omitempty"`
+	State      string `json:"state,omitempty"`
+	TaskID     string `json:"taskId,omitempty"`
 }
 
 // StartOnlineUpdateBatch starts one background task that updates the selected
@@ -57,7 +60,8 @@ func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem) (map[str
 		}
 		work = append(work, item)
 		batch = append(batch, takapp.TaskBatchItemDTO{
-			Name: name, OnlineName: item.OnlineName, Slug: item.Slug,
+			Name: name, OnlineName: item.OnlineName, Slug: item.Slug, Peer: item.Peer,
+			TaskID: item.TaskID, State: item.State,
 			Messages: item.Messages, Media: item.Media,
 			Images: item.Images, Videos: item.Videos, Audio: item.Audio, Files: item.Files,
 			Bytes: item.Bytes, Status: "等待更新",
@@ -79,8 +83,8 @@ func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem) (map[str
 		TotalBytes: totalBytes, Total: media, Detail: "等待开始",
 		Batch: batch,
 	}
-	id, err := b.facade.StartBatchTask(dto, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string)) error {
-		return b.runOnlineUpdateBatch(ctx, work, update, progress)
+	id, err := b.facade.StartBatchTask(dto, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
+		return b.runOnlineUpdateBatch(ctx, work, update, progress, paused)
 	})
 	if err != nil {
 		return nil, err
@@ -88,11 +92,49 @@ func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem) (map[str
 	return map[string]string{"taskId": id}, nil
 }
 
+// ResumeOnlineUpdateBatch restarts a paused, stopped or failed batch from the
+// item list stored in its task record. Chats that already finished are skipped;
+// the rest keep their existing match and statistics.
+func (b *Bridge) ResumeOnlineUpdateBatch(id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("缺少任务标识")
+	}
+	detail, err := b.facade.TaskDetail(id)
+	if err != nil {
+		return "", err
+	}
+	if detail.Kind != "online-update-batch" {
+		return "", errors.New("该任务不是批量在线更新")
+	}
+	items := make([]onlineBatchRequestItem, len(detail.Batch))
+	for i, item := range detail.Batch {
+		items[i] = onlineBatchRequestItem{
+			Slug: item.Slug, Name: item.Name, Peer: item.Peer, OnlineName: item.OnlineName,
+			Messages: item.Messages, Media: item.Media,
+			Images: item.Images, Videos: item.Videos, Audio: item.Audio, Files: item.Files,
+			Bytes: item.Bytes, State: item.State, TaskID: item.TaskID,
+		}
+	}
+	for _, item := range items {
+		if item.State != "done" && item.Peer == "" && item.TaskID == "" {
+			return "", fmt.Errorf("「%s」缺少在线匹配，请重新开始批量更新", item.Name)
+		}
+	}
+	return b.facade.ResumeBatchTask(id, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
+		return b.runOnlineUpdateBatch(ctx, items, update, progress, paused)
+	})
+}
+
+func (b *Bridge) PauseOnlineUpdateBatch(id string) (bool, error) {
+	return b.facade.PauseBatchTask(id)
+}
+
 func (b *Bridge) runOnlineUpdateBatch(
 	ctx context.Context,
 	items []onlineBatchRequestItem,
 	update func(index int, patch takapp.BatchItemUpdate),
 	progress func(percent int, detail string),
+	isPaused func() bool,
 ) error {
 	defer func() {
 		// Unused prepared exports would otherwise keep whole histories in memory.
@@ -101,86 +143,133 @@ func (b *Bridge) runOnlineUpdateBatch(
 		}
 	}()
 	total := len(items)
+	if total == 0 {
+		return errors.New("没有需要更新的聊天")
+	}
+	pausedNow := func() bool {
+		return isPaused != nil && isPaused()
+	}
 	completed := 0
-	okCount, failed := 0, 0
-	setProgress := func(currentPercent int, detail string) {
-		if total == 0 {
-			progress(0, detail)
-			return
+	okCount := 0
+	for _, item := range items {
+		if item.State == "done" {
+			completed++
+			okCount++
 		}
+	}
+	failed := 0
+	setProgress := func(currentPercent int, detail string) {
 		percent := (completed*100 + clampPercent(currentPercent)) / total
 		if completed >= total {
 			percent = 100
 		}
 		progress(percent, detail)
 	}
-	markRemaining := func(from int, status, message string) {
+	markRemaining := func(from int, message string) {
 		for i := from; i < total; i++ {
-			update(i, takapp.BatchItemUpdate{Status: status, State: "stopped", Error: message})
+			update(i, takapp.BatchItemUpdate{Status: "未执行", State: "stopped", ResetError: true, Detail: message})
 		}
+	}
+	cancelRun := func(index int, taskID string) error {
+		if pausedNow() {
+			if taskID != "" {
+				_ = b.facade.Pause()
+			}
+			update(index, takapp.BatchItemUpdate{Status: "已暂停", State: "paused", ResetError: true, Detail: "已暂停，可继续更新"})
+			return ctx.Err()
+		}
+		if taskID != "" {
+			_, _ = b.facade.StopTask(taskID)
+		}
+		update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", ResetError: true, Detail: "批量更新已停止，可重试"})
+		markRemaining(index+1, "批量更新已停止，可重试")
+		return ctx.Err()
+	}
+	if completed > 0 {
+		setProgress(0, fmt.Sprintf("继续更新 · 已完成 %d/%d", completed, total))
 	}
 
 	for index, item := range items {
 		if err := ctx.Err(); err != nil {
-			markRemaining(index, "未执行", "批量更新已停止")
+			if !pausedNow() {
+				markRemaining(index, "批量更新已停止，可重试")
+			}
 			return err
+		}
+		if item.State == "done" {
+			continue
 		}
 		name := item.Name
 		if name == "" {
 			name = item.OnlineName
 		}
-		update(index, takapp.BatchItemUpdate{Status: "准备更新", ResetError: true, Percent: 0})
-		setProgress(0, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
 
-		if item.UpToDate {
-			update(index, takapp.BatchItemUpdate{Status: "已是最新", State: "done", Progress: true, Percent: 100, ResetError: true, Detail: "没有需要更新的内容"})
-			completed++
-			okCount++
-			setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
-			continue
+		var res OnlineExportResult
+		resumed := false
+		if item.TaskID != "" && (item.State == "paused" || item.State == "failed" || item.State == "stopped" || item.State == "running" || item.State == "partial") {
+			if child, err := b.facade.TaskDetail(item.TaskID); err == nil {
+				if child.State == "done" {
+					childBytes := maxInt64(item.Bytes, child.TotalBytes)
+					update(index, takapp.BatchItemUpdate{
+						Status: "已完成", State: "done", Progress: true, Percent: 100, ResetError: true,
+						Downloaded: childBytes, TotalBytes: childBytes, Detail: "此前已完成",
+					})
+					okCount++
+					completed++
+					setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
+					continue
+				}
+				if item.Slug != "" {
+					if childID, err := b.facade.StartOneClick(item.Slug); err == nil {
+						res = OnlineExportResult{Slug: item.Slug, Chat: name, TaskID: childID, Existed: true}
+						resumed = true
+					}
+				}
+			}
 		}
 
-		update(index, takapp.BatchItemUpdate{Status: "读取新增消息", Detail: "正在连接 Telegram"})
-		res, err := b.batchOnlineExport(item)
-		if err != nil {
+		if resumed {
+			update(index, takapp.BatchItemUpdate{
+				Status: "继续下载", TaskID: res.TaskID, State: "running", ResetError: true,
+				Detail: "继续下载未完成媒体",
+			})
+			setProgress(0, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
+		} else {
+			update(index, takapp.BatchItemUpdate{Status: "读取新增消息", Detail: "正在连接 Telegram", ResetError: true})
+			var err error
+			res, err = b.batchOnlineExport(item)
+			if err != nil {
+				if ctx.Err() != nil {
+					return cancelRun(index, "")
+				}
+				update(index, takapp.BatchItemUpdate{Status: "失败", State: "failed", Error: err.Error()})
+				failed++
+				completed++
+				setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
+				if strings.Contains(err.Error(), "Telegram 限流") {
+					markRemaining(index+1, "Telegram 限流，批量更新已停止，可重试")
+					return fmt.Errorf("%s：%w", name, err)
+				}
+				continue
+			}
 			if ctx.Err() != nil {
-				update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", Error: "批量更新已停止"})
-				markRemaining(index+1, "未执行", "批量更新已停止")
-				return ctx.Err()
+				return cancelRun(index, res.TaskID)
 			}
-			update(index, takapp.BatchItemUpdate{Status: "失败", State: "failed", Error: err.Error()})
-			failed++
-			completed++
-			setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
-			if strings.Contains(err.Error(), "Telegram 限流") {
-				markRemaining(index+1, "未执行", "Telegram 限流，批量更新已停止")
-				return fmt.Errorf("%s：%w", name, err)
+			if res.UpToDate || res.TaskID == "" {
+				update(index, takapp.BatchItemUpdate{Status: "已是最新", State: "done", Progress: true, Percent: 100, ResetError: true, Detail: "没有需要更新的内容"})
+				okCount++
+				completed++
+				setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
+				continue
 			}
-			continue
-		}
-		if ctx.Err() != nil {
-			if res.TaskID != "" {
-				_, _ = b.facade.StopTask(res.TaskID)
-			}
-			update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", Error: "批量更新已停止，可打开该聊天任务继续"})
-			markRemaining(index+1, "未执行", "批量更新已停止")
-			return ctx.Err()
-		}
-		if res.UpToDate || res.TaskID == "" {
-			update(index, takapp.BatchItemUpdate{Status: "已是最新", State: "done", Progress: true, Percent: 100, ResetError: true, Detail: "没有需要更新的内容"})
-			okCount++
-			completed++
-			setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
-			continue
+			update(index, takapp.BatchItemUpdate{
+				Status: "下载媒体", TaskID: res.TaskID, State: "running", ResetError: true,
+				Detail: "正在下载本次新增与缺失媒体",
+			})
+			setProgress(0, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
 		}
 
-		update(index, takapp.BatchItemUpdate{
-			Status: "下载媒体", TaskID: res.TaskID, State: "running", ResetError: true,
-			Detail: "正在下载本次新增与缺失媒体",
-		})
-		setProgress(0, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
-
-		state, detail, itemErr := b.waitOnlineBatchChild(ctx, res.TaskID, func(state string, percent int, downloaded, totalBytes int64, speed float64, doneMedia, totalMedia int, text string) {
+		state, detail, itemErr := b.waitOnlineBatchChild(ctx, res.TaskID, pausedNow, func(state string, percent int, downloaded, totalBytes int64, speed float64, doneMedia, totalMedia int, text string) {
 			update(index, takapp.BatchItemUpdate{
 				Status: batchChildStatus(state), State: state, Progress: true, Percent: percent,
 				Downloaded: downloaded, TotalBytes: totalBytes, Speed: speed,
@@ -189,23 +278,21 @@ func (b *Bridge) runOnlineUpdateBatch(
 			setProgress(percent, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
 		})
 		if ctx.Err() != nil {
-			update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", Error: "批量更新已停止，可打开该聊天任务继续"})
-			markRemaining(index+1, "未执行", "批量更新已停止")
-			return ctx.Err()
+			return cancelRun(index, res.TaskID)
 		}
 		switch state {
 		case "done":
-			total := maxInt64(item.Bytes, detail.TotalBytes)
+			totalBytes := maxInt64(item.Bytes, detail.TotalBytes)
 			update(index, takapp.BatchItemUpdate{
 				Status: "已完成", State: "done", Progress: true, Percent: 100, ResetError: true,
-				Downloaded: total, TotalBytes: total, Detail: "下载完成",
+				Downloaded: totalBytes, TotalBytes: totalBytes, Detail: "下载完成",
 			})
 			okCount++
 		case "paused":
-			update(index, takapp.BatchItemUpdate{Status: "已暂停", State: "paused", Error: "下载已暂停，可打开该聊天任务继续"})
+			update(index, takapp.BatchItemUpdate{Status: "已暂停", State: "paused", ResetError: true, Detail: "已暂停，可重试或继续"})
 			failed++
 		case "stopped":
-			update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", Error: "下载已终止，可打开该聊天任务继续"})
+			update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", ResetError: true, Detail: "下载已终止，可重试或继续"})
 			failed++
 		default:
 			message := itemErr
@@ -251,6 +338,7 @@ type batchChildSnapshot struct {
 func (b *Bridge) waitOnlineBatchChild(
 	ctx context.Context,
 	taskID string,
+	isPaused func() bool,
 	report func(state string, percent int, downloaded, totalBytes int64, speed float64, doneMedia, totalMedia int, detail string),
 ) (string, batchChildSnapshot, string) {
 	var last batchChildSnapshot
@@ -295,6 +383,18 @@ func (b *Bridge) waitOnlineBatchChild(
 		}
 		select {
 		case <-ctx.Done():
+			if isPaused != nil && isPaused() {
+				// Let the child finish its safe-pause path before reporting.
+				for i := 0; i < 20; i++ {
+					if d, err := b.facade.TaskDetail(taskID); err == nil && d.State != "running" {
+						break
+					}
+					select {
+					case <-time.After(250 * time.Millisecond):
+					}
+				}
+				return "paused", last, ""
+			}
 			_, _ = b.facade.StopTask(taskID)
 			return "stopped", last, "批量更新已停止"
 		case <-time.After(900 * time.Millisecond):

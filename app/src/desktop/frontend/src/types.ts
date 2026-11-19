@@ -269,6 +269,7 @@ export interface TaskBatchItem {
   name: string;
   onlineName?: string;
   slug?: string;
+  peer?: string;
   taskId?: string;
   messages?: number;
   media?: number;

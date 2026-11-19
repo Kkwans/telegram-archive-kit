@@ -343,7 +343,7 @@ interface DownloadConfigDraft {
 export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, fromPlan = false }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void; fromPlan?: boolean }) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
-  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config">("");
+  const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config" | "pause-batch" | "resume-batch">("");
   const [pauseRequested, setPauseRequested] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
@@ -532,6 +532,34 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
     }
   };
 
+  const pauseBatch = async () => {
+    if (busyAction) return;
+    setBusyAction("pause-batch");
+    try {
+      await call("pauseBatchTask", { id: task.id });
+      toast("批量更新已暂停，退出软件后仍可继续");
+      onOpenTask(task.id);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const resumeBatch = async () => {
+    if (busyAction) return;
+    setBusyAction("resume-batch");
+    try {
+      const nextTask = await call<string>("resumeOnlineUpdateBatch", { id: task.id });
+      toast("已继续批量更新，未完成的聊天会接着处理");
+      onOpenTask(nextTask || task.id);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const rebuild = async () => {
     if (!task.slug || busyAction) return;
     setBusyAction("rebuild");
@@ -596,6 +624,18 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
             <button className="btn primary" disabled={!!busyAction} onClick={() => void resume()}>
               {busyAction === "resume" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
               继续下载
+            </button>
+          )}
+          {batchTask && (paused || failed || stopped || partial) && (
+            <button className="btn primary" disabled={!!busyAction} onClick={() => void resumeBatch()}>
+              {busyAction === "resume-batch" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
+              {paused ? "继续更新" : "重试未完成"}
+            </button>
+          )}
+          {batchTask && running && (
+            <button className="btn warn" disabled={!!busyAction} onClick={() => void pauseBatch()}>
+              {busyAction === "pause-batch" ? <Loader2 size={13} className="spin" /> : <Pause size={13} />}
+              暂停更新
             </button>
           )}
           {!planned && !batchTask && running && (pausing ? (
