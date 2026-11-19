@@ -15,13 +15,48 @@ import (
 	"telegramarchivekit/internal/archive"
 )
 
-// TaskBatchItemDTO is one chat in a multi-chat import task.
+// TaskBatchItemDTO is one chat in a multi-chat task.
 type TaskBatchItemDTO struct {
-	Name     string `json:"name"`
-	Messages int    `json:"messages,omitempty"`
-	Media    int    `json:"media,omitempty"`
-	Bytes    int64  `json:"bytes,omitempty"`
-	Status   string `json:"status,omitempty"`
+	Name       string  `json:"name"`
+	OnlineName string  `json:"onlineName,omitempty"`
+	Slug       string  `json:"slug,omitempty"`
+	TaskID     string  `json:"taskId,omitempty"`
+	Messages   int     `json:"messages,omitempty"`
+	Media      int     `json:"media,omitempty"`
+	Images     int     `json:"images,omitempty"`
+	Videos     int     `json:"videos,omitempty"`
+	Audio      int     `json:"audio,omitempty"`
+	Files      int     `json:"files,omitempty"`
+	Bytes      int64   `json:"bytes,omitempty"`
+	Status     string  `json:"status,omitempty"`
+	State      string  `json:"state,omitempty"`
+	Detail     string  `json:"detail,omitempty"`
+	Error      string  `json:"error,omitempty"`
+	Percent    int     `json:"percent,omitempty"`
+	Downloaded int64   `json:"downloadedBytes,omitempty"`
+	TotalBytes int64   `json:"totalBytes,omitempty"`
+	Speed      float64 `json:"speed,omitempty"`
+	DoneMedia  int     `json:"doneMedia,omitempty"`
+	TotalMedia int     `json:"totalMedia,omitempty"`
+}
+
+// BatchItemUpdate is a partial live update for one batch row. Status, TaskID
+// and Error are only written when non-empty; progress fields are written only
+// when Progress is set, so a status-only update cannot erase a running bar.
+type BatchItemUpdate struct {
+	Status     string
+	TaskID     string
+	State      string
+	Detail     string
+	Error      string
+	ResetError bool
+	Progress   bool
+	Percent    int
+	Downloaded int64
+	TotalBytes int64
+	Speed      float64
+	DoneMedia  int
+	TotalMedia int
 }
 
 // TaskDTO is one background operation shown in the desktop task center.
@@ -191,6 +226,53 @@ func (t *backgroundTask) setBatchItemStatus(index int, status string) {
 	t.mu.Unlock()
 }
 
+func (t *backgroundTask) updateBatchItem(index int, u BatchItemUpdate) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if index < 0 || index >= len(t.dto.Batch) {
+		return
+	}
+	item := &t.dto.Batch[index]
+	if u.Status != "" {
+		item.Status = u.Status
+	}
+	if u.TaskID != "" {
+		item.TaskID = u.TaskID
+	}
+	if u.State != "" {
+		item.State = u.State
+	}
+	if u.Detail != "" {
+		item.Detail = u.Detail
+	}
+	if u.ResetError {
+		item.Error = ""
+	} else if u.Error != "" {
+		item.Error = u.Error
+	}
+	if u.Progress {
+		percent := u.Percent
+		if percent < 0 {
+			percent = 0
+		}
+		if percent > 100 {
+			percent = 100
+		}
+		item.Percent = percent
+		if u.Downloaded > 0 {
+			item.Downloaded = u.Downloaded
+		}
+		if u.TotalBytes > 0 {
+			item.TotalBytes = u.TotalBytes
+		}
+		item.Speed = max(0, u.Speed)
+		if u.TotalMedia > 0 {
+			item.DoneMedia = u.DoneMedia
+			item.TotalMedia = u.TotalMedia
+		}
+	}
+}
+
 func (t *backgroundTask) setMediaStats(images, videos, audio, files int) {
 	t.mu.Lock()
 	if images > 0 {
@@ -347,18 +429,25 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 func (t *backgroundTask) snapshot() TaskDTO {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.dto
+	return copyTaskDTO(t.dto)
 }
 
 func (t *backgroundTask) detail() TaskDetailDTO {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return TaskDetailDTO{
-		TaskDTO:   t.dto,
+		TaskDTO:   copyTaskDTO(t.dto),
 		Series:    append([]SpeedPoint{}, t.series...),
 		Active:    append([]TaskProgress{}, t.active...),
 		Completed: append([]TaskProgress{}, t.completed...),
 	}
+}
+
+func copyTaskDTO(dto TaskDTO) TaskDTO {
+	if len(dto.Batch) > 0 {
+		dto.Batch = append([]TaskBatchItemDTO(nil), dto.Batch...)
+	}
+	return dto
 }
 
 func (t *backgroundTask) finish(err error) {
@@ -574,6 +663,32 @@ func (f *Facade) startTask(kind, title string, fn func(t *backgroundTask) error)
 		f.saveTasks()
 	}()
 	return task.snapshot().ID
+}
+
+// StartBatchTask creates a caller-driven batch task. The runner owns the
+// sequencing so long online prefetch/export work can live in the desktop
+// bridge while the task center keeps showing live per-item progress.
+func (f *Facade) StartBatchTask(dto TaskDTO, run func(ctx context.Context, update func(index int, patch BatchItemUpdate), progress func(percent int, detail string)) error) (string, error) {
+	if len(dto.Batch) == 0 {
+		return "", errors.New("没有可执行的项目")
+	}
+	task := f.createTaskRecord(dto)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				task.finish(fmt.Errorf("任务异常：%v", r))
+				f.saveTasks()
+			}
+		}()
+		err := run(task.context(), func(index int, patch BatchItemUpdate) {
+			task.updateBatchItem(index, patch)
+		}, func(percent int, detail string) {
+			task.update(percent, detail)
+		})
+		task.finish(err)
+		f.saveTasks()
+	}()
+	return task.snapshot().ID, nil
 }
 
 func (f *Facade) Tasks() []TaskDTO {

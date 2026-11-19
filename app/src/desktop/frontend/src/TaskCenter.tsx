@@ -42,6 +42,7 @@ const KIND_META: Record<string, { label: string; group: string; icon: typeof Dow
   sync: { label: "下载", group: "download", icon: Download },
   "sync-all": { label: "批量下载", group: "download", icon: Download },
   "sync-plan": { label: "计划同步", group: "download", icon: CalendarClock },
+  "online-update-batch": { label: "批量在线更新", group: "download", icon: RefreshCw },
   "import-json": { label: "导入 JSON", group: "import", icon: FileJson },
   "import-official": { label: "官方导入", group: "import", icon: FolderInput },
   "import-official-batch": { label: "批量官方导入", group: "import", icon: FolderInput },
@@ -109,6 +110,7 @@ const TaskElapsed = memo(function TaskElapsed({
 });
 
 function noNewMedia(task: TaskInfo | TaskDetail): boolean {
+  if (task.kind === "online-update-batch") return false;
   return kindMeta(task.kind).group === "download" && task.state !== "failed" && task.state !== "stopped" && !task.total && !task.bytes && !(task.kind === "sync-plan" && task.messages);
 }
 
@@ -169,6 +171,13 @@ function taskInfoCards(task: TaskDetail): TaskInfoCard[] {
     add("归档结果", content);
     const downloaded = task.bytes ?? 0;
     if (downloaded > 0) add("已下载", bytes(downloaded));
+  } else if (task.kind === "online-update-batch") {
+    if (task.totalBytes) add("预计下载", bytes(task.totalBytes));
+    add("内容", content);
+    if (task.batch?.length) {
+      const completed = task.batch.filter((item) => item.state === "done").length;
+      add("聊天进度", `${completed} / ${task.batch.length} 个`);
+    }
   } else if (task.detail) {
     add("任务说明", task.detail, { wide: true });
   }
@@ -345,9 +354,12 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
   const [transfer, setTransfer] = useState<DownloadConfigDraft | null>(null);
   const meta = kindMeta(task.kind);
   const planned = task.kind === "sync-plan";
+  const batchTask = task.kind === "online-update-batch";
+  const batchItems = task.batch ?? [];
+  const batchCompleted = batchItems.filter((item) => item.state && item.state !== "running").length;
   // Plan-sync tasks are download tasks too; only non-download records keep the
   // compact summary layout without transfer modules.
-  const showTransfer = meta.group === "download";
+  const showTransfer = meta.group === "download" && !batchTask;
   const running = task.state === "running";
   const failed = task.state === "failed";
   const partial = task.state === "partial";
@@ -555,18 +567,18 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
         </button>
         <div className="actions">
           {planned && <button className="btn ghost" onClick={() => onOpenPlans(task.planId, task.planRunId)}><CalendarClock size={13} /> 查看同步计划</button>}
-          {!planned && running && !pausing && (
+          {!planned && !batchTask && running && !pausing && (
             <button className="btn ghost" onClick={openConfig}>
               <SlidersHorizontal size={13} /> 下载配置
             </button>
           )}
-          {!planned && task.slug && (
+          {!planned && !batchTask && task.slug && (
             <button className="btn ghost" disabled={!!busyAction} onClick={() => void rebuild()} data-tip="重新生成数据、网页与缺失的视频封面">
               {busyAction === "rebuild" ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
               重建网页
             </button>
           )}
-          {!planned && task.slug && (
+          {!planned && !batchTask && task.slug && (
             <button
               className="btn ghost"
               onClick={() => call("openLibrary", { slug: task.slug }).catch((e: Error) => toast(e.message, true))}
@@ -577,7 +589,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
           {!planned && (running || paused || partial) && (
             <button className="btn stop-action" disabled={!!busyAction} onClick={() => void stop()}>
               {busyAction === "stop" ? <Loader2 size={13} className="spin" /> : <Square size={13} />}
-              结束任务
+              {batchTask ? "结束批量更新" : "结束任务"}
             </button>
           )}
           {!planned && task.slug && (failed || partial || paused) && (
@@ -586,7 +598,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
               继续下载
             </button>
           )}
-          {!planned && running && (pausing ? (
+          {!planned && !batchTask && running && (pausing ? (
             <button className="btn warn" disabled>
               <Loader2 size={13} className="spin" /> 正在暂停…
             </button>
@@ -611,9 +623,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
           {running ? <b>{Math.round(percent)}%</b> : stopped ? <Square size={28} strokeWidth={2.2} /> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
-          <span className="download-hero-kicker">{planned ? "计划同步" : task.kind === "import-official-batch" ? "批量官方导入" : "下载聊天"}</span>
+          <span className="download-hero-kicker">{planned ? "计划同步" : batchTask ? "批量在线更新" : task.kind === "import-official-batch" ? "批量官方导入" : "下载聊天"}</span>
           <div className="download-hero-title">
-            <h2>{task.kind === "import-official-batch" ? task.title : task.chat || taskTitle(task)}</h2>
+            <h2>{batchTask || task.kind === "import-official-batch" ? task.title : task.chat || taskTitle(task)}</h2>
           </div>
           {running && showTransfer ? (
             <div className="download-hero-configline">
@@ -646,22 +658,34 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
         )}
       </section>
 
-      <section className={`stat-grid download-stats ${showTransfer ? running ? "five" : "four" : "plan-summary-stats"}`}>
-        {!showTransfer && <div className="stat"><span>新增消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>}
-        {running && showTransfer && <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>}
-        {showTransfer && <>
-          <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
+      {batchTask ? (
+        <section className="stat-grid download-stats four">
+          <div className="stat"><span>聊天进度</span><div><b>{batchCompleted}</b><em>/ {batchItems.length} 个</em></div></div>
+          <div className="stat"><span>新增消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>
           <div className="stat">
-            <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
-            <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
+            <span>媒体合计</span>
+            <div><b>{(task.media ?? 0).toLocaleString()}</b><em>个 · 图片 {task.images ?? 0} / 视频 {task.videos ?? 0}</em></div>
           </div>
-          <div className="stat"><span>已下载 / 总媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
-        </>}
-        <div className="stat">
-          <span>{running ? "预计还需" : "任务耗时"}</span>
-          <div><b>{running ? ((task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--") : fmtDuration(elapsed)}</b></div>
-        </div>
-      </section>
+          <div className="stat"><span>预计下载</span><div><b>{task.totalBytes ? bytes(task.totalBytes) : "—"}</b></div></div>
+        </section>
+      ) : (
+        <section className={`stat-grid download-stats ${showTransfer ? running ? "five" : "four" : "plan-summary-stats"}`}>
+          {!showTransfer && <div className="stat"><span>新增消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>}
+          {running && showTransfer && <div className="stat"><span>实时速度</span><div><b>{rate(speedNow)}</b></div></div>}
+          {showTransfer && <>
+            <div className="stat"><span>平均速度</span><div><b>{rate(task.avgSpeed ?? 0)}</b></div></div>
+            <div className="stat">
+              <span>已下载 / {task.totalBytesEstimated ? "预计总大小" : "总大小"}</span>
+              <div><b>{bytes(task.bytes ?? 0)}</b><em>/ {task.totalBytes ? bytes(task.totalBytes) : "--"}</em></div>
+            </div>
+            <div className="stat"><span>已下载 / 总媒体</span><div><b>{task.done ?? 0}</b><em>/ {task.total ?? 0}</em></div></div>
+          </>}
+          <div className="stat">
+            <span>{running ? "预计还需" : "任务耗时"}</span>
+            <div><b>{running ? ((task.etaMs ?? 0) > 0 ? duration(task.etaMs ?? 0) : "--") : fmtDuration(elapsed)}</b></div>
+          </div>
+        </section>
+      )}
 
       {task.kind === "import-official-batch" && !!task.batch?.length && <section className="panel task-batch-panel">
         <div className="panel-head">
@@ -678,6 +702,80 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
             <td className="col-status center">{item.status || "—"}</td>
           </tr>)}</tbody>
         </table>
+      </section>}
+
+      {batchTask && !!batchItems.length && <section className="panel task-batch-panel">
+        <div className="panel-head">
+          <h3><RefreshCw size={14} /> 更新聊天</h3>
+          <span className="meta">{batchItems.length} 个聊天 · 点击任一行查看单聊下载详情</span>
+        </div>
+        <div className="batch-table-scroll">
+        <table className="table task-files-table task-batch-table online-batch-table">
+          <thead><tr>
+            <th className="col-file">聊天</th>
+            <th className="col-count center">新增</th>
+            <th className="col-count center">图片</th>
+            <th className="col-count center">视频</th>
+            <th className="col-count center">媒体</th>
+            <th className="col-size">大小</th>
+            <th className="col-progress">下载进度</th>
+            <th className="col-status center">状态</th>
+            <th className="col-open" aria-label="打开详情" />
+          </tr></thead>
+          <tbody>{batchItems.map((item, index) => {
+            const percent = item.state === "done" ? 100 : Math.max(0, Math.min(100, item.percent ?? 0));
+            const total = item.totalBytes || item.bytes || 0;
+            const downloaded = item.downloadedBytes || (item.state === "done" ? total : 0);
+            const open = () => { if (item.taskId) onOpenTask(item.taskId); };
+            return (
+              <tr
+                key={`${item.slug || item.name}-${index}`}
+                className={item.taskId ? "batch-row-open" : ""}
+                tabIndex={item.taskId ? 0 : undefined}
+                onClick={open}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    open();
+                  }
+                }}
+                data-tip={item.taskId ? "打开该聊天的下载任务详情" : undefined}
+              >
+                <td className="col-file">
+                  <b>{item.name}</b>
+                  {item.onlineName && item.onlineName !== item.name && <small>在线：{item.onlineName}</small>}
+                </td>
+                <td className="col-count center">{(item.messages ?? 0).toLocaleString()}</td>
+                <td className="col-count center">{(item.images ?? 0).toLocaleString()}</td>
+                <td className="col-count center">{(item.videos ?? 0).toLocaleString()}</td>
+                <td className="col-count center">{(item.media ?? 0).toLocaleString()}</td>
+                <td className="col-size">{total > 0 ? bytes(total) : "—"}</td>
+                <td className="col-progress">
+                  {item.state === "running" || percent > 0 || item.state === "done" ? (
+                    <div className="batch-progress">
+                      <div className="batch-progress-top">
+                        <div className="mini"><i style={{ width: `${item.state === "running" ? Math.max(1, percent) : percent}%` }} /></div>
+                        <span>{percent}%</span>
+                      </div>
+                      <small>
+                        {downloaded > 0 ? bytes(downloaded) : ""}{total > 0 ? ` / ${bytes(total)}` : ""}
+                        {item.speed ? ` · ${rate(item.speed)}` : ""}
+                        {item.totalMedia ? ` · ${item.doneMedia ?? 0}/${item.totalMedia} 个` : ""}
+                      </small>
+                    </div>
+                  ) : <span className="muted">—</span>}
+                </td>
+                <td className="col-status center">
+                  <span className={`batch-status ${item.state || ""}`}>{item.status || "等待更新"}</span>
+                  {(item.error || item.detail) && <small className={item.error ? "bad" : ""} data-tip={item.error || item.detail}>{item.error || item.detail}</small>}
+                </td>
+                <td className="col-open">{item.taskId ? <ChevronRight size={14} /> : null}</td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+        </div>
       </section>}
 
       {showTransfer && <section className="panel download-media-panel">
@@ -1420,7 +1518,7 @@ export function TasksPage({
                       </div>
                       {(t.error || t.detail) && <span className={t.error && (t.state === "failed" || t.state === "partial") ? "err" : ""} data-tip={t.error || t.detail}>{t.error || t.detail}</span>}
                     </td>
-                    <td className="task-chat" data-tip={t.chat || undefined}>{t.kind === "import-official-batch" ? "-" : t.chat || "—"}</td>
+                    <td className="task-chat" data-tip={t.chat || undefined}>{t.kind === "import-official-batch" || t.kind === "online-update-batch" ? "-" : t.chat || "—"}</td>
                     <td className="muted task-started"><time>{dateTime(t.startedAt)}</time></td>
                     <td className="task-duration"><TaskElapsed state={t.state} elapsedMs={t.elapsedMs} startedAt={t.startedAt} finishedAt={t.finishedAt} /></td>
                     <td>

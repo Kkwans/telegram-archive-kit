@@ -1163,9 +1163,13 @@ func (b *Bridge) OnlineExportPreview(peerKey string, timeout, limit int, targetS
 	if err := ctx.Err(); err != nil {
 		return OnlineExportPreview{}, err
 	}
-	local := b.localOnlineArchive(chat)
-	if targetSlug != "" && !local.existed {
+	var local localOnlineArchive
+	if targetSlug != "" {
+		// A manual match is authoritative: merge into the local chat the user
+		// selected, not another workspace that happens to share the online name.
 		local = b.localWorkspaceBySlug(targetSlug)
+	} else {
+		local = b.localOnlineArchive(chat)
 	}
 	var backfill takapp.BackfillPreviewDTO
 	if local.existed && local.slug != "" {
@@ -1334,10 +1338,17 @@ func (b *Bridge) OnlineExport(peerKey string, timeout, limit int, token, targetS
 			return OnlineExportResult{}, err
 		}
 	}
-	local := b.localOnlineArchive(chat)
+	var local localOnlineArchive
+	if targetSlug != "" {
+		// Manual matches must merge into the selected local workspace even when
+		// the live chat title or id also matches a different local archive.
+		local = b.localWorkspaceBySlug(targetSlug)
+	} else {
+		local = b.localOnlineArchive(chat)
+	}
 	existingSlug := local.slug
 	existed := local.existed
-	if targetSlug != "" && existingSlug == "" {
+	if targetSlug != "" {
 		existingSlug = targetSlug
 		existed = true
 	}

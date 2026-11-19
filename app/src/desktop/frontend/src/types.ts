@@ -267,10 +267,26 @@ export interface HomeStats {
 
 export interface TaskBatchItem {
   name: string;
+  onlineName?: string;
+  slug?: string;
+  taskId?: string;
   messages?: number;
   media?: number;
+  images?: number;
+  videos?: number;
+  audio?: number;
+  files?: number;
   bytes?: number;
   status?: string;
+  state?: string;
+  detail?: string;
+  error?: string;
+  percent?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  speed?: number;
+  doneMedia?: number;
+  totalMedia?: number;
 }
 
 export interface TaskInfo {

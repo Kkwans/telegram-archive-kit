@@ -71,7 +71,7 @@ import { call } from "./rpc";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RemoteConnections, type SavedRemoteConnection } from "./RemoteConnections";
-import { AllOnlineUpdateDialog, OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
+import { AllOnlineUpdateDialog, OnlineChatPickerDialog, OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type {
   AccountInfo,
   AccountProfile,
@@ -83,6 +83,8 @@ import type {
   MediaItem,
   MediaPage,
   MediaSummary,
+  OnlineChat,
+  OnlineChats,
   OperationState,
   RemoteStatus,
   RemoteTools,
@@ -426,7 +428,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               {recentTasks.map((t) => (
                 <div key={t.id} className={`home-task ${t.state}`}>
                   {t.state === "running" ? <RefreshCw size={13} className="spin" /> : t.state === "done" ? <CheckCircle2 size={13} color="var(--ok)" /> : t.state === "paused" ? <Pause size={13} color="var(--warn)" /> : t.state === "partial" ? <AlertTriangle size={13} color="var(--warn)" /> : t.state === "stopped" ? <Square size={13} color="var(--muted)" /> : <X size={13} color="var(--danger)" />}
-                  <span>{(() => { const label = t.kind === "sync" ? "下载聊天" : t.kind === "sync-all" ? "批量下载" : t.kind === "refresh" ? "重建网页" : t.title; return t.chat && !label.includes(t.chat) ? `${label} · ${t.chat}` : label; })()}</span>
+                  <span>{(() => { const label = t.kind === "sync" ? "下载聊天" : t.kind === "sync-all" ? "批量下载" : t.kind === "online-update-batch" ? "批量在线更新" : t.kind === "refresh" ? "重建网页" : t.title; return t.chat && !label.includes(t.chat) ? `${label} · ${t.chat}` : label; })()}</span>
                   <em>{t.state === "running" ? `${t.percent}%` : t.state === "done" ? "完成" : t.state === "paused" ? "已暂停" : t.state === "partial" ? "部分完成" : t.state === "stopped" ? "已终止" : "失败"}</em>
                 </div>
               ))}
@@ -443,7 +445,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
           toast={toast}
         />
       )}
-      {allOnlineOpen && <AllOnlineUpdateDialog chats={chats} onClose={() => setAllOnlineOpen(false)} toast={toast} />}
+      {allOnlineOpen && <AllOnlineUpdateDialog chats={chats} onClose={() => setAllOnlineOpen(false)} onStarted={(taskId) => { setAllOnlineOpen(false); if (taskId) openTask(taskId); }} toast={toast} />}
     </>
   );
 }
@@ -502,6 +504,10 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [onlineTarget, setOnlineTarget] = useState<OnlineUpdateTarget | null>(null);
   const [onlineLoading, setOnlineLoading] = useState(false);
+  const [matchPickerOpen, setMatchPickerOpen] = useState(false);
+  const [matchChats, setMatchChats] = useState<OnlineChat[]>([]);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchError, setMatchError] = useState("");
   const [mediaSummary, setMediaSummary] = useState<{ key: string; slug: string; summary: MediaSummary } | null>(null);
 
   const selectedChat = chats.find((c) => c.slug === selected) || null;
@@ -558,6 +564,19 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     }
   };
 
+  const loadMatchChats = async () => {
+    setMatchLoading(true);
+    setMatchError("");
+    try {
+      const res = await call<OnlineChats>("onlineChats", { timeout: 60 });
+      setMatchChats(res.chats);
+    } catch (e) {
+      setMatchError((e as Error).message);
+    } finally {
+      setMatchLoading(false);
+    }
+  };
+
   const onlineUpdate = async () => {
     if (!current || onlineLoading) return;
     if (!ctx.boot?.hasSession) {
@@ -569,7 +588,12 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
       const chat = await call<{ peer: string; name: string; type?: string; id?: number; avatar?: string }>("onlineChatForSlug", { slug: current.slug });
       setOnlineTarget({ ...onlineTargetFromChat(chat), slug: current.slug, mode: "online" });
     } catch (e) {
-      toast((e as Error).message, true);
+      const message = (e as Error).message;
+      toast(message, true);
+      if (/没有找到|同名|无法自动确定|无法识别|不在当前/.test(message)) {
+        setMatchPickerOpen(true);
+        void loadMatchChats();
+      }
     } finally {
       setOnlineLoading(false);
     }
@@ -741,6 +765,19 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
           toast={toast}
         />
       )}
+
+      <OnlineChatPickerDialog
+        open={matchPickerOpen}
+        title={`为「${current.name}」选择在线会话`}
+        chats={matchChats}
+        loading={matchLoading}
+        error={matchError}
+        onClose={() => setMatchPickerOpen(false)}
+        onSelect={(chat) => {
+          setMatchPickerOpen(false);
+          setOnlineTarget({ ...onlineTargetFromChat(chat), slug: current.slug, mode: "online" });
+        }}
+      />
 
       <MediaGallery key={`${ctx.boot?.libraryKey ?? ""}:${current.slug}`} ctx={ctx} chat={current} onSummary={(summary) => {
         if (ctx.boot?.libraryKey) setMediaSummary({ key: ctx.boot.libraryKey, slug: current.slug, summary });

@@ -215,57 +215,58 @@ func (b *Bridge) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 type apiParams struct {
-	Slug                string              `json:"slug"`
-	Folder              string              `json:"folder"`
-	Mode                string              `json:"mode"`
-	Root                string              `json:"root"`
-	Dst                 string              `json:"dst"`
-	Path                string              `json:"path"`
-	Drive               string              `json:"drive"`
-	Peer                string              `json:"peer"`
-	Token               string              `json:"token"`
-	Limit               int                 `json:"limit"`
-	Name                string              `json:"name"`
-	Title               string              `json:"title"`
-	Initial             string              `json:"initial"`
-	Paths               []string            `json:"paths"`
-	Peers               []string            `json:"peers"`
-	Settings            *takapp.SettingsDTO `json:"settings"`
-	Kind                string              `json:"kind"`
-	ID                  string              `json:"id"`
-	Text                string              `json:"text"`
-	Timeout             int                 `json:"timeout"`
-	Width               int                 `json:"width"`
-	Height              int                 `json:"height"`
-	Fullscreen          bool                `json:"fullscreen"`
-	Cover               string              `json:"cover"`
-	Sharp               string              `json:"sharp"`
-	From                []int               `json:"from"`
-	To                  []int               `json:"to"`
-	Radius              int                 `json:"radius"`
-	Duration            int                 `json:"duration"`
-	Fade                int                 `json:"fade"`
-	Concurrent          int                 `json:"concurrent"`
-	Threads             int                 `json:"threads"`
-	StallTimeoutSeconds int                 `json:"stallTimeoutSeconds"`
-	StalledFileRetries  int                 `json:"stalledFileRetries"`
-	NetworkRetryMinutes int                 `json:"networkRetryMinutes"`
-	UnknownRetryCount   int                 `json:"unknownRetryCount"`
-	MaxRepairPasses     int                 `json:"maxRepairPasses"`
-	TransferAdjustment  string              `json:"transferAdjustment"`
-	ReconnectTimeout    string              `json:"reconnectTimeout"`
-	X                   int                 `json:"x"`
-	Y                   int                 `json:"y"`
-	Seq                 int64               `json:"seq"`
-	Purpose             string              `json:"purpose"`
-	Query               string              `json:"query"`
-	Sort                string              `json:"sort"`
-	Page                int                 `json:"page"`
-	PageSize            int                 `json:"pageSize"`
-	Version             string              `json:"version"`
-	Refresh             bool                `json:"refresh"`
-	LibraryKey          string              `json:"libraryKey"`
-	NewRemoteMount      bool                `json:"newRemoteMount"`
+	Slug                string                   `json:"slug"`
+	Folder              string                   `json:"folder"`
+	Mode                string                   `json:"mode"`
+	Root                string                   `json:"root"`
+	Dst                 string                   `json:"dst"`
+	Path                string                   `json:"path"`
+	Drive               string                   `json:"drive"`
+	Peer                string                   `json:"peer"`
+	Token               string                   `json:"token"`
+	Limit               int                      `json:"limit"`
+	Name                string                   `json:"name"`
+	Title               string                   `json:"title"`
+	Initial             string                   `json:"initial"`
+	Paths               []string                 `json:"paths"`
+	Peers               []string                 `json:"peers"`
+	Batch               []onlineBatchRequestItem `json:"batch"`
+	Settings            *takapp.SettingsDTO      `json:"settings"`
+	Kind                string                   `json:"kind"`
+	ID                  string                   `json:"id"`
+	Text                string                   `json:"text"`
+	Timeout             int                      `json:"timeout"`
+	Width               int                      `json:"width"`
+	Height              int                      `json:"height"`
+	Fullscreen          bool                     `json:"fullscreen"`
+	Cover               string                   `json:"cover"`
+	Sharp               string                   `json:"sharp"`
+	From                []int                    `json:"from"`
+	To                  []int                    `json:"to"`
+	Radius              int                      `json:"radius"`
+	Duration            int                      `json:"duration"`
+	Fade                int                      `json:"fade"`
+	Concurrent          int                      `json:"concurrent"`
+	Threads             int                      `json:"threads"`
+	StallTimeoutSeconds int                      `json:"stallTimeoutSeconds"`
+	StalledFileRetries  int                      `json:"stalledFileRetries"`
+	NetworkRetryMinutes int                      `json:"networkRetryMinutes"`
+	UnknownRetryCount   int                      `json:"unknownRetryCount"`
+	MaxRepairPasses     int                      `json:"maxRepairPasses"`
+	TransferAdjustment  string                   `json:"transferAdjustment"`
+	ReconnectTimeout    string                   `json:"reconnectTimeout"`
+	X                   int                      `json:"x"`
+	Y                   int                      `json:"y"`
+	Seq                 int64                    `json:"seq"`
+	Purpose             string                   `json:"purpose"`
+	Query               string                   `json:"query"`
+	Sort                string                   `json:"sort"`
+	Page                int                      `json:"page"`
+	PageSize            int                      `json:"pageSize"`
+	Version             string                   `json:"version"`
+	Refresh             bool                     `json:"refresh"`
+	LibraryKey          string                   `json:"libraryKey"`
+	NewRemoteMount      bool                     `json:"newRemoteMount"`
 }
 
 func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessage) (any, error) {
@@ -577,6 +578,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return nil, nil
 	case "onlineExport":
 		return b.OnlineExport(p.Peer, p.Timeout, p.Limit, p.Token, p.Slug)
+	case "startOnlineUpdateBatch":
+		return b.StartOnlineUpdateBatch(p.Batch)
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":
@@ -876,7 +879,7 @@ func archiveMutation(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "setSettings", "onlineExport",
-		"startLogin", "logoutTdl", "rcloneUnmount":
+		"startOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount":
 		return true
 	}
 	return false
@@ -887,7 +890,7 @@ func needsOpenLibrary(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
-		"previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
+		"startOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
 		return true
 	}
 	return false
