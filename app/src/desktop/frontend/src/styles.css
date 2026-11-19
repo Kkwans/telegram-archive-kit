@@ -2542,6 +2542,10 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 .online-batch-table .batch-col-open svg { opacity: .45; transition: opacity .15s ease, transform .15s ease; }
 .online-batch-table tr.batch-row-open:hover .batch-col-open svg { opacity: 1; transform: translateX(2px); }
 .batch-progress { display: flex; flex-direction: column; gap: 3px; }
+.batch-progress .mini i.paused { background: var(--warn); }
+.batch-progress .mini i.stopped { background: #8a94a6; }
+.batch-progress .mini i.failed { background: var(--danger); }
+.batch-progress .mini i.done { background: var(--ok); }
 .batch-progress-top { display: flex; align-items: center; gap: 8px; }
 .batch-progress-top .mini { flex: 1; }
 .batch-progress small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }

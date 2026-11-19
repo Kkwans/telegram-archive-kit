@@ -772,6 +772,12 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
             const downloaded = item.downloadedBytes || (item.state === "done" ? total : 0);
             const open = () => { if (item.taskId) onOpenTask(item.taskId); };
             const hue = (index * 47) % 360;
+            const displayState = item.state === "running" && (task.state === "paused" || task.state === "stopped") ? task.state : item.state;
+            const displayStatus = item.state === "running" && task.state === "paused"
+              ? "已暂停"
+              : item.state === "running" && task.state === "stopped"
+                ? "已终止"
+                : (item.status || "等待更新");
             return (
               <tr
                 key={`${item.slug || item.name}-${index}`}
@@ -807,9 +813,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
                 <td className="batch-col-size"><b>{total > 0 ? bytes(total) : "—"}</b></td>
                 <td className="batch-col-progress">
                   {item.state === "running" || percent > 0 || item.state === "done" ? (
-                    <div className="batch-progress">
+                    <div className={`batch-progress ${displayState || ""}`}>
                       <div className="batch-progress-top">
-                        <div className="mini"><i style={{ width: `${item.state === "running" ? Math.max(1, percent) : percent}%` }} /></div>
+                        <div className="mini"><i className={displayState || ""} style={{ width: `${item.state === "running" ? Math.max(1, percent) : percent}%` }} /></div>
                         <span>{percent}%</span>
                       </div>
                       <small>
@@ -821,7 +827,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
                   ) : <span className="muted">—</span>}
                 </td>
                 <td className="batch-col-status center">
-                  <span className={`batch-status ${item.state || ""}`}>{item.status || "等待更新"}</span>
+                  <span className={`batch-status ${displayState || ""}`}>{displayStatus}</span>
                   {item.error
                     ? <small className="bad" data-tip={item.error}>{item.error}</small>
                     : item.state !== "running" && item.state !== "done" && item.detail
@@ -1320,7 +1326,9 @@ export function TasksPage({
   }, [active?.id]);
 
   useEffect(() => {
-    if (!active || active.state !== "running") return;
+    if (!active) return;
+    const live = active.state === "running" || (active.kind === "online-update-batch" && (active.state === "paused" || active.state === "stopped"));
+    if (!live) return;
     let cancelled = false;
     let timer: number;
     const poll = async () => {
@@ -1328,14 +1336,14 @@ export function TasksPage({
         const detail = await call<TaskDetail>("taskDetail", { id: active.id });
         if (!cancelled && selection.current === selectionVersion) setActive((current) => current && current.id === detail.id ? detail : current);
       } catch { /* Keep the current snapshot until the next poll. */ }
-      if (!cancelled && selection.current === selectionVersion) timer = window.setTimeout(poll, 1000);
+      if (!cancelled && selection.current === selectionVersion) timer = window.setTimeout(poll, active.state === "running" ? 1000 : 1800);
     };
-    timer = window.setTimeout(poll, 1000);
+    timer = window.setTimeout(poll, active.state === "running" ? 1000 : 800);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [active?.id, active?.state, selectionVersion]);
+  }, [active?.id, active?.state, active?.kind, selectionVersion]);
 
   useEffect(() => {
     if (!modalTask || modalTask.state !== "running") return;
