@@ -703,9 +703,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
       {batchTask ? (
         <section className="stat-grid download-stats four">
           <div className="stat"><span>聊天进度</span><div><b>{batchCompleted}</b><em>/ {batchItems.length} 个</em></div></div>
-          <div className="stat"><span>新增消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>
+          <div className="stat"><span>消息</span><div><b>{(task.messages ?? 0).toLocaleString()}</b><em>条</em></div></div>
           <div className="stat">
-            <span>媒体合计</span>
+            <span>媒体</span>
             <div><b>{(task.media ?? 0).toLocaleString()}</b><em>个 · 图片 {task.images ?? 0} / 视频 {task.videos ?? 0}</em></div>
           </div>
           <div className="stat"><span>预计下载</span><div><b>{task.totalBytes ? bytes(task.totalBytes) : "—"}</b></div></div>
@@ -755,12 +755,12 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
         <table className="table task-files-table task-batch-table online-batch-table">
           <thead><tr>
             <th className="batch-col-chat">聊天</th>
-            <th className="batch-col-new center">新增消息</th>
+            <th className="batch-col-new center">消息</th>
+            <th className="batch-col-media center">媒体</th>
             <th className="batch-col-image center"><span className="batch-th image"><ImageIcon size={11} /> 图片</span></th>
             <th className="batch-col-video center"><span className="batch-th video"><Video size={11} /> 视频</span></th>
             <th className="batch-col-audio center"><span className="batch-th audio"><Music size={11} /> 音频</span></th>
             <th className="batch-col-file center"><span className="batch-th file"><FileText size={11} /> 文件</span></th>
-            <th className="batch-col-media center">媒体</th>
             <th className="batch-col-size">大小</th>
             <th className="batch-col-progress">下载进度</th>
             <th className="batch-col-status center">状态</th>
@@ -799,11 +799,11 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
                   </span>
                 </td>
                 <td className="batch-col-new center">{(item.messages ?? 0).toLocaleString()}</td>
+                <td className="batch-col-media center strong">{(item.media ?? 0).toLocaleString()}</td>
                 <td className="batch-col-image center">{(item.images ?? 0).toLocaleString()}</td>
                 <td className="batch-col-video center">{(item.videos ?? 0).toLocaleString()}</td>
                 <td className="batch-col-audio center">{(item.audio ?? 0).toLocaleString()}</td>
                 <td className="batch-col-file center">{(item.files ?? 0).toLocaleString()}</td>
-                <td className="batch-col-media center strong">{(item.media ?? 0).toLocaleString()}</td>
                 <td className="batch-col-size"><b>{total > 0 ? bytes(total) : "—"}</b></td>
                 <td className="batch-col-progress">
                   {item.state === "running" || percent > 0 || item.state === "done" ? (

@@ -392,7 +392,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         <section className="panel">
           <div className="panel-head">
             <h3><Clock size={14} /> 最近聊天</h3>
-            <button className="btn sm ghost" onClick={() => go("chats")}>
+            <button className="btn sm ghost panel-action" onClick={() => go("chats")}>
               查看全部 <ArrowRight size={11} />
             </button>
           </div>
@@ -417,7 +417,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
         <section className="panel">
           <div className="panel-head">
             <h3><Database size={14} /> 最近任务</h3>
-            <button className="btn sm ghost" onClick={openTasks}>
+            <button className="btn sm ghost panel-action" onClick={openTasks}>
               任务中心 <ArrowRight size={11} />
             </button>
           </div>

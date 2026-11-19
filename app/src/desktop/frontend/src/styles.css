@@ -2432,6 +2432,7 @@ img.online-avatar { object-fit: cover; display: block; }
 .online-detail-empty b { color: var(--muted); font-size: 12px; }
 .online-detail-empty span { font-size: 10.5px; line-height: 1.55; max-width: 220px; }
 
+.panel-head .panel-action { margin-left: auto; }
 /* All-chat online update */
 .modal.export-preview-modal.all-update-modal { width: min(920px, 100%); max-height: min(88vh, 820px); }
 .all-update-modal .export-preview-head-text { flex: 1; gap: 2px; }
@@ -2510,9 +2511,9 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 .online-batch-table .batch-col-file { width: 6%; }
 .online-batch-table .batch-col-media { width: 7%; }
 .online-batch-table .batch-col-size { width: 8%; text-align: center; }
-.online-batch-table .batch-col-progress { width: 22%; }
+.online-batch-table .batch-col-progress { width: 20%; }
 .online-batch-table .batch-col-status { width: 13%; }
-.online-batch-table .batch-col-open { width: 2%; color: var(--faint); text-align: center; }
+.online-batch-table .batch-col-open { width: 4%; color: var(--faint); text-align: center; }
 .online-batch-table tbody td.batch-col-new,
 .online-batch-table tbody td.batch-col-image,
 .online-batch-table tbody td.batch-col-video,

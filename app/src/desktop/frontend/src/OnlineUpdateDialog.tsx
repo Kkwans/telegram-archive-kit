@@ -842,8 +842,8 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
               <b>{ready.length}<em> / {rows.length}</em></b>
               <small>{scanning ? `已统计 ${scanIndex} / ${rows.length}` : `${upToDateCount} 个已最新 · ${missingCount} 个未匹配${failedCount ? ` · ${failedCount} 个失败` : ""}`}</small>
             </div>
-            <div><span>新增消息</span><b>{totals.messages.toLocaleString()}</b><small>来自待更新聊天</small></div>
-            <div><span>媒体合计</span><b>{totals.media.toLocaleString()}</b><small>图片 {totals.images.toLocaleString()} · 视频 {totals.videos.toLocaleString()}</small></div>
+            <div><span>消息</span><b>{totals.messages.toLocaleString()}</b><small>来自待更新聊天</small></div>
+            <div><span>媒体</span><b>{totals.media.toLocaleString()}</b><small>图片 {totals.images.toLocaleString()} · 视频 {totals.videos.toLocaleString()}</small></div>
             <div><span>预计下载</span><b>{totals.bytes > 0 ? bytes(totals.bytes) : "—"}</b><small>含此前缺失媒体</small></div>
           </div>
 
@@ -858,12 +858,12 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
             <div className="all-update-scroll">
               <div className="all-update-head" role="row">
                 <span>聊天</span>
-                <span>新增消息</span>
+                <span>消息</span>
+                <span>媒体</span>
                 <span>图片</span>
                 <span>视频</span>
                 <span>音频</span>
                 <span>文件</span>
-                <span>媒体</span>
                 <span>大小</span>
                 <span>操作</span>
               </div>
@@ -896,11 +896,11 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
                       </span>
                     </span>
                     <span className="all-update-num">{rowPreview ? rowPreview.messages.toLocaleString() : "—"}</span>
+                    <span className="all-update-num strong">{rowPreview ? rowPreview.media.toLocaleString() : "—"}</span>
                     <span className="all-update-num">{rowPreview ? rowPreview.images.toLocaleString() : "—"}</span>
                     <span className="all-update-num">{rowPreview ? rowPreview.videos.toLocaleString() : "—"}</span>
                     <span className="all-update-num">{rowPreview ? rowPreview.audio.toLocaleString() : "—"}</span>
                     <span className="all-update-num">{rowPreview ? rowPreview.files.toLocaleString() : "—"}</span>
-                    <span className="all-update-num strong">{rowPreview ? rowPreview.media.toLocaleString() : "—"}</span>
                     <span className="all-update-bytes">{rowPreview ? (rowPreview.bytes > 0 ? bytes(rowPreview.bytes) : "—") : "—"}</span>
                     <span className="all-update-action">
                       {checking && <Loader2 size={13} className="spin" />}
