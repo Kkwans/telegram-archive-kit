@@ -840,11 +840,11 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
             <div className="all-update-summary-main">
               <span>待更新聊天</span>
               <b>{ready.length}<em> / {rows.length}</em></b>
-              <small>{scanning ? `已统计 ${scanIndex} 个` : `${upToDateCount} 个已最新 · ${missingCount} 个未匹配${failedCount ? ` · ${failedCount} 个失败` : ""}`}</small>
+              <small>{scanning ? `已统计 ${scanIndex} / ${rows.length}` : `${upToDateCount} 个已最新 · ${missingCount} 个未匹配${failedCount ? ` · ${failedCount} 个失败` : ""}`}</small>
             </div>
-            <div><span>新增消息</span><b>{totals.messages.toLocaleString()}</b></div>
-            <div><span>媒体合计</span><b>{totals.media.toLocaleString()}</b></div>
-            <div><span>预计下载</span><b>{totals.bytes > 0 ? bytes(totals.bytes) : "—"}</b></div>
+            <div><span>新增消息</span><b>{totals.messages.toLocaleString()}</b><small>来自待更新聊天</small></div>
+            <div><span>媒体合计</span><b>{totals.media.toLocaleString()}</b><small>图片 {totals.images.toLocaleString()} · 视频 {totals.videos.toLocaleString()}</small></div>
+            <div><span>预计下载</span><b>{totals.bytes > 0 ? bytes(totals.bytes) : "—"}</b><small>含此前缺失媒体</small></div>
           </div>
 
           <div className="all-update-types">
@@ -854,60 +854,73 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
             <span><FileText size={13} /> 文件 <b>{totals.files.toLocaleString()}</b></span>
           </div>
 
-          <div className="all-update-list">
-            {rows.map((row) => {
-              const rowPreview = row.preview && !row.preview.upToDate ? row.preview : null;
-              const checking = row.status === "checking" || matchingSlug === row.chat.slug;
-              return (
-                <div className={`all-update-row status-${row.status}`} key={row.chat.slug}>
-                  {row.online?.avatar
-                    ? <img className="online-avatar" src={row.online.avatar} alt="" />
-                    : <span className="online-avatar" style={avatarStyle(row.online?.peer || row.chat.slug)}>{initials(row.chat.name)}</span>}
-                  <span className="all-update-name">
-                    <b>{row.chat.name}</b>
-                    <small data-tip={row.error || undefined}>
-                      {row.error || (checking
-                        ? "正在统计在线消息…"
-                        : row.online
-                          ? `在线：${row.online.name}${row.online.username ? ` · @${row.online.username}` : ""}`
-                          : allUpdateStatusLabel[row.status])}
-                    </small>
-                  </span>
-                  {rowPreview ? (
-                    <>
-                      <span className="all-update-metrics">
-                        <span data-tip="图片"><ImageIcon size={12} /><em>图片</em>{rowPreview.images.toLocaleString()}</span>
-                        <span data-tip="视频"><Video size={12} /><em>视频</em>{rowPreview.videos.toLocaleString()}</span>
-                        <span data-tip="音频"><Music2 size={12} /><em>音频</em>{rowPreview.audio.toLocaleString()}</span>
-                        <span data-tip="文件"><FileText size={12} /><em>文件</em>{rowPreview.files.toLocaleString()}</span>
+          <div className="all-update-table">
+            <div className="all-update-scroll">
+              <div className="all-update-head" role="row">
+                <span>聊天</span>
+                <span>新增</span>
+                <span>图片</span>
+                <span>视频</span>
+                <span>音频</span>
+                <span>文件</span>
+                <span>媒体</span>
+                <span>大小</span>
+                <span>操作</span>
+              </div>
+              {rows.map((row) => {
+                const rowPreview = row.preview && !row.preview.upToDate ? row.preview : null;
+                const checking = row.status === "checking" || matchingSlug === row.chat.slug;
+                const onlineText = row.online
+                  ? `在线：${row.online.name}${row.online.username ? ` · @${row.online.username}` : ""}`
+                  : "";
+                const subline = row.error
+                  || (checking
+                    ? "正在统计在线消息…"
+                    : row.status === "missing"
+                      ? "未自动匹配，请手动选择"
+                      : row.status === "ready"
+                        ? `${onlineText} · 待更新`
+                        : row.status === "up-to-date"
+                          ? `${onlineText} · 已是最新`
+                          : allUpdateStatusLabel[row.status]);
+                const canMatch = (row.status === "ready" || row.status === "up-to-date" || row.status === "missing" || row.status === "failed") && !matchingSlug;
+                return (
+                  <div className={`all-update-tr status-${row.status}`} role="row" key={row.chat.slug}>
+                    <span className="all-update-chat">
+                      {row.online?.avatar
+                        ? <img className="online-avatar" src={row.online.avatar} alt="" />
+                        : <span className="online-avatar" style={avatarStyle(row.online?.peer || row.chat.slug)}>{initials(row.chat.name)}</span>}
+                      <span className="all-update-chat-text">
+                        <b>{row.chat.name}</b>
+                        <small className={row.error ? "bad" : ""} data-tip={row.error || subline}>{subline}</small>
                       </span>
-                      <span className="all-update-size">
-                        <b>{rowPreview.bytes > 0 ? bytes(rowPreview.bytes) : "—"}</b>
-                        <small>{rowPreview.messages.toLocaleString()} 条新增 · {rowPreview.media.toLocaleString()} 个媒体</small>
-                      </span>
-                    </>
-                  ) : (
-                    <span className="all-update-size all-update-empty">
-                      <b>{checking ? "统计中" : row.status === "up-to-date" ? "已是最新" : row.status === "missing" ? "未匹配在线会话" : row.status === "failed" ? "统计失败" : "等待统计"}</b>
-                      <small>{row.status === "up-to-date" ? "没有需要更新的内容" : row.status === "missing" ? "请手动选择对应的在线聊天" : ""}</small>
                     </span>
-                  )}
-                  <button
-                    type="button"
-                    className="btn sm ghost all-update-match"
-                    disabled={busy}
-                    onClick={() => setPicker({ slug: row.chat.slug, name: row.chat.name, currentPeer: row.online?.peer })}
-                    data-tip={row.online ? `当前匹配：${row.online.name}` : "搜索并选择在线聊天"}
-                  >
-                    {checking ? <Loader2 size={12} className="spin" /> : <Search size={12} />}
-                    {row.online ? "更换" : "选择聊天"}
-                  </button>
-                  <span className="all-update-mark">
-                    {checking ? <Loader2 size={14} className="spin" /> : row.status === "up-to-date" ? <CheckCircle2 size={14} className="ok" /> : row.status === "failed" || row.status === "missing" ? <AlertCircle size={14} className="warn" /> : null}
-                  </span>
-                </div>
-              );
-            })}
+                    <span className="all-update-num">{rowPreview ? rowPreview.messages.toLocaleString() : "—"}</span>
+                    <span className="all-update-num">{rowPreview ? rowPreview.images.toLocaleString() : "—"}</span>
+                    <span className="all-update-num">{rowPreview ? rowPreview.videos.toLocaleString() : "—"}</span>
+                    <span className="all-update-num">{rowPreview ? rowPreview.audio.toLocaleString() : "—"}</span>
+                    <span className="all-update-num">{rowPreview ? rowPreview.files.toLocaleString() : "—"}</span>
+                    <span className="all-update-num strong">{rowPreview ? rowPreview.media.toLocaleString() : "—"}</span>
+                    <span className="all-update-bytes">{rowPreview ? (rowPreview.bytes > 0 ? bytes(rowPreview.bytes) : "—") : "—"}</span>
+                    <span className="all-update-action">
+                      {checking && <Loader2 size={13} className="spin" />}
+                      {canMatch && (
+                        <button
+                          type="button"
+                          className="btn sm ghost all-update-match"
+                          disabled={busy}
+                          onClick={() => setPicker({ slug: row.chat.slug, name: row.chat.name, currentPeer: row.online?.peer })}
+                          data-tip={row.online ? `当前匹配：${row.online.name}` : "搜索并选择在线聊天"}
+                        >
+                          <Search size={12} />
+                          {row.online ? "更换" : "选择聊天"}
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {(startError || onlineError) && (

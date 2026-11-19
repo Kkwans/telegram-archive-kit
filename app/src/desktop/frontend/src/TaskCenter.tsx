@@ -712,21 +712,22 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
         <div className="batch-table-scroll">
         <table className="table task-files-table task-batch-table online-batch-table">
           <thead><tr>
-            <th className="col-file">聊天</th>
-            <th className="col-count center">新增</th>
-            <th className="col-count center">图片</th>
-            <th className="col-count center">视频</th>
-            <th className="col-count center">媒体</th>
-            <th className="col-size">大小</th>
-            <th className="col-progress">下载进度</th>
-            <th className="col-status center">状态</th>
-            <th className="col-open" aria-label="打开详情" />
+            <th className="batch-col-chat">聊天</th>
+            <th className="batch-col-new center">新增</th>
+            <th className="batch-col-image center"><span className="batch-th image"><ImageIcon size={11} /> 图片</span></th>
+            <th className="batch-col-video center"><span className="batch-th video"><Video size={11} /> 视频</span></th>
+            <th className="batch-col-media center">媒体</th>
+            <th className="batch-col-size">大小</th>
+            <th className="batch-col-progress">下载进度</th>
+            <th className="batch-col-status center">状态</th>
+            <th className="batch-col-open" aria-label="打开详情" />
           </tr></thead>
           <tbody>{batchItems.map((item, index) => {
             const percent = item.state === "done" ? 100 : Math.max(0, Math.min(100, item.percent ?? 0));
             const total = item.totalBytes || item.bytes || 0;
             const downloaded = item.downloadedBytes || (item.state === "done" ? total : 0);
             const open = () => { if (item.taskId) onOpenTask(item.taskId); };
+            const hue = (index * 47) % 360;
             return (
               <tr
                 key={`${item.slug || item.name}-${index}`}
@@ -742,16 +743,23 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
                 }}
                 data-tip={item.taskId ? "打开该聊天的下载任务详情" : undefined}
               >
-                <td className="col-file">
-                  <b>{item.name}</b>
-                  {item.onlineName && item.onlineName !== item.name && <small>在线：{item.onlineName}</small>}
+                <td className="batch-col-chat">
+                  <span className="batch-chat">
+                    <span className="batch-avatar" style={{ background: `linear-gradient(135deg, hsl(${hue} 52% 54%), hsl(${(hue + 38) % 360} 56% 40%))` }}>
+                      {Array.from(item.name || "?")[0]}
+                    </span>
+                    <span className="batch-chat-text">
+                      <b data-tip={item.name}>{item.name}</b>
+                      {item.onlineName && item.onlineName !== item.name && <small>在线：{item.onlineName}</small>}
+                    </span>
+                  </span>
                 </td>
-                <td className="col-count center">{(item.messages ?? 0).toLocaleString()}</td>
-                <td className="col-count center">{(item.images ?? 0).toLocaleString()}</td>
-                <td className="col-count center">{(item.videos ?? 0).toLocaleString()}</td>
-                <td className="col-count center">{(item.media ?? 0).toLocaleString()}</td>
-                <td className="col-size">{total > 0 ? bytes(total) : "—"}</td>
-                <td className="col-progress">
+                <td className="batch-col-new center">{(item.messages ?? 0).toLocaleString()}</td>
+                <td className="batch-col-image center">{(item.images ?? 0).toLocaleString()}</td>
+                <td className="batch-col-video center">{(item.videos ?? 0).toLocaleString()}</td>
+                <td className="batch-col-media center strong">{(item.media ?? 0).toLocaleString()}</td>
+                <td className="batch-col-size"><b>{total > 0 ? bytes(total) : "—"}</b></td>
+                <td className="batch-col-progress">
                   {item.state === "running" || percent > 0 || item.state === "done" ? (
                     <div className="batch-progress">
                       <div className="batch-progress-top">
@@ -766,11 +774,15 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
                     </div>
                   ) : <span className="muted">—</span>}
                 </td>
-                <td className="col-status center">
+                <td className="batch-col-status center">
                   <span className={`batch-status ${item.state || ""}`}>{item.status || "等待更新"}</span>
-                  {(item.error || item.detail) && <small className={item.error ? "bad" : ""} data-tip={item.error || item.detail}>{item.error || item.detail}</small>}
+                  {item.error
+                    ? <small className="bad" data-tip={item.error}>{item.error}</small>
+                    : item.state !== "running" && item.state !== "done" && item.detail
+                      ? <small data-tip={item.detail}>{item.detail}</small>
+                      : null}
                 </td>
-                <td className="col-open">{item.taskId ? <ChevronRight size={14} /> : null}</td>
+                <td className="batch-col-open">{item.taskId ? <ChevronRight size={14} /> : null}</td>
               </tr>
             );
           })}</tbody>
