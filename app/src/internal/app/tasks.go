@@ -838,6 +838,14 @@ func (f *Facade) PauseBatchTask(id string) (bool, error) {
 		if op != nil {
 			op.cancel()
 		}
+		// Give a paused child a moment to report its final per-chat state so the
+		// detail page does not briefly show the old "downloading" row.
+		if done := task.workerDoneChannel(); done != nil {
+			select {
+			case <-done:
+			case <-time.After(1200 * time.Millisecond):
+			}
+		}
 		return true, nil
 	}
 	f.taskMu.Unlock()
