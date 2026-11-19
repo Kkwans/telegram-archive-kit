@@ -858,7 +858,7 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
             <div className="all-update-scroll">
               <div className="all-update-head" role="row">
                 <span>聊天</span>
-                <span>新增</span>
+                <span>新增消息</span>
                 <span>图片</span>
                 <span>视频</span>
                 <span>音频</span>

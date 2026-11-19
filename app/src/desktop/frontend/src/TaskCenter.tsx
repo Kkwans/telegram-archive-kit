@@ -357,6 +357,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
   const batchTask = task.kind === "online-update-batch";
   const batchItems = task.batch ?? [];
   const batchCompleted = batchItems.filter((item) => item.state === "done").length;
+  const batchHasUnfinished = batchItems.some((item) => item.state !== "done");
   // Plan-sync tasks are download tasks too; only non-download records keep the
   // compact summary layout without transfer modules.
   const showTransfer = meta.group === "download" && !batchTask;
@@ -550,8 +551,9 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
     if (busyAction) return;
     setBusyAction("resume-batch");
     try {
-      const nextTask = await call<string>("resumeOnlineUpdateBatch", { id: task.id });
-      toast("已继续批量更新，未完成的聊天会接着处理");
+      const paused = task.state === "paused";
+      const nextTask = await call<string>(paused ? "resumeOnlineUpdateBatch" : "retryOnlineUpdateBatch", { id: task.id });
+      toast(paused ? "已继续批量更新，未完成的聊天会接着处理" : "已创建新的批量更新任务，仅包含未完成的聊天");
       onOpenTask(nextTask || task.id);
     } catch (e) {
       toast((e as Error).message, true);
@@ -626,7 +628,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
               继续下载
             </button>
           )}
-          {batchTask && (paused || failed || stopped || partial) && (
+          {batchTask && (paused || ((failed || stopped || partial) && batchHasUnfinished)) && (
             <button className="btn primary" disabled={!!busyAction} onClick={() => void resumeBatch()}>
               {busyAction === "resume-batch" ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
               {paused ? "继续更新" : "重试未完成"}
@@ -753,9 +755,11 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
         <table className="table task-files-table task-batch-table online-batch-table">
           <thead><tr>
             <th className="batch-col-chat">聊天</th>
-            <th className="batch-col-new center">新增</th>
+            <th className="batch-col-new center">新增消息</th>
             <th className="batch-col-image center"><span className="batch-th image"><ImageIcon size={11} /> 图片</span></th>
             <th className="batch-col-video center"><span className="batch-th video"><Video size={11} /> 视频</span></th>
+            <th className="batch-col-audio center"><span className="batch-th audio"><Music size={11} /> 音频</span></th>
+            <th className="batch-col-file center"><span className="batch-th file"><FileText size={11} /> 文件</span></th>
             <th className="batch-col-media center">媒体</th>
             <th className="batch-col-size">大小</th>
             <th className="batch-col-progress">下载进度</th>
@@ -797,6 +801,8 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
                 <td className="batch-col-new center">{(item.messages ?? 0).toLocaleString()}</td>
                 <td className="batch-col-image center">{(item.images ?? 0).toLocaleString()}</td>
                 <td className="batch-col-video center">{(item.videos ?? 0).toLocaleString()}</td>
+                <td className="batch-col-audio center">{(item.audio ?? 0).toLocaleString()}</td>
+                <td className="batch-col-file center">{(item.files ?? 0).toLocaleString()}</td>
                 <td className="batch-col-media center strong">{(item.media ?? 0).toLocaleString()}</td>
                 <td className="batch-col-size"><b>{total > 0 ? bytes(total) : "—"}</b></td>
                 <td className="batch-col-progress">

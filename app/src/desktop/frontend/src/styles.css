@@ -2434,6 +2434,9 @@ img.online-avatar { object-fit: cover; display: block; }
 
 /* All-chat online update */
 .modal.export-preview-modal.all-update-modal { width: min(920px, 100%); max-height: min(88vh, 820px); }
+.all-update-modal .export-preview-head-text { flex: 1; gap: 2px; }
+.all-update-modal .export-preview-head h2 { margin: 0; font-size: 20px; line-height: 1.2; }
+.all-update-modal .export-preview-head p { margin: 0; line-height: 1.65; }
 .all-update-progress { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; }
 .all-update-progress > div { flex: 1; height: 6px; overflow: hidden; border-radius: 99px; background: var(--surface-3); }
 .all-update-progress > div > i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
@@ -2455,7 +2458,7 @@ img.online-avatar { object-fit: cover; display: block; }
 .all-update-types > span svg { color: var(--faint); }
 .all-update-types b { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
 .all-update-table {
-  --all-update-cols: minmax(0, 1.55fr) 52px 60px 60px 60px 60px 60px 92px 84px;
+  --all-update-cols: minmax(0, 1.55fr) 60px 60px 60px 60px 60px 60px 92px 84px;
   border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface);
 }
 .all-update-scroll { max-height: min(420px, 40vh); overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -2499,24 +2502,30 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 .batch-table-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
 .online-batch-table { min-width: 880px; table-layout: fixed; }
 .online-batch-table thead th { padding-top: 8px; padding-bottom: 8px; color: var(--faint); font-size: 10px; font-weight: 620; }
-.online-batch-table .batch-col-chat { width: 23%; }
-.online-batch-table .batch-col-new { width: 7%; }
-.online-batch-table .batch-col-image { width: 7%; }
-.online-batch-table .batch-col-video { width: 7%; }
+.online-batch-table .batch-col-chat { width: 18%; }
+.online-batch-table .batch-col-new { width: 6%; }
+.online-batch-table .batch-col-image { width: 6%; }
+.online-batch-table .batch-col-video { width: 6%; }
+.online-batch-table .batch-col-audio { width: 6%; }
+.online-batch-table .batch-col-file { width: 6%; }
 .online-batch-table .batch-col-media { width: 7%; }
-.online-batch-table .batch-col-size { width: 9%; text-align: center; }
-.online-batch-table .batch-col-progress { width: 24%; }
+.online-batch-table .batch-col-size { width: 8%; text-align: center; }
+.online-batch-table .batch-col-progress { width: 22%; }
 .online-batch-table .batch-col-status { width: 13%; }
-.online-batch-table .batch-col-open { width: 3%; color: var(--faint); text-align: center; }
+.online-batch-table .batch-col-open { width: 2%; color: var(--faint); text-align: center; }
 .online-batch-table tbody td.batch-col-new,
 .online-batch-table tbody td.batch-col-image,
 .online-batch-table tbody td.batch-col-video,
+.online-batch-table tbody td.batch-col-audio,
+.online-batch-table tbody td.batch-col-file,
 .online-batch-table tbody td.batch-col-media { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .online-batch-table tbody td.batch-col-media { color: var(--text); font-weight: 600; }
 .online-batch-table tbody td.batch-col-size b { color: var(--text); font-size: 12px; font-weight: 660; font-variant-numeric: tabular-nums; }
 .batch-th { display: inline-flex; align-items: center; gap: 3px; }
 .batch-th.image svg { color: #2f6bff; }
 .batch-th.video svg { color: #7c5cff; }
+.batch-th.audio svg { color: #12a26a; }
+.batch-th.file svg { color: #c98a00; }
 .batch-chat { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .batch-avatar {
   width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center;
@@ -2584,7 +2593,7 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 
 @media (max-width: 1100px) {
   .all-update-summary { grid-template-columns: 1fr 1fr; }
-  .all-update-table { --all-update-cols: minmax(0, 1.2fr) 46px 52px 52px 52px 52px 52px 86px 78px; }
+  .all-update-table { --all-update-cols: minmax(0, 1.2fr) 56px 52px 52px 52px 52px 52px 86px 78px; }
 }
 .export-preview-modal { width: min(540px, 100%); gap: 14px; }
 .export-preview-head { display: flex; align-items: center; gap: 12px; }

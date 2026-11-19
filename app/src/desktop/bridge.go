@@ -584,6 +584,8 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.PauseOnlineUpdateBatch(p.ID)
 	case "resumeOnlineUpdateBatch":
 		return b.ResumeOnlineUpdateBatch(p.ID)
+	case "retryOnlineUpdateBatch":
+		return b.RetryOnlineUpdateBatch(p.ID)
 	case "installTdl":
 		return b.facade.InstallTdl()
 	case "killTdl":
@@ -883,7 +885,7 @@ func archiveMutation(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "setSettings", "onlineExport",
-		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount":
+		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "retryOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount":
 		return true
 	}
 	return false
@@ -894,7 +896,7 @@ func needsOpenLibrary(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
-		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
+		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "retryOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
 		return true
 	}
 	return false

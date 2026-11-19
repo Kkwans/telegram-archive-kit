@@ -293,10 +293,10 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             />
           </div>
           <div className="sync-actions">
-            <button className="btn primary" onClick={startSync} disabled={chats.length === 0}>
+            <button className="btn" onClick={startSync} disabled={chats.length === 0}>
               <Play size={13} /> 同步所选
             </button>
-            <button className="btn" onClick={openAllOnline} disabled={!chats.length} data-tip="逐个检查全部本地聊天，并从 Telegram 拉取最新消息">
+            <button className="btn primary" onClick={openAllOnline} disabled={!chats.length} data-tip="逐个检查全部本地聊天，并从 Telegram 拉取最新消息">
               <RefreshCw size={13} /> 更新全部聊天
             </button>
           </div>

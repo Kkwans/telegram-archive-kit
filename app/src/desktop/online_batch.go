@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,6 +100,9 @@ func (b *Bridge) ResumeOnlineUpdateBatch(id string) (string, error) {
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("缺少任务标识")
 	}
+	if err := b.facade.WaitBatchWorker(id, 3*time.Second); err != nil {
+		return "", err
+	}
 	detail, err := b.facade.TaskDetail(id)
 	if err != nil {
 		return "", err
@@ -106,23 +110,171 @@ func (b *Bridge) ResumeOnlineUpdateBatch(id string) (string, error) {
 	if detail.Kind != "online-update-batch" {
 		return "", errors.New("该任务不是批量在线更新")
 	}
+	peers, err := b.resolveBatchItemPeers(detail)
+	if err != nil {
+		return "", err
+	}
 	items := make([]onlineBatchRequestItem, len(detail.Batch))
 	for i, item := range detail.Batch {
+		peer := item.Peer
+		if peer == "" {
+			peer = peers[i]
+		}
 		items[i] = onlineBatchRequestItem{
-			Slug: item.Slug, Name: item.Name, Peer: item.Peer, OnlineName: item.OnlineName,
+			Slug: item.Slug, Name: item.Name, Peer: peer, OnlineName: item.OnlineName,
 			Messages: item.Messages, Media: item.Media,
 			Images: item.Images, Videos: item.Videos, Audio: item.Audio, Files: item.Files,
 			Bytes: item.Bytes, State: item.State, TaskID: item.TaskID,
 		}
 	}
-	for _, item := range items {
-		if item.State != "done" && item.Peer == "" && item.TaskID == "" {
-			return "", fmt.Errorf("「%s」缺少在线匹配，请重新开始批量更新", item.Name)
-		}
-	}
 	return b.facade.ResumeBatchTask(id, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
 		return b.runOnlineUpdateBatch(ctx, items, update, progress, paused)
 	})
+}
+
+// RetryOnlineUpdateBatch creates a fresh batch task for the chats that did not
+// finish. Finished chats stay in the old task and are not copied, while the
+// remaining item matches are reused so nothing has to be previewed or matched
+// again.
+func (b *Bridge) RetryOnlineUpdateBatch(id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("缺少任务标识")
+	}
+	if err := b.facade.WaitBatchWorker(id, 3*time.Second); err != nil {
+		return "", err
+	}
+	detail, err := b.facade.TaskDetail(id)
+	if err != nil {
+		return "", err
+	}
+	if detail.Kind != "online-update-batch" {
+		return "", errors.New("该任务不是批量在线更新")
+	}
+	peers, err := b.resolveBatchItemPeers(detail)
+	if err != nil {
+		return "", err
+	}
+	work := make([]onlineBatchRequestItem, 0, len(detail.Batch))
+	batch := make([]takapp.TaskBatchItemDTO, 0, len(detail.Batch))
+	var messages, media, images, videos, audio, files int
+	var totalBytes int64
+	for i, item := range detail.Batch {
+		if item.State == "done" {
+			continue
+		}
+		peer := item.Peer
+		if peer == "" {
+			peer = peers[i]
+		}
+		if peer == "" && item.TaskID == "" {
+			return "", fmt.Errorf("「%s」无法恢复在线匹配，请重新开始批量更新并手动选择该聊天", item.Name)
+		}
+		work = append(work, onlineBatchRequestItem{
+			Slug: item.Slug, Name: item.Name, Peer: peer, OnlineName: item.OnlineName,
+			Messages: item.Messages, Media: item.Media,
+			Images: item.Images, Videos: item.Videos, Audio: item.Audio, Files: item.Files,
+			Bytes: item.Bytes, State: item.State, TaskID: item.TaskID,
+		})
+		batch = append(batch, takapp.TaskBatchItemDTO{
+			Name: item.Name, OnlineName: item.OnlineName, Slug: item.Slug, Peer: peer,
+			TaskID: item.TaskID, State: item.State,
+			Messages: item.Messages, Media: item.Media,
+			Images: item.Images, Videos: item.Videos, Audio: item.Audio, Files: item.Files,
+			Bytes: item.Bytes, Status: "等待重试",
+		})
+		messages += item.Messages
+		media += item.Media
+		images += item.Images
+		videos += item.Videos
+		audio += item.Audio
+		files += item.Files
+		totalBytes += item.Bytes
+	}
+	if len(work) == 0 {
+		return "", errors.New("没有未完成的聊天需要重试")
+	}
+	dto := takapp.TaskDTO{
+		Kind: "online-update-batch", Title: fmt.Sprintf("重试批量在线更新（%d 个聊天）", len(work)),
+		Messages: messages, Media: media, Images: images, Videos: videos, Audio: audio, Files: files,
+		TotalBytes: totalBytes, Total: media, Detail: "等待开始",
+		Batch: batch,
+	}
+	return b.facade.StartBatchTask(dto, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
+		return b.runOnlineUpdateBatch(ctx, work, update, progress, paused)
+	})
+}
+
+// resolveBatchItemPeers restores the online match for old task records that were
+// written before peer keys were persisted. It fetches the live dialog list once
+// and only fills unfinished rows that have no stored peer.
+func (b *Bridge) resolveBatchItemPeers(detail takapp.TaskDetailDTO) (map[int]string, error) {
+	peers := make(map[int]string, len(detail.Batch))
+	var chats []OnlineChat
+	var locals []takapp.ChatDTO
+	loaded := false
+	var loadErr error
+	for i, item := range detail.Batch {
+		if item.Peer != "" {
+			peers[i] = item.Peer
+			continue
+		}
+		if item.State == "done" {
+			continue
+		}
+		if !loaded {
+			loaded = true
+			locals = b.facade.ListChats()
+			dto, err := b.OnlineChats(60)
+			if err != nil {
+				loadErr = err
+			} else {
+				chats = dto.Chats
+			}
+		}
+		if loadErr != nil {
+			if item.TaskID != "" {
+				continue
+			}
+			return nil, fmt.Errorf("「%s」重新读取在线聊天失败：%w", item.Name, loadErr)
+		}
+		if chat, ok := matchRetryChat(item, chats, locals); ok {
+			peers[i] = chat.Peer
+			continue
+		}
+		if item.TaskID != "" {
+			continue
+		}
+		return nil, fmt.Errorf("「%s」无法自动恢复在线匹配，请重新开始批量更新并手动选择该聊天", item.Name)
+	}
+	return peers, nil
+}
+
+func matchRetryChat(item takapp.TaskBatchItemDTO, chats []OnlineChat, locals []takapp.ChatDTO) (OnlineChat, bool) {
+	if name := strings.TrimSpace(item.OnlineName); name != "" {
+		if chat, n := matchOnlineChatByName(chats, name); n == 1 {
+			return chat, true
+		}
+	}
+	var local takapp.ChatDTO
+	for _, candidate := range locals {
+		if candidate.Slug == item.Slug {
+			local = candidate
+			break
+		}
+	}
+	if local.ID != "" {
+		if id, err := strconv.ParseInt(local.ID, 10, 64); err == nil {
+			if chat, ok := findOnlineChatByID(chats, id); ok {
+				return chat, true
+			}
+		}
+	}
+	if local.Name != "" {
+		if chat, n := matchOnlineChatByName(chats, local.Name); n == 1 {
+			return chat, true
+		}
+	}
+	return OnlineChat{}, false
 }
 
 func (b *Bridge) PauseOnlineUpdateBatch(id string) (bool, error) {

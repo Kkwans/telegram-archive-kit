@@ -852,6 +852,29 @@ func (f *Facade) PauseBatchTask(id string) (bool, error) {
 	return false, errors.New("找不到任务")
 }
 
+// WaitBatchWorker waits for the previous batch runner to stop before a retry
+// or resume uses the same child download.
+func (f *Facade) WaitBatchWorker(id string, timeout time.Duration) error {
+	f.taskMu.Lock()
+	var done chan struct{}
+	for _, task := range f.tasks {
+		if task.snapshot().ID == id {
+			done = task.workerDoneChannel()
+			break
+		}
+	}
+	f.taskMu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return errors.New("上一次更新仍在停止，请稍候再继续")
+	}
+}
+
 func (f *Facade) Tasks() []TaskDTO {
 	f.taskMu.Lock()
 	out := make([]TaskDTO, 0, len(f.tasks))
