@@ -36,8 +36,10 @@ func (f *Facade) RemoteStatus() RemoteStatusDTO {
 		return RemoteStatusDTO{CacheLimitBytes: remoteCacheLimitBytes}
 	}
 	if f.ManagedRemoteUnavailable() {
-		selected, _ := f.CurrentLibrarySelection()
-		return RemoteStatusDTO{Root: selected, Remote: true, Kind: "mapped", Error: "远程档案库等待重连", CacheLimitBytes: remoteCacheLimitBytes}
+		if !f.TryResumeRemoteLibrary() {
+			selected, _ := f.CurrentLibrarySelection()
+			return RemoteStatusDTO{Root: selected, Remote: true, Kind: "mapped", Error: "远程档案库等待重连", CacheLimitBytes: remoteCacheLimitBytes}
+		}
 	}
 	return f.remoteStatus(root, false)
 }

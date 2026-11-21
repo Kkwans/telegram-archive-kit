@@ -307,6 +307,9 @@ func (f *Facade) ListChats() []ChatDTO {
 // LibraryChats refreshes workspace metadata independently of fast task polling.
 func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
 	if f.ManagedRemoteUnavailable() {
+		f.TryResumeRemoteLibrary()
+	}
+	if f.ManagedRemoteUnavailable() {
 		return LibraryChatsDTO{}, errors.New("远程档案库等待重连")
 	}
 	f.mu.Lock()

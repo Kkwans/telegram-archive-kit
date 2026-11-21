@@ -4001,7 +4001,19 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
             <b>远程档案库暂不可达</b>
             <span>{remote?.error || "请检查网络、NAS 电源或映射盘状态；本地缓存仍可浏览。"}</span>
           </div>
-          <button className="btn sm ghost" onClick={() => call<RemoteStatus>("remoteStatus").then(setRemote).catch(() => undefined)}>
+          <button className="btn sm ghost" onClick={() => {
+            call<RemoteStatus>("remoteStatus")
+              .then((next) => {
+                setRemote(next);
+                if (next.reachable) {
+                  refresh();
+                  toast("远程档案库已恢复连接", "success");
+                } else {
+                  toast(next.error || "远程档案库仍不可达", true);
+                }
+              })
+              .catch((e: Error) => toast(e.message, true));
+          }}>
             重新检测
           </button>
         </div>

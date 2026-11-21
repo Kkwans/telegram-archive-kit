@@ -1071,6 +1071,12 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 			stallAfter := time.Duration(max(30, a.Settings.StallTimeoutSeconds)) * time.Second
 			if capture.movementAge() >= stallAfter && time.Since(startedAll) >= stallAfter {
 				activeIDs := capture.activeIDs()
+				if len(activeIDs) == 0 {
+					// tdl can stall before printing per-file IDs. Defer the next
+					// few queued files by plan order so the rest of the chat can
+					// continue instead of failing the whole archive.
+					activeIDs = downloadPlanIDs(jsonPath, max(1, effectiveConcurrent))
+				}
 				runErr, exited := stopAttempt()
 				if exited && runErr == nil {
 					renderCompleted()

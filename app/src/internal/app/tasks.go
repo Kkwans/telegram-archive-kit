@@ -15,6 +15,10 @@ import (
 	"telegramarchivekit/internal/archive"
 )
 
+// ErrBatchPartial marks a finished batch with some chats that still have
+// missing media. The task is kept as partial instead of a hard failure.
+var ErrBatchPartial = errors.New("批量更新部分完成")
+
 // TaskBatchItemDTO is one chat in a multi-chat task.
 type TaskBatchItemDTO struct {
 	Name       string  `json:"name"`
@@ -428,17 +432,28 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 	}
 }
 
+func (t *backgroundTask) currentElapsedLocked() int64 {
+	if t.dto.State == "running" && !t.activeSince.IsZero() {
+		return t.activeBaseMs + time.Since(t.activeSince).Milliseconds()
+	}
+	return t.dto.ElapsedMs
+}
+
 func (t *backgroundTask) snapshot() TaskDTO {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return copyTaskDTO(t.dto)
+	dto := copyTaskDTO(t.dto)
+	dto.ElapsedMs = t.currentElapsedLocked()
+	return dto
 }
 
 func (t *backgroundTask) detail() TaskDetailDTO {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	dto := copyTaskDTO(t.dto)
+	dto.ElapsedMs = t.currentElapsedLocked()
 	return TaskDetailDTO{
-		TaskDTO:   copyTaskDTO(t.dto),
+		TaskDTO:   dto,
 		Series:    append([]SpeedPoint{}, t.series...),
 		Active:    append([]TaskProgress{}, t.active...),
 		Completed: append([]TaskProgress{}, t.completed...),
@@ -697,7 +712,11 @@ func (f *Facade) launchBatchTask(task *backgroundTask, run func(ctx context.Cont
 		}, func(percent int, detail string) {
 			task.update(percent, detail)
 		}, task.pausedNow)
-		task.finish(err)
+		if errors.Is(err, ErrBatchPartial) {
+			task.partial(err)
+		} else {
+			task.finish(err)
+		}
 		f.saveTasks()
 	}()
 }

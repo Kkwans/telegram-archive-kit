@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-const Version = "4.0.5"
+const Version = "4.0.6"
 const SchemaVersion = 9
 const DefaultNamespace = "telegram-archive-kit"
 
@@ -214,7 +214,7 @@ func DefaultSettings() Settings {
 		GenerateThumbnails:    true,
 		StallTimeoutSeconds:   60,
 		AdaptiveConcurrency:   false,
-		StalledFileRetries:    3,
+		StalledFileRetries:    1,
 		TransferAdjustment:    "increase",
 		VideoSeekSeconds:      5,
 		VideoLongPressRate:    4,

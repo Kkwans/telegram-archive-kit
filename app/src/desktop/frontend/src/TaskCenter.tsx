@@ -38,11 +38,11 @@ import { SyncPlans, type SyncPlanLocation } from "./SyncPlans";
 import type { Bootstrap, TaskDetail, TaskInfo } from "./types";
 import { bytes, dateTime, dateTimePrecise, duration, rate, rateParts } from "./format";
 
-const KIND_META: Record<string, { label: string; group: string; icon: typeof Download }> = {
-  sync: { label: "下载", group: "download", icon: Download },
-  "sync-all": { label: "批量下载", group: "download", icon: Download },
+const KIND_META: Record<string, { label: string; group: string; icon: typeof Download; tip?: string }> = {
+  sync: { label: "下载", group: "download", icon: Download, tip: "下载当前聊天的媒体并重建网页" },
+  "sync-all": { label: "批量下载", group: "download", icon: Download, tip: "只补全本地 result.json 中缺失的媒体，不读取 Telegram 新消息" },
   "sync-plan": { label: "计划同步", group: "download", icon: CalendarClock },
-  "online-update-batch": { label: "批量在线更新", group: "download", icon: RefreshCw },
+  "online-update-batch": { label: "批量在线更新", group: "download", icon: RefreshCw, tip: "从 Telegram 逐个拉取每个聊天的新消息，再下载新增和缺失媒体" },
   "import-json": { label: "导入 JSON", group: "import", icon: FileJson },
   "import-official": { label: "官方导入", group: "import", icon: FolderInput },
   "import-official-batch": { label: "批量官方导入", group: "import", icon: FolderInput },
@@ -340,7 +340,16 @@ interface DownloadConfigDraft {
   reconnectTimeout: string;
 }
 
-export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, fromPlan = false }: { task: TaskDetail; onBack: () => void; onOpenTask: (taskId: string) => void; onOpenPlans: (planId?: string, runId?: string) => void; toast: (msg: string, err?: boolean) => void; fromPlan?: boolean }) {
+export function TaskDetailView({ task, onBack, onOpenTask, onOpenBatchChildTask, onOpenPlans, toast, fromPlan = false, backLabel }: {
+  task: TaskDetail;
+  onBack: () => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenBatchChildTask?: (taskId: string) => void;
+  onOpenPlans: (planId?: string, runId?: string) => void;
+  toast: (msg: string, err?: boolean) => void;
+  fromPlan?: boolean;
+  backLabel?: string;
+}) {
   const [showAll, setShowAll] = useState(false);
   const [recordPage, setRecordPage] = useState(1);
   const [busyAction, setBusyAction] = useState<"" | "resume" | "rebuild" | "pause" | "stop" | "config" | "pause-batch" | "resume-batch">("");
@@ -348,7 +357,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
   const [configOpen, setConfigOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState<DownloadConfigDraft>({
     concurrent: task.concurrent ?? 4, threads: task.threads ?? 4,
-    stallTimeoutSeconds: 60, stalledFileRetries: 3, networkRetryMinutes: 30,
+    stallTimeoutSeconds: 60, stalledFileRetries: 1, networkRetryMinutes: 30,
     unknownRetryCount: 2, maxRepairPasses: 3, transferAdjustment: "increase", reconnectTimeout: "60s",
   });
   const [transfer, setTransfer] = useState<DownloadConfigDraft | null>(null);
@@ -453,7 +462,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
           concurrent: task.concurrent ?? settings.concurrent ?? 4,
           threads: task.threads ?? settings.threads ?? 4,
           stallTimeoutSeconds: settings.stallTimeoutSeconds ?? 60,
-          stalledFileRetries: settings.stalledFileRetries ?? 3,
+          stalledFileRetries: settings.stalledFileRetries ?? 1,
           networkRetryMinutes: settings.networkRetryMinutes ?? 30,
           unknownRetryCount: settings.unknownRetryCount ?? 2,
           maxRepairPasses: settings.maxRepairPasses ?? 3,
@@ -593,7 +602,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
     <>
       <div className="page-head download-detail-head">
         <button className="btn" onClick={onBack}>
-          <ArrowLeft size={14} /> {fromPlan ? "返回同步计划" : "返回任务中心"}
+          <ArrowLeft size={14} /> {backLabel || (fromPlan ? "返回同步计划" : "返回任务中心")}
         </button>
         <div className="actions">
           {planned && <button className="btn ghost" onClick={() => onOpenPlans(task.planId, task.planRunId)}><CalendarClock size={13} /> 查看同步计划</button>}
@@ -616,7 +625,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
               <FolderOpen size={13} /> 打开归档库
             </button>
           )}
-          {!planned && (running || paused || partial) && (
+          {!planned && (running || paused || (partial && !batchTask)) && (
             <button className="btn stop-action" disabled={!!busyAction} onClick={() => void stop()}>
               {busyAction === "stop" ? <Loader2 size={13} className="spin" /> : <Square size={13} />}
               {batchTask ? "结束批量更新" : "结束任务"}
@@ -770,7 +779,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenPlans, toast, f
             const percent = item.state === "done" ? 100 : Math.max(0, Math.min(100, item.percent ?? 0));
             const total = item.totalBytes || item.bytes || 0;
             const downloaded = item.downloadedBytes || (item.state === "done" ? total : 0);
-            const open = () => { if (item.taskId) onOpenTask(item.taskId); };
+            const open = () => { if (item.taskId) (onOpenBatchChildTask ?? onOpenTask)(item.taskId); };
             const hue = (index * 47) % 360;
             const displayState = item.state === "running" && (task.state === "paused" || task.state === "stopped") ? task.state : item.state;
             const displayStatus = item.state === "running" && task.state === "paused"
@@ -1190,6 +1199,7 @@ export function TasksPage({
   const [kind, setKind] = useState("all");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<TaskDetail | null>(null);
+  const [activeParent, setActiveParent] = useState<TaskDetail | null>(null);
   const [activeFromPlan, setActiveFromPlan] = useState(false);
   const [modalTask, setModalTask] = useState<TaskDetail | null>(null);
   const [modalFromPlan, setModalFromPlan] = useState(false);
@@ -1262,7 +1272,7 @@ export function TasksPage({
   const failed = tasks.filter((t) => t.state === "failed").length;
   const done = tasks.filter((t) => t.state === "done").length;
 
-  const loadTask = async (taskID: string, fromPlan = false) => {
+  const loadTask = async (taskID: string, fromPlan = false, parent: TaskDetail | null = null) => {
     const version = ++selection.current;
     const known = tasks.find((task) => task.id === taskID);
     const show = (detail: TaskDetail) => {
@@ -1270,9 +1280,11 @@ export function TasksPage({
       if (kindMeta(detail.kind).group === "download") {
         setModalTask(null);
         setActiveFromPlan(fromPlan);
+        setActiveParent(parent);
         setActive(detail);
       } else {
         setActive(null);
+        setActiveParent(null);
         setModalFromPlan(fromPlan);
         setModalTask(detail);
       }
@@ -1366,11 +1378,20 @@ export function TasksPage({
   if (active) {
     return <TaskDetailView key={active.id} task={active}
       fromPlan={activeFromPlan}
-      onBack={() => { selection.current++; setActive(null); }}
-      onOpenTask={(taskID) => void loadTask(taskID)}
+      backLabel={activeParent ? "返回批量任务" : undefined}
+      onBack={() => {
+        selection.current++;
+        const parent = activeParent;
+        setActive(null);
+        setActiveParent(null);
+        if (parent) void loadTask(parent.id);
+      }}
+      onOpenTask={(taskID) => void loadTask(taskID, false, activeParent)}
+      onOpenBatchChildTask={(taskID) => void loadTask(taskID, false, active)}
       onOpenPlans={(planId, runId) => {
         selection.current++;
         setActive(null);
+        setActiveParent(null);
         onTabChange("plans");
         onPlanNavigate(planId ? { planId, runId } : null);
       }}
@@ -1393,7 +1414,7 @@ export function TasksPage({
         <div className="task-info-title-row">
           <h2 id="task-modal-title">{modalHeading}</h2>
           {modalMeta && (
-            <span className={`kind-chip group-${modalMeta.group}`}>
+            <span className={`kind-chip group-${modalMeta.group}`} data-tip={modalMeta.tip}>
               {ModalIcon && <ModalIcon size={11} />} {modalMeta.label}
             </span>
           )}
@@ -1571,7 +1592,7 @@ export function TasksPage({
                       </span>
                     </td>
                     <td className="task-col-kind">
-                      <span className={`kind-chip group-${meta.group}`}><Icon size={11} /> {meta.label}</span>
+                      <span className={`kind-chip group-${meta.group}`} data-tip={meta.tip}><Icon size={11} /> {meta.label}</span>
                     </td>
                     <td className="task-main">
                       <div className="task-title-line">

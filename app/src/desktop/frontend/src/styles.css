@@ -2543,6 +2543,7 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 .online-batch-table tr.batch-row-open:hover .batch-col-open svg { opacity: 1; transform: translateX(2px); }
 .batch-progress { display: flex; flex-direction: column; gap: 3px; }
 .batch-progress .mini i.paused { background: var(--warn); }
+.batch-progress .mini i.partial { background: var(--warn); }
 .batch-progress .mini i.stopped { background: #8a94a6; }
 .batch-progress .mini i.failed { background: var(--danger); }
 .batch-progress .mini i.done { background: var(--ok); }
@@ -2557,6 +2558,7 @@ html[data-theme="dark"] .all-update-tr.status-failed { background: rgba(214, 69,
 .batch-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .8; }
 .batch-status.running { background: var(--accent-soft); color: var(--accent); }
 .batch-status.done { background: rgba(18, 162, 106, .1); color: var(--ok); }
+.batch-status.partial { background: rgba(201, 138, 0, .12); color: var(--warn); }
 .batch-status.failed { background: rgba(214, 69, 83, .1); color: var(--danger); }
 .batch-status.stopped { background: var(--surface-3); color: var(--muted); }
 .batch-status.paused { background: rgba(201, 138, 0, .12); color: var(--warn); }

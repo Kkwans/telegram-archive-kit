@@ -164,6 +164,41 @@ func (f *Facade) setLibraryIdentityLocked(id string) error {
 	return nil
 }
 
+// TryResumeRemoteLibrary clears a stale suspension when the mapped library is
+// actually readable again. A transient health-check failure must not leave the
+// whole archive locked behind "等待重连" while Explorer and downloads still work.
+func (f *Facade) TryResumeRemoteLibrary() bool {
+	f.mu.Lock()
+	if !f.remoteSuspended || f.a.Settings.ExpectedLibraryID == "" {
+		f.mu.Unlock()
+		return false
+	}
+	root := f.a.Settings.LibraryRoot
+	expected := f.a.Settings.ExpectedLibraryID
+	lock := f.libLock
+	f.mu.Unlock()
+	if lock == nil || !strings.EqualFold(filepath.Clean(lock.root), filepath.Clean(root)) {
+		return false
+	}
+	st, err := os.Stat(root)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	id, err := ReadLibraryID(root)
+	if err != nil || id != expected {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.remoteSuspended && f.libLock == lock &&
+		f.a.Settings.ExpectedLibraryID == expected &&
+		strings.EqualFold(filepath.Clean(f.a.Settings.LibraryRoot), filepath.Clean(root)) {
+		f.remoteSuspended = false
+		return true
+	}
+	return false
+}
+
 func (f *Facade) SetCurrentLibraryIdentity(root, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

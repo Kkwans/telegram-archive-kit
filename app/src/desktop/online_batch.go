@@ -310,6 +310,7 @@ func (b *Bridge) runOnlineUpdateBatch(
 		}
 	}
 	failed := 0
+	partials := 0
 	setProgress := func(currentPercent int, detail string) {
 		percent := (completed*100 + clampPercent(currentPercent)) / total
 		if completed >= total {
@@ -390,6 +391,15 @@ func (b *Bridge) runOnlineUpdateBatch(
 			update(index, takapp.BatchItemUpdate{Status: "读取新增消息", Detail: "正在连接 Telegram", ResetError: true})
 			var err error
 			res, err = b.batchOnlineExport(item)
+			if err != nil && ctx.Err() == nil && retryableOnlineTimeout(err) {
+				update(index, takapp.BatchItemUpdate{Status: "读取新增消息", Detail: "读取 Telegram 超时，正在重试"})
+				select {
+				case <-time.After(3 * time.Second):
+				case <-ctx.Done():
+					return cancelRun(index, "")
+				}
+				res, err = b.batchOnlineExport(item)
+			}
 			if err != nil {
 				if ctx.Err() != nil {
 					return cancelRun(index, "")
@@ -443,6 +453,9 @@ func (b *Bridge) runOnlineUpdateBatch(
 		case "paused":
 			update(index, takapp.BatchItemUpdate{Status: "已暂停", State: "paused", ResetError: true, Detail: "已暂停，可重试或继续"})
 			failed++
+		case "partial":
+			update(index, takapp.BatchItemUpdate{Status: "部分完成", State: "partial", ResetError: true, Detail: "部分媒体未能下载，可稍后重试"})
+			partials++
 		case "stopped":
 			update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", ResetError: true, Detail: "下载已终止，可重试或继续"})
 			failed++
@@ -462,6 +475,10 @@ func (b *Bridge) runOnlineUpdateBatch(
 		progress(100, fmt.Sprintf("更新结束：完成 %d 个，失败 %d 个", okCount, failed))
 		return fmt.Errorf("%d 个聊天未能完成更新", failed)
 	}
+	if partials > 0 {
+		progress(100, fmt.Sprintf("更新结束：完成 %d 个，部分完成 %d 个", okCount, partials))
+		return fmt.Errorf("%w：%d 个聊天有缺失媒体，可重试未完成", takapp.ErrBatchPartial, partials)
+	}
 	progress(100, fmt.Sprintf("已更新 %d 个聊天", okCount))
 	return nil
 }
@@ -473,6 +490,14 @@ func (b *Bridge) batchOnlineExport(item onlineBatchRequestItem) (OnlineExportRes
 	b.archiveMu.Lock()
 	defer b.archiveMu.Unlock()
 	return b.OnlineExport(item.Peer, 300, 0, item.Token, item.Slug)
+}
+
+func retryableOnlineTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "超时") || strings.Contains(low, "timeout") || strings.Contains(low, "deadline exceeded")
 }
 
 type batchChildSnapshot struct {
@@ -562,6 +587,8 @@ func batchChildStatus(state string) string {
 		return "已完成"
 	case "paused":
 		return "已暂停"
+	case "partial":
+		return "部分完成"
 	case "stopped":
 		return "已终止"
 	case "failed":

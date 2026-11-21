@@ -294,6 +294,9 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 			defer b.syncPlans.Wake()
 		}
 	}
+	if needsOpenLibrary(method) && b.facade.ManagedRemoteUnavailable() {
+		b.facade.TryResumeRemoteLibrary()
+	}
 	if b.facade.ManagedRemoteUnavailable() && needsOpenLibrary(method) {
 		return nil, errors.New("请先重连远程档案库")
 	}

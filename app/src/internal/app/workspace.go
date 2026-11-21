@@ -1247,6 +1247,12 @@ func (a *App) organizeDocumentFiles(slug string) (int, error) {
 		if e.IsDir() || !archive.IsDocumentKind(e.Name()) {
 			continue
 		}
+		name := strings.ToLower(e.Name())
+		if strings.Contains(name, ".partial") || strings.HasSuffix(name, ".tmp") || strings.HasSuffix(name, ".download") {
+			// A stopped/failed download can leave a temporary file in media/.
+			// Never move it into files/ while the downloader may still own it.
+			continue
+		}
 		from := filepath.Join(src, e.Name())
 		info, er := e.Info()
 		if er != nil || info.Size() == 0 {
@@ -1264,10 +1270,16 @@ func (a *App) organizeDocumentFiles(slug string) (int, error) {
 			return moved, er
 		}
 		if er := os.Rename(from, to); er != nil {
+			if os.IsNotExist(er) {
+				continue
+			}
 			if cerr := copyFile(from, to); cerr != nil {
+				if os.IsNotExist(cerr) {
+					continue
+				}
 				return moved, fmt.Errorf("移动文档到 files/ 失败: %w", cerr)
 			}
-			if er := os.Remove(from); er != nil {
+			if er := os.Remove(from); er != nil && !os.IsNotExist(er) {
 				return moved, er
 			}
 		}

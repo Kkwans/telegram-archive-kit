@@ -1177,6 +1177,32 @@ func (a *App) smartSync(slug string) error {
 	return a.smartSyncCtx(context.Background(), slug, &tuiReporter{a: a})
 }
 
+// recoverableDownloadFailure distinguishes a partially completed archive from
+// a hard authorization or disk failure. Stalled files and per-file content
+// errors are retried by the engine; when the budget is exhausted the chat is
+// partial, not a red failure.
+func recoverableDownloadFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errUserAbort) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, errDeferredExhausted) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var failure *TdlFailure
+	if errors.As(err, &failure) {
+		if failure.Stalled {
+			return true
+		}
+		return failure.Kind == tdlFailureNetwork || failure.Kind == tdlFailureContent
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "下载停滞") || strings.Contains(low, "疑难文件") ||
+		strings.Contains(low, "timeout") || strings.Contains(low, "deadline exceeded") || strings.Contains(low, "超时")
+}
+
 // smartSyncCtx is the headless sync loop shared by the console and the
 // desktop client. It reports through Reporter and never reads the keyboard.
 func (a *App) smartSyncCtx(ctx context.Context, slug string, rep Reporter) error {
@@ -1214,6 +1240,20 @@ func (a *App) smartSyncCtx(ctx context.Context, slug string, rep Reporter) error
 		err = a.downloadMissing(dctx, slug, path, pass, &globalEngineRestarts, ui)
 		done()
 		if err != nil {
+			if recoverableDownloadFailure(err) {
+				arc, verifyErr := a.verifyWorkspace(slug)
+				if verifyErr == nil {
+					if arc.Stats.MissingMedia == 0 {
+						return nil
+					}
+					if _, missingPath, genErr := a.generateMissingJSON(slug); genErr == nil {
+						if ids := downloadPlanIDList(missingPath, 8); ids != "" {
+							return &PartialMediaError{Count: arc.Stats.MissingMedia, IDs: ids}
+						}
+					}
+					return &PartialMediaError{Count: arc.Stats.MissingMedia}
+				}
+			}
 			return err
 		}
 		_ = a.removeZeroByteMedia(slug)
@@ -1249,24 +1289,38 @@ func (e *PartialMediaError) Error() string {
 }
 
 func downloadPlanIDList(path string, limit int) string {
+	ids := downloadPlanIDs(path, limit)
+	if len(ids) == 0 {
+		return ""
+	}
+	plan, err := loadDownloadPlan(path)
+	if err != nil {
+		return ""
+	}
+	if len(plan.IDs) > limit {
+		return strings.Join(ids, ", ") + " …"
+	}
+	return strings.Join(ids, ", ")
+}
+
+func downloadPlanIDs(path string, limit int) []string {
 	plan, err := loadDownloadPlan(path)
 	if err != nil || limit <= 0 {
-		return ""
+		return nil
 	}
 	ids := make([]string, 0, len(plan.IDs))
 	for id := range plan.IDs {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool {
-		ai, _ := strconv.Atoi(ids[i])
-		aj, _ := strconv.Atoi(ids[j])
+		ai, _ := strconv.ParseInt(ids[i], 10, 64)
+		aj, _ := strconv.ParseInt(ids[j], 10, 64)
 		return ai < aj
 	})
 	if len(ids) > limit {
 		ids = ids[:limit]
-		return strings.Join(ids, ", ") + " …"
 	}
-	return strings.Join(ids, ", ")
+	return ids
 }
 
 func (a *App) actionSyncAll() {

@@ -84,7 +84,8 @@ type OnlineExportPreview struct {
 
 var floodWaitPattern = regexp.MustCompile(`FLOOD_WAIT[^0-9]*(\d+)`)
 
-// friendlyOnlineError turns rate limiting into an actionable message.
+// friendlyOnlineError turns rate limiting and transport timeouts into
+// actionable messages.
 func friendlyOnlineError(err error) error {
 	if d, ok := tgerr.AsFloodWait(err); ok {
 		seconds := int(d.Seconds())
@@ -95,6 +96,11 @@ func friendlyOnlineError(err error) error {
 	}
 	if m := floodWaitPattern.FindStringSubmatch(err.Error()); m != nil {
 		return fmt.Errorf("Telegram 限流，请等待 %s 秒后再试", m[1])
+	}
+	low := strings.ToLower(err.Error())
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(low, "context deadline exceeded") ||
+		strings.Contains(low, "i/o timeout") || strings.Contains(low, "timeout") {
+		return errors.New("读取 Telegram 超时，请稍后重试")
 	}
 	return err
 }
