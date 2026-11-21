@@ -542,7 +542,28 @@ func (f *Facade) runOneClick(ctx context.Context, op *desktopOp, meta WorkspaceM
 		stage = err.Error()
 	}
 	var partial *PartialMediaError
-	f.send("tak:done", DoneDTO{OpID: op.id, OK: false, Partial: errors.As(err, &partial), Stage: stage, Error: stage})
+	isPartial := errors.As(err, &partial)
+	if isPartial && op.task != nil {
+		snap := op.task.snapshot()
+		planTotal := snap.PlanTotal
+		doneThisRun := snap.Done
+		if snap.PlanKnown && planTotal > 0 {
+			doneThisRun = snap.Done - snap.BaselineTotal
+		} else if planTotal <= 0 {
+			planTotal = snap.Total
+		}
+		if doneThisRun < 0 {
+			doneThisRun = 0
+		}
+		if doneThisRun > planTotal && planTotal > 0 {
+			doneThisRun = planTotal
+		}
+		if partialBelowThreshold(planTotal, doneThisRun) {
+			stage = fmt.Sprintf("本次仅下载 %d/%d 个媒体（不足 5%%），已保留文件；%s", doneThisRun, planTotal, stage)
+			isPartial = false
+		}
+	}
+	f.send("tak:done", DoneDTO{OpID: op.id, OK: false, Partial: isPartial, Stage: stage, Error: stage})
 }
 
 func (f *Facade) Cancel() bool {

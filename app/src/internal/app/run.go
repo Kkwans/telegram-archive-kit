@@ -1281,6 +1281,16 @@ type PartialMediaError struct {
 	IDs   string
 }
 
+// partialBelowThreshold keeps a chat failed when a download attempt barely
+// started. A partial result is only meaningful once at least 5% of the task's
+// media plan was downloaded.
+func partialBelowThreshold(planTotal, done int) bool {
+	if planTotal <= 0 {
+		return false
+	}
+	return done*20 < planTotal
+}
+
 func (e *PartialMediaError) Error() string {
 	if e.IDs != "" {
 		return fmt.Sprintf("仍有 %d 条媒体未匹配（Message ID: %s）；可点击“继续下载”再次补齐", e.Count, e.IDs)
