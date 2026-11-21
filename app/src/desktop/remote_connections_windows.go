@@ -1185,6 +1185,11 @@ func (s *remoteConnections) poll(lastHealth *time.Time, lastGeneration *uint64) 
 	unchanged := s.current == current
 	s.mu.Unlock()
 	if unchanged {
+		if s.b.facade.RemoteLibraryReadable(current.root, current.id) {
+			// The mount is still usable; a failed SSH/control-plane probe alone
+			// must not suspend the archive.
+			return
+		}
 		s.b.facade.SuspendRemoteLibrary(current.root, current.id)
 		s.refreshSelection()
 		s.mu.Lock()

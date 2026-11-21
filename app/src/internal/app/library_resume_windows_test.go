@@ -22,6 +22,9 @@ func TestTryResumeRemoteLibraryClearsStaleSuspension(t *testing.T) {
 	if !f.ManagedRemoteUnavailable() {
 		t.Fatal("expected suspended state")
 	}
+	if !f.RemoteLibraryReadable(root, id) {
+		t.Fatal("expected readable library identity")
+	}
 	if !f.TryResumeRemoteLibrary() {
 		t.Fatal("expected reachable remote library to resume")
 	}

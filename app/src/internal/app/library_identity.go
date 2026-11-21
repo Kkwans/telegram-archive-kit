@@ -164,6 +164,21 @@ func (f *Facade) setLibraryIdentityLocked(id string) error {
 	return nil
 }
 
+// RemoteLibraryReadable reports whether the mapped library itself is readable
+// and still has the expected identity. Control-plane failures must not suspend
+// an archive that Explorer and downloads can still access.
+func (f *Facade) RemoteLibraryReadable(root, id string) bool {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(id) == "" {
+		return false
+	}
+	st, err := os.Stat(root)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	actual, err := ReadLibraryID(root)
+	return err == nil && actual == id
+}
+
 // TryResumeRemoteLibrary clears a stale suspension when the mapped library is
 // actually readable again. A transient health-check failure must not leave the
 // whole archive locked behind "等待重连" while Explorer and downloads still work.
