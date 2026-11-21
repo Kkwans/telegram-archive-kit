@@ -1273,7 +1273,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .task-main span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-main span.err { color: var(--danger); }
 .task-chat { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.task-duration { display: flex; align-items: center; gap: 5px; color: var(--muted); white-space: nowrap; }
+.task-duration { display: table-cell; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-duration-track { width: 140px; min-width: 140px; }
+.task-progress-track { width: 210px; }
 .task-duration svg { color: var(--accent); }
 .task-table .mini i.done { background: var(--ok); }
 .task-table .mini i.failed { background: var(--danger); }
