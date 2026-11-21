@@ -1274,8 +1274,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .task-main span.err { color: var(--danger); }
 .task-chat { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .task-duration { display: table-cell; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-duration-track { width: 140px; min-width: 140px; }
-.task-progress-track { width: 210px; }
+.task-chat-track { width: 96px; }
+.task-duration-track { width: 126px; min-width: 126px; }
+.task-progress-track { width: 264px; }
 .task-duration svg { color: var(--accent); }
 .task-table .mini i.done { background: var(--ok); }
 .task-table .mini i.failed { background: var(--danger); }
@@ -1958,9 +1959,9 @@ html[data-theme="dark"] .palette {
 .task-state { justify-content: center; }
 .task-main { max-width: 220px; }
 .task-main b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-chat { max-width: 130px; }
+.task-chat { width: 96px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-duration { color: var(--muted); white-space: nowrap; }
-.task-progress { min-width: 170px; }
+.task-progress { min-width: 240px; }
 .task-modal { width: min(620px, 100%); }
 .task-info-modal { width: min(680px, 100%); }
 .task-info-modal { width: min(720px, 100%); }
