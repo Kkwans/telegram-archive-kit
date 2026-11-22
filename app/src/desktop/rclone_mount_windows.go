@@ -463,7 +463,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 		cmd.SysProcAttr.CreationFlags = windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW
 		err = cmd.Start()
 	} else {
-		job, err = startManagedMountProcess(cmd)
+		job, err = startManagedChildProcess(cmd)
 	}
 	if err != nil {
 		b.mountMu.Unlock()
@@ -568,7 +568,7 @@ func (b *Bridge) startRemoteMount(ctx context.Context, endpoint remoteEndpoint, 
 
 // A private Windows job also releases the drive when the client crashes or
 // Windows terminates it before the ordinary shutdown code runs.
-func startManagedMountProcess(cmd *exec.Cmd) (windows.Handle, error) {
+func startManagedChildProcess(cmd *exec.Cmd) (windows.Handle, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return 0, err

@@ -477,6 +477,11 @@ func (b *Bridge) runOnlineUpdateBatch(
 		if ctx.Err() != nil {
 			return cancelRun(pos, index, res.TaskID)
 		}
+		if state == "failed" && takapp.IsTdlDatabaseBusy(itemErr) {
+			update(index, takapp.BatchItemUpdate{Status: "会话被占用", State: "failed", Error: itemErr})
+			markRemaining(pos+1, "会话数据库被占用，尚未执行；释放后可重试")
+			return errors.New(itemErr)
+		}
 		switch state {
 		case "done":
 			totalBytes := maxInt64(item.Bytes, detail.TotalBytes)
@@ -558,7 +563,7 @@ func (b *Bridge) retryTdlBusy(ctx context.Context, index int, update func(int, t
 		}
 		update(index, takapp.BatchItemUpdate{Status: "等待下载引擎", Detail: "上一个下载进程仍在退出，正在等待后重试"})
 		if attempt == 8 {
-			_, _ = b.facade.KillTdl()
+			b.facade.StopTrackedTdl()
 		}
 		select {
 		case <-time.After(time.Second):

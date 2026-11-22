@@ -47,6 +47,7 @@ func main() {
 		log.Fatal(err)
 	}
 	facade.SetLoginLauncher(newConPTYLauncher())
+	facade.SetTdlProcessStarter(startManagedTdlProcess)
 	if _, expected := facade.CurrentLibrarySelection(); expected == "" {
 		if err := facade.AcquireLibraryLock(); err != nil {
 			log.Printf("library lock: %v", err)

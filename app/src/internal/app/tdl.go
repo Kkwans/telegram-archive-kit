@@ -46,6 +46,7 @@ const (
 	tdlFailureAuth    = "auth"
 	tdlFailureContent = "content"
 	tdlFailureUnknown = "unknown"
+	tdlFailureBusy    = "session_busy"
 )
 
 var errUserAbort = errors.New("用户已中止下载；已完成文件已保留")
@@ -219,6 +220,11 @@ func classifyTdlFailure(raw string, runErr error, logPath string) *TdlFailure {
 		code = ee.ExitCode()
 	}
 	f := &TdlFailure{Kind: tdlFailureUnknown, Summary: summarizeTdlError(clean), Detail: clean, LogPath: logPath, ExitCode: code}
+	if IsTdlDatabaseBusy(low) {
+		f.Kind = tdlFailureBusy
+		f.Summary = "Telegram 会话数据库正被其他 tdl 进程占用，请先结束占用它的下载任务或等待完成，然后重试"
+		return f
+	}
 	if containsAny(low, "no space left on device", "not enough space", "disk full", "there is not enough space", "磁盘空间不足", "空间不足") {
 		f.Kind = tdlFailureContent
 		f.Summary = "档案库空间不足，下载已停止；请释放空间或更换档案库后重新下载"
@@ -252,6 +258,10 @@ func classifyTdlFailure(raw string, runErr error, logPath string) *TdlFailure {
 		return f
 	}
 	return f
+}
+
+func IsTdlDatabaseBusy(message string) bool {
+	return containsAny(message, "current database is used by another process", "会话数据库正被其他 tdl 进程占用")
 }
 
 func globalTdlDir() string {
@@ -770,7 +780,7 @@ func (a *App) downloadMissingWithin(ctx context.Context, slug, jsonPath string, 
 		if failure == nil {
 			return runErr
 		}
-		if failure.Kind == tdlFailureAuth || failure.Kind == tdlFailureContent {
+		if failure.Kind == tdlFailureAuth || failure.Kind == tdlFailureContent || failure.Kind == tdlFailureBusy {
 			return failure
 		}
 		if only != nil && failure.Kind == tdlFailureNetwork {
@@ -975,9 +985,16 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 		tdlStartMu.Unlock()
 		return nil, errUserAbort
 	}
-	if err := cmd.Start(); err != nil {
+	var release func()
+	var startErr error
+	if a.startTdlProcess != nil {
+		release, startErr = a.startTdlProcess(cmd)
+	} else {
+		startErr = cmd.Start()
+	}
+	if startErr != nil {
 		tdlStartMu.Unlock()
-		f := &TdlFailure{Kind: tdlFailureUnknown, Summary: "无法启动下载引擎，请检查 tdl 安装、权限或安全软件后重试", Detail: err.Error(), LogPath: logPath, ExitCode: -1}
+		f := &TdlFailure{Kind: tdlFailureUnknown, Summary: "无法启动下载引擎，请检查 tdl 安装、权限或安全软件后重试", Detail: startErr.Error(), LogPath: logPath, ExitCode: -1}
 		return f, f
 	}
 	process, untrack := trackTdlPid(cmd.Process.Pid)
@@ -985,6 +1002,9 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	result := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
+		if release != nil {
+			release()
+		}
 		process.mu.Lock()
 		process.exited = true
 		process.mu.Unlock()

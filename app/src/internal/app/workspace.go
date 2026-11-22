@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -29,6 +30,7 @@ type App struct {
 	ConfigPath       string
 	Settings         Settings
 	workspaceChanged func(root, slug string)
+	startTdlProcess  func(*exec.Cmd) (func(), error)
 }
 
 func newApp() (*App, error) {

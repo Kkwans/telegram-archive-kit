@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -85,6 +86,18 @@ func OpenFacade() (*Facade, error) {
 	a.workspaceChanged = f.invalidateWorkspaceMedia
 	f.loadTasks()
 	return f, nil
+}
+
+// SetTdlProcessStarter lets the desktop attach its own child processes to a
+// lifetime guard. Console mode keeps the ordinary process launcher.
+func (f *Facade) SetTdlProcessStarter(start func(*exec.Cmd) (func(), error)) {
+	f.mu.Lock()
+	f.a.startTdlProcess = start
+	f.mu.Unlock()
+}
+
+func (f *Facade) StopTrackedTdl() {
+	killTrackedTdl()
 }
 
 // AcquireLibraryLock marks this process as the writer for the current library.
