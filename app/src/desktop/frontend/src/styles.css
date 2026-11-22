@@ -2327,9 +2327,20 @@ html[data-theme="dark"] .chat-detail-media { background: rgba(255, 255, 255, .05
 .online-search:focus-within { border-color: rgba(47, 107, 255, .46); background: var(--surface); box-shadow: 0 0 0 3px rgba(47, 107, 255, .08); }
 .online-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 11.5px; }
 .online-search-clear { border: 0; background: transparent; color: var(--faint); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
-.online-tabs { flex: 0 0 auto; }
+.online-tabs { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: thin; }
+.online-tabs button { flex: 0 0 auto; white-space: nowrap; }
 .online-tab-count { margin-left: 5px; font-size: 9.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .online-tabs button.on .online-tab-count { color: var(--accent); }
+.online-owned-filter {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 34px;
+  padding: 0 10px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.online-owned-filter .online-tab-count { margin-left: 1px; }
+.online-owned-filter:hover { border-color: rgba(47, 107, 255, .32); color: var(--text); }
+.online-owned-filter.on { background: var(--accent-soft); border-color: rgba(47, 107, 255, .38); color: var(--accent); }
+.online-owned-filter.on .online-tab-count { color: var(--accent); }
+.online-owned-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .online-sort { width: 132px; flex: 0 0 auto; }
 .online-result-count { margin-left: auto; color: var(--faint); font-size: 10.5px; white-space: nowrap; }
 .online-folders {

@@ -8,7 +8,7 @@ Windows desktop client + console edition. Powered by [tdl](https://github.com/iy
 it connects media download → incremental archiving → static web generation → everyday browsing. All chats and media stay on your own disk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-4.0.7-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.8-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-requirements)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
@@ -152,7 +152,7 @@ Devices on the selected trusted network can browse the published archive without
 3.0 adds an "Online chat" page that reuses the local tdl session (no extra password storage):
 
 - Full conversation list with type, unread, pinned, last message and real avatars
-- Filters for private chats / groups / channels / archived chats, plus search and sorting
+- Filters for private chats / groups / channels / archived chats, plus search and sorting; an additional ownership filter finds groups and channels currently owned by the account
 - "Online update" on an archived chat fetches only messages newer than the local maximum Message ID
 - The preview shows new messages, media composition and estimated size
 - **It also checks media actually missing from the archive**: if a previous download was stopped, the dialog reports "messages are up to date, but N local media files are missing" and offers to finish them

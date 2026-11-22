@@ -401,6 +401,7 @@ export interface OnlineChat {
   unread?: number;
   pinned?: boolean;
   archived?: boolean;
+  isOwner?: boolean;
   contact?: boolean;
   muted?: boolean;
   localSlug?: string;

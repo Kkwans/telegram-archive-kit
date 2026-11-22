@@ -52,6 +52,9 @@ type OnlineChat struct {
 	LocalMedia      int    `json:"localMedia,omitempty"`
 	LocalUpdatedAt  string `json:"localUpdatedAt,omitempty"`
 	ArchivedLocally bool   `json:"archivedLocally,omitempty"`
+	// IsOwner is nil when a legacy cache or a minimal Telegram entity does not
+	// provide reliable ownership information.
+	IsOwner *bool `json:"isOwner,omitempty"`
 }
 
 // OnlineFolder mirrors one of the user's own Telegram chat folders. Peers are
@@ -513,6 +516,7 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 		out.Peer = "chat:" + strconv.FormatInt(chat.ID, 10)
 		out.ID = chat.ID
 		out.Type = "group"
+		out.IsOwner = knownOwnership(chat.Creator)
 		out.Name = strings.TrimSpace(chat.Title)
 		if out.Name == "" {
 			out.Name = "群组 " + strconv.FormatInt(chat.ID, 10)
@@ -530,6 +534,11 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 		out.Peer = "channel:" + strconv.FormatInt(ch.ID, 10)
 		out.ID = ch.ID
 		out.Type = "group"
+		// A minimal channel constructor does not carry authoritative creator
+		// status, even when the flag happens to be present.
+		if !ch.Min {
+			out.IsOwner = knownOwnership(ch.Creator)
+		}
 		out.AccessHash = ch.AccessHash
 		if ch.Broadcast {
 			out.Type = "channel"
@@ -550,6 +559,10 @@ func mapDialog(elem dialogs.Elem) (OnlineChat, avatarRef, bool) {
 
 	out.LastMessage, out.LastKind, out.LastDate = summarizeLast(elem.Last)
 	return out, ref, true
+}
+
+func knownOwnership(creator bool) *bool {
+	return &creator
 }
 
 func summarizeLast(m tg.NotEmptyMessage) (text, kind string, date int64) {

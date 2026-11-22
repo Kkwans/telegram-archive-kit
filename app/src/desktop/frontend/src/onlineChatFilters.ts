@@ -32,6 +32,18 @@ export function matchesOnlineChatFilter(chat: Pick<OnlineChat, "type" | "archive
   }
 }
 
+export function onlineChatOwnership(chat: Pick<OnlineChat, "type" | "isOwner">): "owned" | "other" | "unknown" {
+  if (chat.type !== "group" && chat.type !== "channel") return "other";
+  if (chat.isOwner === true) return "owned";
+  if (chat.isOwner === false) return "other";
+  return "unknown";
+}
+
+export function ownershipCountLabel(known: number, unknown: number): string {
+  if (unknown === 0) return String(known);
+  return known === 0 ? "—" : `≥${known}`;
+}
+
 type SearchableChat = Pick<OnlineChat, "peer" | "name" | "username" | "lastMessage"> & { id?: number };
 
 export function matchesOnlineChatSearch(chat: SearchableChat, query: string): boolean {
@@ -42,4 +54,26 @@ export function matchesOnlineChatSearch(chat: SearchableChat, query: string): bo
     chat.peer.toLowerCase().includes(query) ||
     (chat.id !== undefined && String(chat.id).includes(query)) ||
     (chat.lastMessage || "").toLowerCase().includes(query);
+}
+
+export function filterOnlineChats(chats: OnlineChat[], options: {
+  filter: OnlineChatFilter;
+  folderPeers: ReadonlySet<string> | null;
+  onlyOwned: boolean;
+  query: string;
+}): { chats: OnlineChat[]; unknownOwnership: number } {
+  const result: OnlineChat[] = [];
+  const query = options.query.trim().toLowerCase();
+  let unknownOwnership = 0;
+  for (const chat of chats) {
+    if (options.folderPeers ? !options.folderPeers.has(chat.peer) : !matchesOnlineChatFilter(chat, options.filter)) continue;
+    if (!matchesOnlineChatSearch(chat, query)) continue;
+    if (options.onlyOwned) {
+      const state = onlineChatOwnership(chat);
+      if (state === "unknown") unknownOwnership++;
+      if (state !== "owned") continue;
+    }
+    result.push(chat);
+  }
+  return { chats: result, unknownOwnership };
 }

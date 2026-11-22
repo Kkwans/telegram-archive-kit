@@ -3,6 +3,7 @@ import {
   AlertCircle,
   CheckCircle2,
   CloudDownload,
+  Crown,
   FolderOpen,
   Hash,
   Loader2,
@@ -18,7 +19,18 @@ import { Select } from "./Select";
 import { OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type { PageCtx } from "./pages";
 import type { OnlineChat, OnlineChats } from "./types";
-import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
+import { filterOnlineChats, matchesOnlineChatFilter, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, ownershipCountLabel, type OnlineChatFilter } from "./onlineChatFilters";
+
+function countOnlineChats(chats: OnlineChat[]): Record<OnlineChatFilter, number> {
+  return {
+    all: chats.length,
+    private: chats.filter((chat) => matchesOnlineChatFilter(chat, "private")).length,
+    group: chats.filter((chat) => matchesOnlineChatFilter(chat, "group")).length,
+    channel: chats.filter((chat) => matchesOnlineChatFilter(chat, "channel")).length,
+    archived: chats.filter((chat) => matchesOnlineChatFilter(chat, "archived")).length,
+    local: chats.filter((chat) => matchesOnlineChatFilter(chat, "local")).length,
+  };
+}
 
 function initials(name: string): string {
   const chars = Array.from(name.trim());
@@ -103,6 +115,8 @@ const OnlineChatList = memo(function OnlineChatList({
   selectedPeer,
   loading,
   hasData,
+  emptyTitle,
+  emptyHint,
   today,
   onSelect,
 }: {
@@ -110,6 +124,8 @@ const OnlineChatList = memo(function OnlineChatList({
   selectedPeer: string;
   loading: boolean;
   hasData: boolean;
+  emptyTitle?: string;
+  emptyHint?: string;
   today: string;
   onSelect: (peer: string) => void;
 }) {
@@ -125,8 +141,8 @@ const OnlineChatList = memo(function OnlineChatList({
       ) : chats.length === 0 ? (
         <div className="online-list-empty">
           <Search size={22} />
-          <b>没有匹配的会话</b>
-          <span>换一个关键词或筛选条件。</span>
+          <b>{emptyTitle || "没有匹配的会话"}</b>
+          <span>{emptyHint || "换一个关键词或筛选条件。"}</span>
         </div>
       ) : (
         chats.map((chat) => (
@@ -149,6 +165,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<OnlineChatFilter>("all");
+  const [onlyOwned, setOnlyOwned] = useState(false);
   const [folderId, setFolderId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("recent");
@@ -176,7 +193,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
       liveApplied = true;
       setData(res);
       if (res.error) setError(res.error);
-      if (announce) ctx.toast(`已刷新 ${res.chats.length} 个在线会话`);
+      if (announce && res.source !== "cache" && !res.error) ctx.toast(`已刷新 ${res.chats.length} 个在线会话`);
     } catch (e) {
       if (seq !== request.current) return;
       setError((e as Error).message);
@@ -220,17 +237,24 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
 
   const chats = data?.chats ?? [];
 
-  const counts = useMemo(
-    () => ({
-      all: chats.length,
-      private: chats.filter((c) => matchesOnlineChatFilter(c, "private")).length,
-      group: chats.filter((c) => matchesOnlineChatFilter(c, "group")).length,
-      channel: chats.filter((c) => matchesOnlineChatFilter(c, "channel")).length,
-      archived: chats.filter((c) => matchesOnlineChatFilter(c, "archived")).length,
-      local: chats.filter((c) => matchesOnlineChatFilter(c, "local")).length,
-    }),
-    [chats]
-  );
+  const counts = useMemo(() => countOnlineChats(chats), [chats]);
+  const ownership = useMemo(() => {
+    const owned: OnlineChat[] = [];
+    const unknown: OnlineChat[] = [];
+    for (const chat of chats) {
+      const state = onlineChatOwnership(chat);
+      if (state === "owned") owned.push(chat);
+      if (state === "unknown") unknown.push(chat);
+    }
+    return {
+      owned,
+      unknown,
+      ownedPeers: new Set(owned.map((chat) => chat.peer)),
+      unknownPeers: new Set(unknown.map((chat) => chat.peer)),
+    };
+  }, [chats]);
+  const filterCounts = useMemo(() => onlyOwned ? countOnlineChats(ownership.owned) : counts, [onlyOwned, ownership, counts]);
+  const unknownCounts = useMemo(() => countOnlineChats(onlyOwned ? ownership.unknown : []), [onlyOwned, ownership]);
 
   const folders = data?.folders ?? [];
   const activeFolder = folderId == null ? null : folders.find((f) => f.id === folderId) ?? null;
@@ -243,19 +267,19 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   useEffect(() => {
     if (!ctx.onlineRequest) return;
     setFolderId(null);
+    setOnlyOwned(false);
     setFilter(ONLINE_CHAT_FILTERS.find(({ key }) => key === ctx.onlineRequest?.filter)?.key ?? "all");
   }, [ctx.onlineRequest?.seq]);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = chats.filter((c) =>
-      (activeFolder ? folderPeers.has(c.peer) : matchesOnlineChatFilter(c, filter)) && matchesOnlineChatSearch(c, q)
-    );
+  const { visible, unknownInScope } = useMemo(() => {
+    const { chats: list, unknownOwnership: unknownInScope } = filterOnlineChats(chats, {
+      filter, folderPeers: activeFolder ? folderPeers : null, onlyOwned, query,
+    });
     if (sort === "name") {
-      return [...list].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+      return { visible: [...list].sort((a, b) => a.name.localeCompare(b.name, "zh-CN")), unknownInScope };
     }
-    return list;
-  }, [activeFolder, chats, filter, folderPeers, query, sort]);
+    return { visible: list, unknownInScope };
+  }, [activeFolder, chats, filter, folderPeers, onlyOwned, query, sort]);
 
   useEffect(() => {
     if (visible.length === 0) {
@@ -267,6 +291,9 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
 
   const selected = visible.find((c) => c.peer === selectedPeer) || chats.find((c) => c.peer === selectedPeer) || null;
   const canExport = !!data?.chats.length;
+  const resultCount = !data ? (loading ? "正在读取会话…" : "尚无会话数据") : unknownInScope > 0
+    ? `${visible.length ? `${visible.length} 个已确认` : "尚无已确认结果"} · ${unknownInScope} 个所有权待确认`
+    : `${visible.length} 个会话`;
   const today = new Date().toDateString();
   const summary = [
     { label: "全部会话", value: counts.all },
@@ -340,16 +367,28 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                 <button
                   key={f.key}
                   className={!activeFolder && filter === f.key ? "on" : ""}
+                  aria-pressed={!activeFolder && filter === f.key}
                   onClick={() => {
                     setFolderId(null);
                     setFilter(f.key);
                   }}
                 >
                   {f.label}
-                  <span className="online-tab-count">{counts[f.key]}</span>
+                  <span className="online-tab-count">{data ? ownershipCountLabel(filterCounts[f.key], unknownCounts[f.key]) : "—"}</span>
                 </button>
               ))}
             </div>
+            <button
+              className={`online-owned-filter ${onlyOwned ? "on" : ""}`}
+              type="button"
+              aria-pressed={onlyOwned}
+              data-tip={ownership.unknown.length ? "只显示当前账号拥有的群组和频道；部分聊天的所有权待确认" : "只显示当前账号拥有的群组和频道"}
+              onClick={() => setOnlyOwned((value) => !value)}
+            >
+              <Crown size={13} aria-hidden="true" />
+              <span>我拥有的</span>
+              <span className="online-tab-count">{data ? ownershipCountLabel(ownership.owned.length, ownership.unknown.length) : "—"}</span>
+            </button>
             <div className="online-sort">
               <Select
                 ariaLabel="在线聊天排序"
@@ -361,8 +400,8 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                 ]}
               />
             </div>
-            <span className="online-result-count">
-              {activeFolder ? `${activeFolder.title} · ${visible.length} 个会话` : `${visible.length} 个会话`}
+            <span className="online-result-count" role="status">
+              {activeFolder ? `${activeFolder.title} · ${resultCount}` : resultCount}
             </span>
 
             {folders.length > 0 && (
@@ -373,6 +412,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                     <button
                       key={folder.id}
                       className={`online-folder ${activeFolder?.id === folder.id ? "on" : ""}`}
+                      aria-pressed={activeFolder?.id === folder.id}
                       onClick={() => {
                         setFilter("all");
                         setFolderId(activeFolder?.id === folder.id ? null : folder.id);
@@ -380,7 +420,9 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                     >
                       {folder.emoticon && <span className="online-folder-emoji">{folder.emoticon}</span>}
                       <span>{folder.title}</span>
-                      <span className="online-tab-count">{folder.peers.length}</span>
+                      <span className="online-tab-count">{onlyOwned
+                        ? ownershipCountLabel(folder.peers.filter((peer) => ownership.ownedPeers.has(peer)).length, folder.peers.filter((peer) => ownership.unknownPeers.has(peer)).length)
+                        : folder.peers.length}</span>
                     </button>
                   ))}
                 </div>
@@ -394,6 +436,8 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
               selectedPeer={selectedPeer}
               loading={loading}
               hasData={!!data}
+              emptyTitle={onlyOwned && unknownInScope ? "所有权信息尚未确认" : onlyOwned ? "没有匹配的自有聊天" : undefined}
+              emptyHint={onlyOwned && unknownInScope ? (loading ? "正在刷新在线列表…" : "刷新列表后重试，未确认的聊天暂不显示。") : onlyOwned ? "调整筛选条件，或关闭“我拥有的”。" : undefined}
               today={today}
               onSelect={setSelectedPeer}
             />
