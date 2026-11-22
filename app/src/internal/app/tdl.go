@@ -951,8 +951,22 @@ func (a *App) runTdlDownloadAttempt(ctx context.Context, exe, slug, jsonPath, ch
 	cmd.Stdin = nil
 	tdlStartMu.Lock()
 	tdlPidMu.Lock()
-	previousRunning := len(tdlPids) > 0
+	processes := make([]*trackedTdl, 0, len(tdlPids))
+	for _, process := range tdlPids {
+		processes = append(processes, process)
+	}
 	tdlPidMu.Unlock()
+	previousRunning := false
+	for _, process := range processes {
+		process.mu.Lock()
+		if !process.exited {
+			previousRunning = true
+		}
+		process.mu.Unlock()
+		if previousRunning {
+			break
+		}
+	}
 	if previousRunning {
 		tdlStartMu.Unlock()
 		return nil, errTdlStillStopping

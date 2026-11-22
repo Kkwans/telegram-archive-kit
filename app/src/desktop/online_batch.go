@@ -85,7 +85,7 @@ func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem) (map[str
 		Batch: batch,
 	}
 	id, err := b.facade.StartBatchTask(dto, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
-		return b.runOnlineUpdateBatch(ctx, work, update, progress, paused)
+		return b.runOnlineUpdateBatch(ctx, work, update, progress, paused, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -115,6 +115,8 @@ func (b *Bridge) ResumeOnlineUpdateBatch(id string) (string, error) {
 		return "", err
 	}
 	items := make([]onlineBatchRequestItem, len(detail.Batch))
+	start := 0
+	foundStart := false
 	for i, item := range detail.Batch {
 		peer := item.Peer
 		if peer == "" {
@@ -126,9 +128,20 @@ func (b *Bridge) ResumeOnlineUpdateBatch(id string) (string, error) {
 			Images: item.Images, Videos: item.Videos, Audio: item.Audio, Files: item.Files,
 			Bytes: item.Bytes, State: item.State, TaskID: item.TaskID,
 		}
+		if !foundStart && (item.State == "paused" || (item.State == "running" && item.TaskID != "")) {
+			start = i
+			foundStart = true
+		}
+	}
+	order := make([]int, 0, len(items))
+	for i := start; i < len(items); i++ {
+		order = append(order, i)
+	}
+	for i := 0; i < start; i++ {
+		order = append(order, i)
 	}
 	return b.facade.ResumeBatchTask(id, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
-		return b.runOnlineUpdateBatch(ctx, items, update, progress, paused)
+		return b.runOnlineUpdateBatch(ctx, items, update, progress, paused, order)
 	})
 }
 
@@ -200,7 +213,7 @@ func (b *Bridge) RetryOnlineUpdateBatch(id string) (string, error) {
 		Batch: batch,
 	}
 	return b.facade.StartBatchTask(dto, func(ctx context.Context, update func(int, takapp.BatchItemUpdate), progress func(int, string), paused func() bool) error {
-		return b.runOnlineUpdateBatch(ctx, work, update, progress, paused)
+		return b.runOnlineUpdateBatch(ctx, work, update, progress, paused, nil)
 	})
 }
 
@@ -287,6 +300,7 @@ func (b *Bridge) runOnlineUpdateBatch(
 	update func(index int, patch takapp.BatchItemUpdate),
 	progress func(percent int, detail string),
 	isPaused func() bool,
+	order []int,
 ) error {
 	defer func() {
 		// Unused prepared exports would otherwise keep whole histories in memory.
@@ -311,6 +325,13 @@ func (b *Bridge) runOnlineUpdateBatch(
 	}
 	failed := 0
 	partials := 0
+	runOrder := order
+	if len(runOrder) == 0 {
+		runOrder = make([]int, total)
+		for i := range runOrder {
+			runOrder[i] = i
+		}
+	}
 	setProgress := func(currentPercent int, detail string) {
 		percent := (completed*100 + clampPercent(currentPercent)) / total
 		if completed >= total {
@@ -318,12 +339,13 @@ func (b *Bridge) runOnlineUpdateBatch(
 		}
 		progress(percent, detail)
 	}
-	markRemaining := func(from int, message string) {
-		for i := from; i < total; i++ {
-			update(i, takapp.BatchItemUpdate{Status: "未执行", State: "stopped", ResetError: true, Detail: message})
+	markRemaining := func(fromPos int, message string) {
+		for pos := fromPos; pos < len(runOrder); pos++ {
+			index := runOrder[pos]
+			update(index, takapp.BatchItemUpdate{Status: "未执行", State: "stopped", ResetError: true, Detail: message})
 		}
 	}
-	cancelRun := func(index int, taskID string) error {
+	cancelRun := func(pos, index int, taskID string) error {
 		if pausedNow() {
 			if taskID != "" {
 				_ = b.facade.Pause()
@@ -335,17 +357,18 @@ func (b *Bridge) runOnlineUpdateBatch(
 			_, _ = b.facade.StopTask(taskID)
 		}
 		update(index, takapp.BatchItemUpdate{Status: "已终止", State: "stopped", ResetError: true, Detail: "批量更新已停止，可重试"})
-		markRemaining(index+1, "批量更新已停止，可重试")
+		markRemaining(pos+1, "批量更新已停止，可重试")
 		return ctx.Err()
 	}
 	if completed > 0 {
 		setProgress(0, fmt.Sprintf("继续更新 · 已完成 %d/%d", completed, total))
 	}
 
-	for index, item := range items {
+	for pos, index := range runOrder {
+		item := items[index]
 		if err := ctx.Err(); err != nil {
 			if !pausedNow() {
-				markRemaining(index, "批量更新已停止，可重试")
+				markRemaining(pos, "批量更新已停止，可重试")
 			}
 			return err
 		}
@@ -373,9 +396,17 @@ func (b *Bridge) runOnlineUpdateBatch(
 					continue
 				}
 				if item.Slug != "" {
-					if childID, err := b.facade.StartOneClick(item.Slug); err == nil {
+					var childID string
+					err := b.retryTdlBusy(ctx, index, update, func() error {
+						var e error
+						childID, e = b.facade.StartOneClick(item.Slug)
+						return e
+					})
+					if err == nil {
 						res = OnlineExportResult{Slug: item.Slug, Chat: name, TaskID: childID, Existed: true}
 						resumed = true
+					} else if ctx.Err() != nil {
+						return cancelRun(pos, index, "")
 					}
 				}
 			}
@@ -389,33 +420,37 @@ func (b *Bridge) runOnlineUpdateBatch(
 			setProgress(0, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
 		} else {
 			update(index, takapp.BatchItemUpdate{Status: "读取新增消息", Detail: "正在连接 Telegram", ResetError: true})
-			var err error
-			res, err = b.batchOnlineExport(item)
+			runExport := func() error {
+				var exportErr error
+				res, exportErr = b.batchOnlineExport(item)
+				return exportErr
+			}
+			err := b.retryTdlBusy(ctx, index, update, runExport)
 			if err != nil && ctx.Err() == nil && retryableOnlineTimeout(err) {
 				update(index, takapp.BatchItemUpdate{Status: "读取新增消息", Detail: "读取 Telegram 超时，正在重试"})
 				select {
 				case <-time.After(3 * time.Second):
 				case <-ctx.Done():
-					return cancelRun(index, "")
+					return cancelRun(pos, index, "")
 				}
-				res, err = b.batchOnlineExport(item)
+				err = b.retryTdlBusy(ctx, index, update, runExport)
 			}
 			if err != nil {
 				if ctx.Err() != nil {
-					return cancelRun(index, "")
+					return cancelRun(pos, index, "")
 				}
 				update(index, takapp.BatchItemUpdate{Status: "失败", State: "failed", Error: err.Error()})
 				failed++
 				completed++
 				setProgress(0, fmt.Sprintf("已完成 %d/%d · %s", completed, total, name))
 				if strings.Contains(err.Error(), "Telegram 限流") {
-					markRemaining(index+1, "Telegram 限流，批量更新已停止，可重试")
+					markRemaining(pos+1, "Telegram 限流，批量更新已停止，可重试")
 					return fmt.Errorf("%s：%w", name, err)
 				}
 				continue
 			}
 			if ctx.Err() != nil {
-				return cancelRun(index, res.TaskID)
+				return cancelRun(pos, index, res.TaskID)
 			}
 			if res.UpToDate || res.TaskID == "" {
 				update(index, takapp.BatchItemUpdate{Status: "已是最新", State: "done", Progress: true, Percent: 100, ResetError: true, Detail: "没有需要更新的内容"})
@@ -440,7 +475,7 @@ func (b *Bridge) runOnlineUpdateBatch(
 			setProgress(percent, fmt.Sprintf("正在更新 %d/%d · %s", index+1, total, name))
 		})
 		if ctx.Err() != nil {
-			return cancelRun(index, res.TaskID)
+			return cancelRun(pos, index, res.TaskID)
 		}
 		switch state {
 		case "done":
@@ -498,6 +533,40 @@ func retryableOnlineTimeout(err error) bool {
 	}
 	low := strings.ToLower(err.Error())
 	return strings.Contains(low, "超时") || strings.Contains(low, "timeout") || strings.Contains(low, "deadline exceeded")
+}
+
+func isTdlBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "上一个下载进程仍在退出") || strings.Contains(low, "下载进程仍在退出")
+}
+
+// retryTdlBusy waits for the previous tdl child to finish unwinding. Without
+// this, one stalled chat makes every following chat fail immediately with
+// "上一个下载进程仍在退出".
+func (b *Bridge) retryTdlBusy(ctx context.Context, index int, update func(int, takapp.BatchItemUpdate), fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 30; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err = fn()
+		if err == nil || !isTdlBusyError(err) {
+			return err
+		}
+		update(index, takapp.BatchItemUpdate{Status: "等待下载引擎", Detail: "上一个下载进程仍在退出，正在等待后重试"})
+		if attempt == 8 {
+			_, _ = b.facade.KillTdl()
+		}
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 type batchChildSnapshot struct {
