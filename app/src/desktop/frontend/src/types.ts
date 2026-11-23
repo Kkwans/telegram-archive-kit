@@ -31,6 +31,8 @@ export interface RemoteStatus {
 export interface ChatRow {
   slug: string;
   name: string;
+  displayName?: string;
+  groupId?: string;
   type?: string;
   id?: string;
   messages: number;
@@ -54,6 +56,11 @@ export interface ChatRow {
   official: number;
   dir: string;
   current: boolean;
+}
+
+export interface ChatGroup {
+  id: string;
+  name: string;
 }
 
 export interface TaskRow {

@@ -1,5 +1,7 @@
 package app
 
+import "telegramarchivekit/internal/model"
+
 // BootstrapDTO is the full state the desktop window needs on first paint.
 type BootstrapDTO struct {
 	Version     string   `json:"version"`
@@ -18,36 +20,39 @@ type BootstrapDTO struct {
 
 // ChatDTO is one row in the desktop chat list.
 type ChatDTO struct {
-	Slug       string `json:"slug"`
-	Name       string `json:"name"`
-	Type       string `json:"type,omitempty"`
-	ID         string `json:"id,omitempty"`
-	Messages   int    `json:"messages"`
-	Media      int    `json:"media"`
-	MediaReady bool   `json:"mediaReady"`
-	Images     int    `json:"images,omitempty"`
-	Videos     int    `json:"videos,omitempty"`
-	Audio      int    `json:"audio,omitempty"`
-	Files      int    `json:"files,omitempty"`
-	Missing    int    `json:"missing"`
-	TotalBytes int64  `json:"totalBytes,omitempty"`
-	ImageBytes int64  `json:"imageBytes,omitempty"`
-	VideoBytes int64  `json:"videoBytes,omitempty"`
-	AudioBytes int64  `json:"audioBytes,omitempty"`
-	FileBytes  int64  `json:"fileBytes,omitempty"`
-	FirstTS    int64  `json:"firstTs,omitempty"`
-	LastTS     int64  `json:"lastTs,omitempty"`
-	UpdatedAt  string `json:"updatedAt,omitempty"`
-	Pages      int    `json:"pages"`
-	HasSource  bool   `json:"hasSource"`
-	Official   int    `json:"official"`
-	Dir        string `json:"dir"`
-	Current    bool   `json:"current"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
+	GroupID     string `json:"groupId,omitempty"`
+	Type        string `json:"type,omitempty"`
+	ID          string `json:"id,omitempty"`
+	Messages    int    `json:"messages"`
+	Media       int    `json:"media"`
+	MediaReady  bool   `json:"mediaReady"`
+	Images      int    `json:"images,omitempty"`
+	Videos      int    `json:"videos,omitempty"`
+	Audio       int    `json:"audio,omitempty"`
+	Files       int    `json:"files,omitempty"`
+	Missing     int    `json:"missing"`
+	TotalBytes  int64  `json:"totalBytes,omitempty"`
+	ImageBytes  int64  `json:"imageBytes,omitempty"`
+	VideoBytes  int64  `json:"videoBytes,omitempty"`
+	AudioBytes  int64  `json:"audioBytes,omitempty"`
+	FileBytes   int64  `json:"fileBytes,omitempty"`
+	FirstTS     int64  `json:"firstTs,omitempty"`
+	LastTS      int64  `json:"lastTs,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
+	Pages       int    `json:"pages"`
+	HasSource   bool   `json:"hasSource"`
+	Official    int    `json:"official"`
+	Dir         string `json:"dir"`
+	Current     bool   `json:"current"`
 }
 
 type LibraryChatsDTO struct {
-	LibraryKey string    `json:"libraryKey"`
-	Chats      []ChatDTO `json:"chats"`
+	LibraryKey string            `json:"libraryKey"`
+	Chats      []ChatDTO         `json:"chats"`
+	Groups     []model.ChatGroup `json:"groups"`
 }
 
 // OperationDTO carries non-download stages (checking / building / verifying).

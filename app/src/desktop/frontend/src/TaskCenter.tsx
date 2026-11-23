@@ -674,7 +674,7 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenBatchChildTask,
           {running ? <b>{Math.round(percent)}%</b> : stopped ? <Square size={28} strokeWidth={2.2} /> : partial ? <AlertTriangle size={30} strokeWidth={2.1} /> : paused ? <Pause size={30} strokeWidth={2.2} /> : failed ? <X size={32} strokeWidth={2.2} /> : <Check size={36} strokeWidth={2.6} />}
         </div>
         <div className="download-hero-main">
-          <span className="download-hero-kicker">{planned ? "计划同步" : batchTask ? "批量在线更新" : task.kind === "import-official-batch" ? "批量官方导入" : "下载聊天"}</span>
+          <span className="download-hero-kicker">{planned ? "计划同步" : batchTask ? (task.mode === "archive" ? "批量在线归档" : "批量在线更新") : task.kind === "import-official-batch" ? "批量官方导入" : "下载聊天"}</span>
           <div className="download-hero-title">
             <h2>{batchTask || task.kind === "import-official-batch" ? task.title : task.chat || taskTitle(task)}</h2>
           </div>
@@ -988,14 +988,16 @@ export function TaskDetailView({ task, onBack, onOpenTask, onOpenBatchChildTask,
         <div className="download-info-grid">
           <div><span>类型</span><b>{meta.label}</b></div>
           {planned && <div><span>关联计划</span><b>{planName || task.planId || "--"}</b></div>}
-          <div><span>聊天</span><b>{task.chat || "--"}</b></div>
+          {batchTask || ["sync-all", "refresh-all", "complete-all", "import-official-batch", "merge"].includes(task.kind)
+            ? <div><span>任务 ID</span><b className="mono">{task.id}</b></div>
+            : <div><span>聊天</span><b>{task.chat || "--"}</b></div>}
           <div><span>状态</span><b>{statusLabel(task.state)}</b></div>
           <div><span>开始时间</span><b>{dateTimePrecise(task.startedAt)}</b></div>
           <div><span>结束时间</span><b>{task.finishedAt ? dateTimePrecise(task.finishedAt) : "进行中"}</b></div>
           <div><span>耗时</span><b>{fmtDuration(elapsed)}</b></div>
           {planned && <div><span>新增消息</span><b>{(task.messages ?? 0).toLocaleString()} 条</b></div>}
           {showTransfer && <div><span>已下载 / 总媒体</span><b>{task.done ?? 0} / {task.total ?? 0}</b></div>}
-          <div><span>任务 ID</span><b className="mono">{task.id}</b></div>
+          {!batchTask && !["sync-all", "refresh-all", "complete-all", "import-official-batch", "merge"].includes(task.kind) && <div><span>任务 ID</span><b className="mono">{task.id}</b></div>}
           {showTransfer && <div><span>峰值速度</span><b>{rate(task.peakSpeed ?? 0)}</b></div>}
           <div className="wide"><span>结果</span><b className={failed ? "danger-text" : ""}>{result}</b></div>
         </div>
@@ -1592,7 +1594,7 @@ export function TasksPage({
                       </span>
                     </td>
                     <td className="task-col-kind">
-                      <span className={`kind-chip group-${meta.group}`} data-tip={meta.tip}><Icon size={11} /> {meta.label}</span>
+                      <span className={`kind-chip group-${meta.group}`} data-tip={meta.tip}><Icon size={11} /> {t.kind === "online-update-batch" && t.mode === "archive" ? "批量在线归档" : meta.label}</span>
                     </td>
                     <td className="task-main">
                       <div className="task-title-line">

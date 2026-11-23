@@ -25,6 +25,7 @@ const maxArchiveBytes = 64 << 20
 
 type Catalog struct {
 	Chats   []Chat
+	Groups  []model.ChatGroup
 	Version [32]byte
 	stamp   time.Time
 	size    int64
@@ -68,7 +69,7 @@ func readCatalog(ctx context.Context, library string, previous Catalog) (Catalog
 	h := sha256.New()
 	_, _ = h.Write(data)
 	_, _ = io.WriteString(h, strconv.FormatInt(info.ModTime().UnixNano(), 10))
-	out := Catalog{Chats: make([]Chat, 0, len(index.Chats)), stamp: info.ModTime(), size: info.Size()}
+	out := Catalog{Chats: make([]Chat, 0, len(index.Chats)), Groups: index.Groups, stamp: info.ModTime(), size: info.Size()}
 	copy(out.Version[:], h.Sum(nil))
 	for _, chat := range index.Chats {
 		if !localPath(chat.Slug) || strings.Contains(chat.Slug, "/") {
@@ -81,8 +82,12 @@ func readCatalog(ctx context.Context, library string, previous Catalog) (Catalog
 			data, err := root.Lstat(chat.DataScript)
 			ready = err == nil && data.Mode().IsRegular()
 		}
+		name := chat.Name
+		if strings.TrimSpace(chat.DisplayName) != "" {
+			name = chat.DisplayName
+		}
 		out.Chats = append(out.Chats, Chat{
-			Slug: chat.Slug, ID: chat.ID, Name: chat.Name, Count: chat.Messages,
+			Slug: chat.Slug, ID: chat.ID, Name: name, Count: chat.Messages,
 			Ready: ready, info: chat,
 		})
 	}

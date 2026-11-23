@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,9 +14,10 @@ import {
   UserRound,
 } from "lucide-react";
 import { call } from "./rpc";
+import { ChatAvatar } from "./ChatAvatar";
 import { bytes, dateTime } from "./format";
 import { Select } from "./Select";
-import { OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
+import { AllOnlineUpdateDialog, OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type { PageCtx } from "./pages";
 import type { OnlineChat, OnlineChats } from "./types";
 import { filterOnlineChats, matchesOnlineChatFilter, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, ownershipCountLabel, type OnlineChatFilter } from "./onlineChatFilters";
@@ -29,18 +30,6 @@ function countOnlineChats(chats: OnlineChat[]): Record<OnlineChatFilter, number>
     channel: chats.filter((chat) => matchesOnlineChatFilter(chat, "channel")).length,
     archived: chats.filter((chat) => matchesOnlineChatFilter(chat, "archived")).length,
     local: chats.filter((chat) => matchesOnlineChatFilter(chat, "local")).length,
-  };
-}
-
-function initials(name: string): string {
-  const chars = Array.from(name.trim());
-  return chars[0] || "?";
-}
-
-function avatarStyle(chat: OnlineChat): CSSProperties {
-  const seed = Array.from(chat.peer).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
-  return {
-    background: `linear-gradient(135deg, hsl(${seed} 54% 52%), hsl(${(seed + 38) % 360} 58% 38%))`,
   };
 }
 
@@ -68,27 +57,28 @@ function fullWhen(seconds?: number): string {
 const OnlineChatRow = memo(function OnlineChatRow({
   chat: c,
   selected,
+  checked,
   today,
   onSelect,
+  onToggle,
 }: {
   chat: OnlineChat;
   selected: boolean;
+  checked: boolean;
   today: string;
   onSelect: (peer: string) => void;
+  onToggle: (peer: string) => void;
 }) {
   const meta = onlineChatTypeMeta(c.type);
   return (
+    <div className="online-row-wrap">
+    <label className="online-row-check"><input type="checkbox" checked={checked} onChange={() => onToggle(c.peer)} aria-label={`选择 ${c.name}`} /></label>
     <button
-      role="option"
-      aria-selected={selected}
+      aria-pressed={selected}
       className={`online-row ${selected ? "on" : ""}`}
       onClick={() => onSelect(c.peer)}
     >
-      {c.avatar ? (
-        <img className="online-avatar" src={c.avatar} alt="" loading="lazy" />
-      ) : (
-        <span className="online-avatar" style={avatarStyle(c)}>{initials(c.name)}</span>
-      )}
+      <ChatAvatar name={c.name} peer={c.peer} avatar={c.avatar} />
       <span className="online-row-main">
         <span className="online-row-top">
           <b>{c.name}</b>
@@ -107,6 +97,7 @@ const OnlineChatRow = memo(function OnlineChatRow({
         {c.archivedLocally && <CheckCircle2 size={12} className="online-local-check" />}
       </span>
     </button>
+    </div>
   );
 });
 
@@ -117,8 +108,10 @@ const OnlineChatList = memo(function OnlineChatList({
   hasData,
   emptyTitle,
   emptyHint,
+  checkedPeers,
   today,
   onSelect,
+  onToggle,
 }: {
   chats: OnlineChat[];
   selectedPeer: string;
@@ -126,11 +119,13 @@ const OnlineChatList = memo(function OnlineChatList({
   hasData: boolean;
   emptyTitle?: string;
   emptyHint?: string;
+  checkedPeers: Set<string>;
   today: string;
   onSelect: (peer: string) => void;
+  onToggle: (peer: string) => void;
 }) {
   return (
-    <div className="online-list" role="listbox" aria-label="在线聊天列表">
+    <div className="online-list" role="region" aria-label="在线聊天列表">
       {loading && !hasData ? (
         Array.from({ length: 9 }).map((_, i) => (
           <div key={i} className="online-row skeleton">
@@ -150,8 +145,10 @@ const OnlineChatList = memo(function OnlineChatList({
             key={chat.peer}
             chat={chat}
             selected={chat.peer === selectedPeer}
+            checked={checkedPeers.has(chat.peer)}
             today={today}
             onSelect={onSelect}
+            onToggle={onToggle}
           />
         ))
       )}
@@ -171,6 +168,9 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [sort, setSort] = useState("recent");
   const [selectedPeer, setSelectedPeer] = useState("");
   const [previewTarget, setPreviewTarget] = useState<OnlineUpdateTarget | null>(null);
+  const [checkedPeers, setCheckedPeers] = useState<Set<string>>(new Set());
+  const [batchOpen, setBatchOpen] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement>(null);
   const request = useRef(0);
 
   const load = async (announce = false, useCache = false) => {
@@ -216,6 +216,9 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
 
   const avatarSeed = data?.fetchedAt;
   useEffect(() => {
+    if (data?.chats) ctx.applyOnlineSnapshot(data.chats);
+  }, [data?.chats, ctx.applyOnlineSnapshot]);
+  useEffect(() => {
     // Avatar downloads and live dialog retrieval share a backend lock. Waiting
     // until the refresh settles prevents cached avatars from delaying it.
     if (!data || loading || !ctx.boot?.hasSession) return;
@@ -235,7 +238,9 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [avatarSeed, loading, ctx.boot?.hasSession]);
 
-  const chats = data?.chats ?? [];
+  const chats = useMemo(() => (data?.chats ?? []).map((chat) => ctx.onlineAvatarImages[chat.peer]
+    ? { ...chat, avatar: ctx.onlineAvatarImages[chat.peer] }
+    : chat), [data?.chats, ctx.onlineAvatarImages]);
 
   const counts = useMemo(() => countOnlineChats(chats), [chats]);
   const ownership = useMemo(() => {
@@ -290,6 +295,25 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   }, [visible, selectedPeer]);
 
   const selected = visible.find((c) => c.peer === selectedPeer) || chats.find((c) => c.peer === selectedPeer) || null;
+  const visibleChecked = visible.filter((chat) => checkedPeers.has(chat.peer)).length;
+  const allVisibleChecked = visible.length > 0 && visibleChecked === visible.length;
+  const selectedOnline = useMemo(() => chats.filter((chat) => checkedPeers.has(chat.peer)), [chats, checkedPeers]);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = visibleChecked > 0 && !allVisibleChecked;
+  }, [visibleChecked, allVisibleChecked]);
+  useEffect(() => {
+    if (!data) return;
+    const peers = new Set(data.chats.map((chat) => chat.peer));
+    setCheckedPeers((current) => {
+      const next = new Set([...current].filter((peer) => peers.has(peer)));
+      return next.size === current.size ? current : next;
+    });
+  }, [data]);
+  const toggleChecked = useCallback((peer: string) => setCheckedPeers((current) => {
+    const next = new Set(current);
+    if (next.has(peer)) next.delete(peer); else next.add(peer);
+    return next;
+  }), []);
   const canExport = !!data?.chats.length;
   const resultCount = !data ? (loading ? "正在读取会话…" : "尚无会话数据") : unknownInScope > 0
     ? `${visible.length ? `${visible.length} 个已确认` : "尚无已确认结果"} · ${unknownInScope} 个所有权待确认`
@@ -378,17 +402,6 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                 </button>
               ))}
             </div>
-            <button
-              className={`online-owned-filter ${onlyOwned ? "on" : ""}`}
-              type="button"
-              aria-pressed={onlyOwned}
-              data-tip={ownership.unknown.length ? "只显示当前账号拥有的群组和频道；部分聊天的所有权待确认" : "只显示当前账号拥有的群组和频道"}
-              onClick={() => setOnlyOwned((value) => !value)}
-            >
-              <Crown size={13} aria-hidden="true" />
-              <span>我拥有的</span>
-              <span className="online-tab-count">{data ? ownershipCountLabel(ownership.owned.length, ownership.unknown.length) : "—"}</span>
-            </button>
             <div className="online-sort">
               <Select
                 ariaLabel="在线聊天排序"
@@ -404,8 +417,14 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
               {activeFolder ? `${activeFolder.title} · ${resultCount}` : resultCount}
             </span>
 
-            {folders.length > 0 && (
-              <div className="online-folders" role="group" aria-label="我的 Telegram 分组">
+              <div className="online-folders" role="group" aria-label="所有权和 Telegram 分组筛选">
+                <button className={`online-owned-filter ${onlyOwned ? "on" : ""}`} type="button" aria-pressed={onlyOwned}
+                  data-tip={ownership.unknown.length ? "只显示当前账号拥有的群组和频道；部分聊天的所有权待确认" : "只显示当前账号拥有的群组和频道"}
+                  onClick={() => setOnlyOwned((value) => !value)}>
+                  <Crown size={13} aria-hidden="true" /><span>我拥有的</span>
+                  <span className="online-tab-count">{data ? ownershipCountLabel(ownership.owned.length, ownership.unknown.length) : "—"}</span>
+                </button>
+                {folders.length > 0 && <>
                 <span className="online-folders-label">我的分组</span>
                 <div className="online-folders-scroll">
                   {folders.map((folder) => (
@@ -426,21 +445,35 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
                     </button>
                   ))}
                 </div>
+                </>}
               </div>
-            )}
           </div>
 
           <div className="online-layout">
+            <div className="online-list-column">
+            <div className="online-selection-bar">
+              <label><input ref={selectAllRef} type="checkbox" checked={allVisibleChecked} disabled={!visible.length} onChange={() => setCheckedPeers((current) => {
+                const next = new Set(current);
+                visible.forEach((chat) => { if (allVisibleChecked) next.delete(chat.peer); else next.add(chat.peer); });
+                return next;
+              })} /> 全选当前列表</label>
+              <span>已选 {checkedPeers.size} 个</span>
+              {checkedPeers.size > 0 && <button className="btn sm ghost" onClick={() => setCheckedPeers(new Set())}>清空</button>}
+              <button className="btn sm primary" disabled={selectedOnline.length === 0 || ctx.chatsStatus !== "ready"} data-tip={ctx.chatsStatus !== "ready" ? "等待本地聊天列表加载完成，以便安全匹配已有档案" : undefined} onClick={() => setBatchOpen(true)}><CloudDownload size={12} /> 批量归档</button>
+            </div>
             <OnlineChatList
               chats={visible}
               selectedPeer={selectedPeer}
               loading={loading}
               hasData={!!data}
+              checkedPeers={checkedPeers}
               emptyTitle={onlyOwned && unknownInScope ? "所有权信息尚未确认" : onlyOwned ? "没有匹配的自有聊天" : undefined}
               emptyHint={onlyOwned && unknownInScope ? (loading ? "正在刷新在线列表…" : "刷新列表后重试，未确认的聊天暂不显示。") : onlyOwned ? "调整筛选条件，或关闭“我拥有的”。" : undefined}
               today={today}
               onSelect={setSelectedPeer}
+              onToggle={toggleChecked}
             />
+            </div>
 
             <aside className="online-detail" aria-label="在线聊天详情">
               {!selected ? (
@@ -452,11 +485,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
               ) : (
                 <>
                   <div className="online-detail-head">
-                    {selected.avatar ? (
-                      <img className="online-avatar xl" src={selected.avatar} alt="" />
-                    ) : (
-                      <span className="online-avatar xl" style={avatarStyle(selected)}>{initials(selected.name)}</span>
-                    )}
+                    <ChatAvatar name={selected.name} peer={selected.peer} avatar={selected.avatar} className="xl" />
                     <div>
                       <h2>{selected.name}</h2>
                       <p>
@@ -547,6 +576,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
           toast={ctx.toast}
         />
       )}
+      {batchOpen && <AllOnlineUpdateDialog chats={ctx.chats} selectedOnline={selectedOnline} availableOnline={chats} onClose={() => setBatchOpen(false)} onStarted={(taskId) => { setBatchOpen(false); setCheckedPeers(new Set()); if (taskId) ctx.openTask(taskId); }} toast={ctx.toast} />}
     </>
   );
 }

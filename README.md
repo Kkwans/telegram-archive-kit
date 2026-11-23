@@ -8,7 +8,7 @@ Windows 桌面客户端 + 终端版。以 [tdl](https://github.com/iyear/tdl) �
 把「媒体下载 → 增量归档 → 网页生成 → 日常浏览」串成一条完整的本地流水线，全程数据留在你自己的硬盘上。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-4.0.8-2f6bff.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.5.0-2f6bff.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6.svg)](#-环境要求)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Release](https://img.shields.io/github/v/release/Kkwans/telegram-archive-kit?color=green)](https://github.com/Kkwans/telegram-archive-kit/releases)
@@ -153,6 +153,7 @@ TAK 把两者接了起来：你提供 Telegram Desktop 导出的 `result.json`�
 
 - 读取完整对话列表、类型、未读、置顶、最后消息与真实头像；
 - 支持私聊 / 群组 / 频道 / 归档夹筛选、搜索与排序；「我拥有的」可叠加筛选当前账号拥有的群组和频道；
+- 在线列表可多选或全选当前筛选结果，统一统计后批量归档；本地聊天可按自定义分组整理并设置显示名称，客户端和网页共用整理结果；
 - 对已归档聊天执行「在线更新」：按本地最大 Message ID 增量拉取，只合并新消息；
 - 预览弹窗展示新增消息、媒体类型构成与预计大小；
 - **同时核对档案库真实缺失的媒体**：如果上次下载被停止，即使 `result.json` 已是最新，也会提示「消息已最新，本地仍缺 N 个媒体」，并可直接补全；

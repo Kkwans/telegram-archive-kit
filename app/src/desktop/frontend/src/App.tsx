@@ -8,10 +8,11 @@ import {
   FileJson,
   FolderInput,
   FolderOpen,
+  FolderTree,
+  ChevronRight,
   Globe,
   House,
   Info,
-  Settings2,
   ListTodo,
   MessagesSquare,
   Minus,
@@ -28,7 +29,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { call } from "./rpc";
-import type { Bootstrap, ChatRow, DesktopState, DoneState, DownloadState, LoginState, MediaPage, MediaSummary, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
+import type { Bootstrap, ChatGroup, ChatRow, DesktopState, DoneState, DownloadState, LoginState, MediaPage, MediaSummary, OperationState, PendingInput, TaskInfo, ToastAction, ToastKind, ViewerPrefs } from "./types";
+import { chatDisplayName } from "./chatDisplay";
+import { ChatOrganizationDialog } from "./ChatOrganizationDialog";
+import { ChatAvatar, useLocalChatAvatars } from "./ChatAvatar";
 import { Account, Chats, Diagnostics, Home, Library, SettingsPage, type PageCtx } from "./pages";
 import { TasksPage } from "./TaskCenter";
 import type { SyncPlanLocation } from "./SyncPlans";
@@ -129,6 +133,11 @@ async function frostSnapshot(src: string): Promise<string> {
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [chats, setChats] = useState<ChatRow[]>([]);
+  const [chatGroups, setChatGroups] = useState<ChatGroup[]>([]);
+  const [organizerOpen, setOrganizerOpen] = useState(false);
+  const [collapsedChatGroups, setCollapsedChatGroups] = useState<Set<string>>(new Set());
+  const [localChatsExpanded, setLocalChatsExpanded] = useState(false);
+  const { avatars: localAvatars, downloaded: onlineAvatarImages, applyOnlineSnapshot } = useLocalChatAvatars(chats, boot?.libraryKey ?? "", !!boot?.hasSession, organizerOpen);
   const [chatsStatus, setChatsStatus] = useState<"loading" | "ready" | "error">("loading");
   const chatsRef = useRef<ChatRow[]>([]);
   chatsRef.current = chats;
@@ -311,6 +320,10 @@ export default function App() {
       setBoot(next);
       if (!sameLibrary) {
         setChats([]);
+        setChatGroups([]);
+        setOrganizerOpen(false);
+        setCollapsedChatGroups(new Set());
+        setLocalChatsExpanded(false);
         setSelected("");
         setChatsStatus("loading");
       }
@@ -318,7 +331,7 @@ export default function App() {
     });
     void Promise.allSettled([
       bootstrap,
-      call<{ libraryKey: string; chats: ChatRow[] }>("listChats", undefined, signal),
+      call<{ libraryKey: string; chats: ChatRow[]; groups?: ChatGroup[] }>("listChats", undefined, signal),
     ]).then(([bootResult, list]) => {
       if (signal.aborted) return;
       if (bootResult.status !== "fulfilled" || !bootResult.value) {
@@ -333,6 +346,7 @@ export default function App() {
         });
         setBoot({ ...next, chats: rows.length });
         setChats(rows);
+        setChatGroups(list.value.groups ?? []);
         setChatsStatus("ready");
         setSelected((prev) => (sameLibrary && rows.some((row) => row.slug === prev) ? prev : rows.find((row) => row.current)?.slug || rows[0]?.slug || ""));
       } else {
@@ -616,6 +630,9 @@ export default function App() {
       running,
       history,
       refresh,
+      openChatOrganizer: () => setOrganizerOpen(true),
+      applyOnlineSnapshot,
+      onlineAvatarImages,
       applyMediaSummary,
       toast,
       go,
@@ -630,7 +647,7 @@ export default function App() {
       applyPrefs: setPrefs,
       setToastSeconds,
     }),
-    [boot, chats, chatsStatus, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, go, refresh, applyMediaSummary, toast, setToastSeconds]
+    [boot, chats, chatsStatus, selected, dl, op, done, login, running, history, tasks, prefs, onlineRequest, go, refresh, applyMediaSummary, toast, setToastSeconds, applyOnlineSnapshot, onlineAvatarImages]
   );
 
   useEffect(() => {
@@ -684,7 +701,7 @@ export default function App() {
     ];
     const chatsCmds: Command[] = chats.map((c) => ({
       id: `chat-${c.slug}`,
-      label: `打开聊天：${c.name}`,
+      label: `打开聊天：${chatDisplayName(c)}`,
       hint: `${c.messages.toLocaleString()} 条消息`,
       section: "聊天",
       run: () => {
@@ -852,6 +869,23 @@ export default function App() {
     window.addEventListener("pointerup", up);
   };
 
+  const sidebarChat = (c: ChatRow) => (
+    <button
+      key={c.slug}
+      className={`chat-item ${c.slug === selected && page === "chats" ? "on" : ""}`}
+      onClick={() => { setSelected(c.slug); go("chats"); }}
+      data-tip={sideCollapsed ? chatTooltip(c) : undefined}
+      data-tip-heading={chatDisplayName(c)}
+      aria-label={`${chatDisplayName(c)}，${c.messages} 条消息，${c.media} 个媒体`}
+    >
+      <ChatAvatar name={localAvatars[c.slug]?.name || chatDisplayName(c)} peer={localAvatars[c.slug]?.peer || `local:${c.id || c.slug}`} avatar={localAvatars[c.slug]?.avatar} className="sidebar-chat-avatar" />
+      <span className="chat-text">
+        <span className="chat-name">{chatDisplayName(c)}</span>
+        <span className="chat-meta">{c.messages.toLocaleString()} 条 · {c.media.toLocaleString()} 媒体{c.missing > 0 && <span className="warn"> · 缺失 {c.missing}</span>}</span>
+      </span>
+    </button>
+  );
+
   return (
     <div className="app">
       {(["n", "s", "e", "w", "nw", "ne", "sw", "se"] as const).map((edge) => (
@@ -941,16 +975,18 @@ export default function App() {
           <div className="side-head">
             {!sideCollapsed && (
               <>
-                <span className="side-title">本地聊天</span>
-                <span className="side-count">{chats.length}</span>
+                <button className="side-title-toggle" aria-expanded={localChatsExpanded} onClick={() => setLocalChatsExpanded((value) => !value)}>
+                  <ChevronRight size={12} className={localChatsExpanded ? "expanded" : ""} />
+                  <span className="side-title">本地聊天</span><span className="side-count">{chats.length}</span>
+                </button>
                 <span className="spacer" />
-                <button className="side-manage" onClick={() => go("library")} data-tip="打开档案管理" aria-label="打开档案管理">
-                  <Settings2 size={12} />
+                <button className="side-manage" disabled={!boot?.libraryKey} onClick={() => setOrganizerOpen(true)} data-tip="管理分组与聊天名称" aria-label="管理聊天分组">
+                  <FolderTree size={12} />
                 </button>
               </>
             )}
           </div>
-          <div className="chat-list">
+          <div className="chat-list" hidden={!localChatsExpanded}>
             {chats.length === 0 && (
               <div className="side-empty">
                 还没有聊天。
@@ -958,28 +994,21 @@ export default function App() {
                 到「档案管理」导入 result.json。
               </div>
             )}
-            {chats.map((c) => (
-              <button
-                key={c.slug}
-                className={`chat-item ${c.slug === selected && page === "chats" ? "on" : ""}`}
-                onClick={() => {
-                  setSelected(c.slug);
-                  go("chats");
-                }}
-                data-tip={sideCollapsed ? chatTooltip(c) : undefined}
-                data-tip-heading={c.name}
-                aria-label={`${c.name}，${c.messages} 条消息，${c.media} 个媒体`}
-              >
-                <span className="avatar">{c.name.slice(0, 1)}</span>
-                <span className="chat-text">
-                  <span className="chat-name">{c.name}</span>
-                  <span className="chat-meta">
-                    <span>{c.messages.toLocaleString()} 条</span>
-                    <span>{c.media.toLocaleString()} 媒体</span>
-                    {c.missing > 0 && <span className="warn">缺失 {c.missing}</span>}
-                  </span>
-                </span>
-              </button>
+            {sideCollapsed || chatGroups.length === 0 ? chats.map(sidebarChat) : [
+              ...chatGroups.map((group) => ({ id: group.id, name: group.name, chats: chats.filter((chat) => chat.groupId === group.id) })),
+              { id: "", name: "未分组", chats: chats.filter((chat) => !chat.groupId) },
+            ].filter((group) => group.id || group.chats.length > 0).map((group) => (
+              <div className="local-chat-group" key={group.id || "ungrouped"}>
+                <button className="local-chat-group-head" aria-expanded={!collapsedChatGroups.has(group.id)} onClick={() => setCollapsedChatGroups((current) => {
+                  const next = new Set(current);
+                  if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
+                  return next;
+                })}>
+                  <ChevronRight size={12} className={collapsedChatGroups.has(group.id) ? "" : "expanded"} />
+                  <span>{group.name}</span><small>{group.chats.length}</small>
+                </button>
+                {!collapsedChatGroups.has(group.id) && group.chats.map(sidebarChat)}
+              </div>
             ))}
           </div>
           {!sideCollapsed && <div className="side-resizer" onPointerDown={startResize} aria-hidden="true" />}
@@ -1160,6 +1189,8 @@ export default function App() {
           })}
         </div>
       )}
+
+      {organizerOpen && boot?.libraryKey && <ChatOrganizationDialog chats={chats} groups={chatGroups} avatars={localAvatars} libraryKey={boot.libraryKey} refresh={refresh} onClose={() => setOrganizerOpen(false)} toast={toast} />}
 
       {downloadTarget && (
         <OnlineUpdateDialog

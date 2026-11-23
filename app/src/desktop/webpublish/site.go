@@ -73,6 +73,7 @@ func (s *Site) Publish(catalog Catalog, scope Scope) int {
 		return 0
 	}
 	next := make(map[string]*entry)
+	visibleGroups := make(map[string]bool)
 	for _, chat := range catalog.Chats {
 		id, checked := selected[chat.Slug]
 		if !chat.Ready || (!scope.All && (!checked || id != chat.ID)) {
@@ -88,9 +89,17 @@ func (s *Site) Publish(catalog Catalog, scope Scope) int {
 		}
 		next[chat.Slug] = old
 		row := chat.info
+		if row.GroupID != "" {
+			visibleGroups[row.GroupID] = true
+		}
 		row.DataScript, row.SourceRel, row.ReportRel, row.WorkspaceRel = "", "", "", ""
 		row.MessagesRel = "chats/" + chat.Slug + "/messages.html"
 		manifest.Chats = append(manifest.Chats, row)
+	}
+	for _, group := range catalog.Groups {
+		if scope.All || visibleGroups[group.ID] {
+			manifest.Groups = append(manifest.Groups, group)
+		}
 	}
 	for slug, old := range s.entries {
 		if next[slug] != old {

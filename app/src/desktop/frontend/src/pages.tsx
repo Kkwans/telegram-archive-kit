@@ -68,6 +68,7 @@ import {
 import Artplayer from "artplayer";
 import { pinyin } from "pinyin-pro";
 import { call } from "./rpc";
+import { chatDisplayName } from "./chatDisplay";
 import { Select } from "./Select";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RemoteConnections, type SavedRemoteConnection } from "./RemoteConnections";
@@ -111,6 +112,9 @@ export interface PageCtx {
   running: boolean;
   history: { now: number; avg: number }[];
   refresh: () => void;
+  openChatOrganizer: () => void;
+  applyOnlineSnapshot: (chats: OnlineChat[]) => void;
+  onlineAvatarImages: Record<string, string>;
   toast: (msg: string, kind?: boolean | ToastKind, action?: ToastAction) => void;
   go: (page: string) => void;
   openOnline: (filter?: string) => void;
@@ -289,7 +293,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               ariaLabel="选择要同步的聊天"
               value={syncSlug || chats[0]?.slug || ""}
               onChange={setSyncSlug}
-              options={chats.map((c) => ({ value: c.slug, label: c.name }))}
+              options={chats.map((c) => ({ value: c.slug, label: chatDisplayName(c) }))}
             />
           </div>
           <div className="sync-actions">
@@ -402,9 +406,9 @@ export function Home({ ctx }: { ctx: PageCtx }) {
             <div className="recent-chats">
               {recentChats.map((c) => (
                 <button key={c.slug} onClick={() => { setSelected(c.slug); go("chats"); }}>
-                  <span className="avatar">{c.name.slice(0, 1)}</span>
+                  <span className="avatar">{Array.from(chatDisplayName(c))[0] || "?"}</span>
                   <span className="rc-main">
-                    <b>{c.name}</b>
+                    <b>{chatDisplayName(c)}</b>
                     <span>{c.messages.toLocaleString()} 条 · {c.media.toLocaleString()} 媒体{c.missing > 0 ? ` · 缺失 ${c.missing}` : ""}</span>
                   </span>
                   <span className="rc-time">{c.updatedAt?.slice(0, 10) || "--"}</span>
@@ -428,7 +432,7 @@ export function Home({ ctx }: { ctx: PageCtx }) {
               {recentTasks.map((t) => (
                 <div key={t.id} className={`home-task ${t.state}`}>
                   {t.state === "running" ? <RefreshCw size={13} className="spin" /> : t.state === "done" ? <CheckCircle2 size={13} color="var(--ok)" /> : t.state === "paused" ? <Pause size={13} color="var(--warn)" /> : t.state === "partial" ? <AlertTriangle size={13} color="var(--warn)" /> : t.state === "stopped" ? <Square size={13} color="var(--muted)" /> : <X size={13} color="var(--danger)" />}
-                  <span>{(() => { const label = t.kind === "sync" ? "下载聊天" : t.kind === "sync-all" ? "批量下载" : t.kind === "online-update-batch" ? "批量在线更新" : t.kind === "refresh" ? "重建网页" : t.title; return t.chat && !label.includes(t.chat) ? `${label} · ${t.chat}` : label; })()}</span>
+                  <span>{(() => { const label = t.kind === "sync" ? "下载聊天" : t.kind === "sync-all" ? "批量下载" : t.kind === "online-update-batch" ? (t.mode === "archive" ? "批量在线归档" : "批量在线更新") : t.kind === "refresh" ? "重建网页" : t.title; return t.chat && !label.includes(t.chat) ? `${label} · ${t.chat}` : label; })()}</span>
                   <em>{t.state === "running" ? `${t.percent}%` : t.state === "done" ? "完成" : t.state === "paused" ? "已暂停" : t.state === "partial" ? "部分完成" : t.state === "stopped" ? "已终止" : "失败"}</em>
                 </div>
               ))}
@@ -646,7 +650,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
     <>
       <div className="page-head">
         <div className="chat-title">
-          <h1>{current.name}</h1>
+          <h1>{chatDisplayName(current)}</h1>
         </div>
         <div className="actions">
           <button className="btn ghost" onClick={() => go("library")}>
@@ -698,6 +702,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
         </div>
         <div className="chat-facts-grid chat-facts-three">
           <div className="fact"><span>类型</span><b>{current.type || "--"}</b></div>
+          {current.displayName && <div className="fact"><span>原始聊天名称</span><b>{current.name}</b></div>}
           <div className="fact"><span>Chat ID</span><b className="mono">{current.id || (current.official > 0 ? "在线更新时识别" : "--")}</b></div>
           <div className="fact"><span>官方导入</span><b>{current.official} 个</b></div>
           <div className="fact"><span>首次消息</span><b>{dateTime(current.firstTs)}</b></div>
@@ -768,7 +773,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
       <OnlineChatPickerDialog
         open={matchPickerOpen}
-        title={`为「${current.name}」选择在线会话`}
+        title={`为「${chatDisplayName(current)}」选择在线会话`}
         chats={matchChats}
         loading={matchLoading}
         error={matchError}
@@ -785,7 +790,7 @@ export function Chats({ ctx }: { ctx: PageCtx }) {
 
       <ConfirmDialog
         open={deleteConfirm}
-        title={`删除本地归档「${current.name}」？`}
+        title={`删除本地归档「${chatDisplayName(current)}」？`}
         message="只删除档案库副本，Telegram 云端不受影响，且无法从 TAK 撤销。"
         confirmLabel="删除归档"
         danger
@@ -3332,8 +3337,8 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
       let result = 0;
       switch (chatSort.key) {
         case "name":
-          result = chatPinyinCollator.compare(chatPinyinKey(a.name || ""), chatPinyinKey(b.name || ""));
-          if (result === 0) result = chatNameCollator.compare(a.name || "", b.name || "");
+          result = chatPinyinCollator.compare(chatPinyinKey(chatDisplayName(a)), chatPinyinKey(chatDisplayName(b)));
+          if (result === 0) result = chatNameCollator.compare(chatDisplayName(a), chatDisplayName(b));
           if (result === 0) result = a.slug.localeCompare(b.slug);
           break;
         case "updatedAt":
@@ -3347,7 +3352,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           result = (a[chatSort.key] ?? 0) - (b[chatSort.key] ?? 0);
           break;
       }
-      if (result === 0) result = chatNameCollator.compare(a.name || "", b.name || "");
+      if (result === 0) result = chatNameCollator.compare(chatDisplayName(a), chatDisplayName(b));
       return chatSort.dir === "asc" ? result : -result;
     };
     rows.sort(compare);
@@ -4085,6 +4090,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
           <span className="meta">{chats.length} 个 · 点击行查看聊天详情，勾选后批量操作</span>
         </div>
         <div className="chat-toolbar">
+          <button className="btn sm" onClick={ctx.openChatOrganizer}><FolderPlus size={12} /> 整理分组</button>
           <span className={`select-summary ${sel.size > 0 ? "on" : ""}`}>
             {sel.size > 0 ? <>已选 <b>{sel.size}</b> 个聊天</> : "勾选聊天后可批量操作"}
           </span>
@@ -4146,13 +4152,13 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   data-tip="点击查看聊天详情"
                 >
                   <td className="check-col" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={sel.has(c.slug)} onChange={() => toggleSel(c.slug)} aria-label={`选择 ${c.name}`} />
+                    <input type="checkbox" checked={sel.has(c.slug)} onChange={() => toggleSel(c.slug)} aria-label={`选择 ${chatDisplayName(c)}`} />
                   </td>
                   <td>
                     <span className="chat-cell">
-                      <span className="avatar">{c.name.slice(0, 1)}</span>
+                      <span className="avatar">{Array.from(chatDisplayName(c))[0] || "?"}</span>
                       <span>
-                        <b>{c.name}</b>
+                        <b>{chatDisplayName(c)}</b>
                         <em>{c.type || "聊天"} · ID {c.id || "--"}</em>
                       </span>
                     </span>
@@ -4165,16 +4171,16 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   <td className="muted">{dateTime(c.updatedAt)}</td>
                   <td className="row-action">
                     <div className="row-actions" onClick={(e) => e.stopPropagation()}>
-                      <button className="row-btn" aria-label={`打开 ${c.name}`} onClick={() => openChat(c.slug)}>
+                      <button className="row-btn" aria-label={`打开 ${chatDisplayName(c)}`} onClick={() => openChat(c.slug)}>
                         <ArrowUpRight size={13} /> <span>打开</span>
                       </button>
-                      <button className="row-btn" aria-label={`重建 ${c.name} 的网页`} onClick={() => call("startRefreshWeb", { slug: c.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
+                      <button className="row-btn" aria-label={`重建 ${chatDisplayName(c)} 的网页`} onClick={() => call("startRefreshWeb", { slug: c.slug }).then(() => toast("重建任务已加入任务中心")).catch((e: Error) => toast(e.message, true))}>
                         <RefreshCw size={13} /> <span>重建</span>
                       </button>
-                      <button className="row-btn" aria-label={`定位 ${c.name} 的目录`} onClick={() => call("revealChat", { slug: c.slug }).catch((e: Error) => toast(e.message, true))}>
+                      <button className="row-btn" aria-label={`定位 ${chatDisplayName(c)} 的目录`} onClick={() => call("revealChat", { slug: c.slug }).catch((e: Error) => toast(e.message, true))}>
                         <FolderOpen size={13} /> <span>定位</span>
                       </button>
-                      <button className="row-btn danger" aria-label={`删除 ${c.name}`} onClick={() => removeChat(c)}>
+                      <button className="row-btn danger" aria-label={`删除 ${chatDisplayName(c)}`} onClick={() => removeChat(c)}>
                         <Trash2 size={13} /> <span>删除</span>
                       </button>
                     </div>
@@ -4526,9 +4532,9 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetailChat(null); }}>
           <div className="modal chat-detail-modal" role="dialog" aria-modal="true" aria-labelledby="chat-detail-title">
             <div className="chat-detail-head">
-              <span className="avatar lg">{detailChat.name.slice(0, 1)}</span>
+              <span className="avatar lg">{Array.from(chatDisplayName(detailChat))[0] || "?"}</span>
               <div className="chat-detail-id">
-                <h2 id="chat-detail-title">{detailChat.name}</h2>
+                <h2 id="chat-detail-title">{chatDisplayName(detailChat)}</h2>
                 <p>{detailChat.type || "聊天"} · ID {detailChat.id || "--"}</p>
               </div>
               <button className="icon-btn lg" aria-label="关闭聊天详情" onClick={() => setDetailChat(null)}>
@@ -4537,6 +4543,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
             </div>
 
             <div className="chat-detail-grid">
+              {detailChat.displayName && <div className="chat-detail-tile"><span>原始聊天名称</span><b>{detailChat.name}</b></div>}
               <div className="chat-detail-tile"><span>Chat ID</span><b className="mono">{detailChat.id || "--"}</b></div>
               <div className="chat-detail-tile"><span>工作区目录</span><b className="mono" data-tip={detailChat.dir}>{detailChat.slug}</b></div>
               <div className="chat-detail-tile"><span>消息</span><b>{detailChat.messages.toLocaleString()}</b></div>
@@ -4664,7 +4671,7 @@ export function Library({ ctx, remoteRequest = 0, onRemoteHandled, onRemoteClose
                   ariaLabel="官方导入导入目标"
                   value={target}
                   onChange={setTarget}
-                  options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + c.name }))]}
+                  options={[{ value: "", label: "创建为新聊天" }, ...official.chats.map((c) => ({ value: c.slug, label: "合并到：" + chatDisplayName(c) }))]}
                 />
               </label>
             </>}

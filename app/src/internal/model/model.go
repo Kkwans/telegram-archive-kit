@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-const Version = "4.0.8"
+const Version = "4.5.0"
 const SchemaVersion = 9
 const DefaultNamespace = "telegram-archive-kit"
 
@@ -133,9 +133,17 @@ type WorkspaceMeta struct {
 	OfficialExports []OfficialExportMeta `json:"official_exports,omitempty"`
 }
 
+// ChatGroup is a library-local, single-level organization group.
+type ChatGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type LibraryChat struct {
 	Slug            string `json:"slug"`
 	Name            string `json:"name"`
+	DisplayName     string `json:"display_name,omitempty"`
+	GroupID         string `json:"group_id,omitempty"`
 	Type            string `json:"type,omitempty"`
 	ID              string `json:"id,omitempty"`
 	Messages        int    `json:"messages"`
@@ -163,6 +171,7 @@ type LibraryManifest struct {
 	SchemaVersion int           `json:"schema_version"`
 	Generator     string        `json:"generator"`
 	GeneratedAt   string        `json:"generated_at"`
+	Groups        []ChatGroup   `json:"groups,omitempty"`
 	Chats         []LibraryChat `json:"chats"`
 }
 

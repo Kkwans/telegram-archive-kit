@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { call } from "./rpc";
+import { chatDisplayName } from "./chatDisplay";
 import { bytes } from "./format";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { BackfillPreview, BulkPreview, ChatRow, OnlineChat, OnlineChats, OnlineExportPreview, OnlineExportProgress, OnlineExportResult } from "./types";
@@ -622,6 +623,7 @@ type AllUpdateStatus = "pending" | "checking" | "ready" | "up-to-date" | "missin
 interface AllUpdateRow {
   chat: ChatRow;
   online?: OnlineChat;
+  targetSlug?: string;
   status: AllUpdateStatus;
   preview?: OnlineExportPreview;
   error?: string;
@@ -647,13 +649,19 @@ function findOnlinePeer(online: OnlineChat[], chats: ChatRow[], chat: ChatRow): 
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
+export function AllOnlineUpdateDialog({ chats, selectedOnline, availableOnline, onClose, onStarted, toast }: {
   chats: ChatRow[];
+  selectedOnline?: OnlineChat[];
+  availableOnline?: OnlineChat[];
   onClose: () => void;
   onStarted: (taskId: string) => void;
   toast: (message: string, error?: boolean) => void;
 }) {
-  const [rows, setRows] = useState<AllUpdateRow[]>(() => chats.map((chat) => ({ chat, status: "pending" })));
+  const onlineMode = selectedOnline !== undefined;
+  const [rows, setRows] = useState<AllUpdateRow[]>(() => onlineMode ? (selectedOnline ?? []).map((online) => ({
+    chat: { slug: `online:${online.peer}`, name: online.name, messages: 0, media: 0, missing: 0, pages: 0, hasSource: false, official: 0, dir: "", current: false },
+    online, status: "pending",
+  })) : chats.map((chat) => ({ chat, targetSlug: chat.slug, status: "pending" })));
   const [onlineChats, setOnlineChats] = useState<OnlineChat[]>([]);
   const [onlineError, setOnlineError] = useState("");
   const [scanIndex, setScanIndex] = useState(0);
@@ -698,21 +706,37 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
   useEffect(() => {
     const prepare = async () => {
       try {
-        const res = await call<OnlineChats>("onlineChats", { timeout: 60 });
+        const res = onlineMode ? { chats: availableOnline ?? selectedOnline ?? [] } : await call<OnlineChats>("onlineChats", { timeout: 60 });
         if (!alive.current) return;
         setOnlineChats(res.chats);
-        for (let index = 0; index < chats.length; index++) {
+        const initialRows = rowsRef.current;
+        for (let index = 0; index < initialRows.length; index++) {
           if (!alive.current) return;
-          const chat = chats[index];
-          const peer = findOnlinePeer(res.chats, chats, chat);
+          const row = initialRows[index];
+          const chat = row.chat;
+          const peer = onlineMode ? row.online : findOnlinePeer(res.chats, chats, chat);
           if (!peer) {
             updateRow(chat.slug, { status: "missing", online: undefined, preview: undefined, error: undefined });
             setScanIndex(index + 1);
             continue;
           }
-          updateRow(chat.slug, { status: "checking", online: peer, preview: undefined, error: undefined });
+          let targetSlug = row.targetSlug || "";
+          if (onlineMode) {
+            const exact = chats.find((local) => local.id && local.id === String(peer.id));
+            const name = normalizeMatchName(peer.name);
+            const localNames = name ? chats.filter((local) => normalizeMatchName(local.name) === name) : [];
+            const onlineNames = name ? res.chats.filter((online) => normalizeMatchName(online.name) === name) : [];
+            if (exact) targetSlug = exact.slug;
+            else if (localNames.length === 1 && !localNames[0].id && onlineNames.length === 1) targetSlug = localNames[0].slug;
+            else if (localNames.length > 0) {
+              updateRow(chat.slug, { status: "failed", error: "同名本地聊天无法安全自动匹配，请单独确认后归档" });
+              setScanIndex(index + 1);
+              continue;
+            }
+          }
+          updateRow(chat.slug, { status: "checking", online: peer, targetSlug, preview: undefined, error: undefined });
           try {
-            const preview = await call<OnlineExportPreview>("onlineExportPreview", { peer: peer.peer, timeout: 300, slug: chat.slug });
+            const preview = await call<OnlineExportPreview>("onlineExportPreview", { peer: peer.peer, timeout: 300, slug: targetSlug });
             if (!alive.current) {
               if (preview.token) void call("onlineExportDiscard", { token: preview.token }).catch(() => undefined);
               return;
@@ -789,7 +813,7 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
       const items = ready.map((row) => {
         const preview = row.preview!;
         return {
-          slug: row.chat.slug,
+          slug: row.targetSlug || "",
           name: row.chat.name,
           peer: preview.peer,
           onlineName: row.online?.name || preview.chat,
@@ -803,7 +827,7 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
           bytes: preview.bytes,
         };
       });
-      const res = await call<{ taskId: string }>("startOnlineUpdateBatch", { batch: items });
+      const res = await call<{ taskId: string }>("startOnlineUpdateBatch", { batch: items, mode: onlineMode ? "archive" : "" });
       started.current = true;
       tokenMap.current.clear();
       setStarting(false);
@@ -824,25 +848,25 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
           <div className="export-preview-head">
             <span className="online-avatar" style={{ background: "linear-gradient(135deg, #5a7bff, #7c5cff)" }}><RefreshCw size={18} /></span>
             <div className="export-preview-head-text">
-              <span className="export-preview-kicker">批量在线更新</span>
-              <h2 id="all-update-title">更新全部聊天</h2>
-              <p>默认按 Chat ID 或唯一名称自动匹配，名称不一致或同名时可在列表里手动选择。确认后创建后台任务，可随时关闭界面。</p>
+              <span className="export-preview-kicker">{onlineMode ? "批量在线归档" : "批量在线更新"}</span>
+              <h2 id="all-update-title">{onlineMode ? "归档所选聊天" : "更新全部聊天"}</h2>
+              <p>{onlineMode ? "逐个统计所选在线聊天；已有档案会增量更新，确认后创建后台任务。" : "默认按 Chat ID 或唯一名称自动匹配，名称不一致或同名时可在列表里手动选择。确认后创建后台任务，可随时关闭界面。"}</p>
             </div>
             <button className="icon-btn" aria-label="关闭全部更新" disabled={starting} onClick={close}><X size={15} /></button>
           </div>
 
           <div className="all-update-progress" role="status">
             <div><i style={{ width: `${scanning ? Math.max(2, scanPercent) : 100}%` }} /></div>
-            <span>{scanning ? `统计中 ${scanIndex} / ${rows.length}` : `统计完成 · ${ready.length} 个可更新`}</span>
+            <span>{scanning ? `统计中 ${scanIndex} / ${rows.length}` : `统计完成 · ${ready.length} 个${onlineMode ? "待处理" : "可更新"}`}</span>
           </div>
 
           <div className="all-update-summary">
             <div className="all-update-summary-main">
-              <span>待更新聊天</span>
+              <span>{onlineMode ? "待处理聊天" : "待更新聊天"}</span>
               <b>{ready.length}<em> / {rows.length}</em></b>
-              <small>{scanning ? `已统计 ${scanIndex} / ${rows.length}` : `${upToDateCount} 个已最新 · ${missingCount} 个未匹配${failedCount ? ` · ${failedCount} 个失败` : ""}`}</small>
+              <small>{scanning ? `已统计 ${scanIndex} / ${rows.length}` : `${upToDateCount} 个已最新${onlineMode ? "" : ` · ${missingCount} 个未匹配`}${failedCount ? ` · ${failedCount} 个失败` : ""}`}</small>
             </div>
-            <div><span>消息</span><b>{totals.messages.toLocaleString()}</b><small>来自待更新聊天</small></div>
+            <div><span>消息</span><b>{totals.messages.toLocaleString()}</b><small>来自待{onlineMode ? "处理" : "更新"}聊天</small></div>
             <div><span>媒体</span><b>{totals.media.toLocaleString()}</b><small>图片 {totals.images.toLocaleString()} · 视频 {totals.videos.toLocaleString()}</small></div>
             <div><span>预计下载</span><b>{totals.bytes > 0 ? bytes(totals.bytes) : "—"}</b><small>含此前缺失媒体</small></div>
           </div>
@@ -854,7 +878,7 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
             <span><FileText size={13} /> 文件 <b>{totals.files.toLocaleString()}</b></span>
           </div>
 
-          <div className="all-update-table">
+          <div className={`all-update-table ${onlineMode ? "online-batch" : ""}`}>
             <div className="all-update-scroll">
               <div className="all-update-head" role="row">
                 <span>聊天</span>
@@ -865,7 +889,7 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
                 <span>音频</span>
                 <span>文件</span>
                 <span>大小</span>
-                <span>操作</span>
+                <span>{onlineMode ? "状态" : "操作"}</span>
               </div>
               {rows.map((row) => {
                 const rowPreview = row.preview && !row.preview.upToDate ? row.preview : null;
@@ -879,20 +903,26 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
                     : row.status === "missing"
                       ? "未自动匹配，请手动选择"
                       : row.status === "ready"
-                        ? `${onlineText} · 待更新`
+                        ? `${onlineText} · 待${onlineMode ? "归档" : "更新"}`
                         : row.status === "up-to-date"
                           ? `${onlineText} · 已是最新`
                           : allUpdateStatusLabel[row.status]);
-                const canMatch = (row.status === "ready" || row.status === "up-to-date" || row.status === "missing" || row.status === "failed") && !matchingSlug;
+                const canMatch = !onlineMode && (row.status === "ready" || row.status === "up-to-date" || row.status === "missing" || row.status === "failed") && !matchingSlug;
+                const local = onlineMode && row.targetSlug ? chats.find((chat) => chat.slug === row.targetSlug) : undefined;
+                const badge = row.status === "up-to-date" ? { text: "已最新", tone: "current" }
+                  : row.status === "ready" ? (row.preview?.existed ? { text: "更新", tone: "update" } : { text: "新增", tone: "new" })
+                  : row.status === "failed" ? { text: "统计失败", tone: "error" }
+                  : { text: checking ? "统计中" : "等待统计", tone: "pending" };
                 return (
                   <div className={`all-update-tr status-${row.status}`} role="row" key={row.chat.slug}>
                     <span className="all-update-chat">
                       {row.online?.avatar
                         ? <img className="online-avatar" src={row.online.avatar} alt="" />
-                        : <span className="online-avatar" style={avatarStyle(row.online?.peer || row.chat.slug)}>{initials(row.chat.name)}</span>}
+                        : <span className="online-avatar" style={avatarStyle(row.online?.peer || row.chat.slug)}>{initials(chatDisplayName(row.chat))}</span>}
                       <span className="all-update-chat-text">
-                        <b>{row.chat.name}</b>
-                        <small className={row.error ? "bad" : ""} data-tip={row.error || subline}>{subline}</small>
+                        <b>{chatDisplayName(row.chat)}</b>
+                        {onlineMode ? (row.error ? <small className="bad" data-tip={row.error}>{row.error}</small> : local?.displayName ? <small data-tip={`本地名称：${local.displayName}`}>本地名称：{local.displayName}</small> : null)
+                          : <small className={row.error ? "bad" : ""} data-tip={row.error || subline}>{subline}</small>}
                       </span>
                     </span>
                     <span className="all-update-num">{rowPreview ? rowPreview.messages.toLocaleString() : "—"}</span>
@@ -903,19 +933,21 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
                     <span className="all-update-num">{rowPreview ? rowPreview.files.toLocaleString() : "—"}</span>
                     <span className="all-update-bytes">{rowPreview ? (rowPreview.bytes > 0 ? bytes(rowPreview.bytes) : "—") : "—"}</span>
                     <span className="all-update-action">
+                      {onlineMode ? <span className={`all-update-badge ${badge.tone}`}>{checking && <Loader2 size={11} className="spin" />}{badge.text}</span> : <>
                       {checking && <Loader2 size={13} className="spin" />}
                       {canMatch && (
                         <button
                           type="button"
                           className="btn sm ghost all-update-match"
                           disabled={busy}
-                          onClick={() => setPicker({ slug: row.chat.slug, name: row.chat.name, currentPeer: row.online?.peer })}
+                          onClick={() => setPicker({ slug: row.chat.slug, name: chatDisplayName(row.chat), currentPeer: row.online?.peer })}
                           data-tip={row.online ? `当前匹配：${row.online.name}` : "搜索并选择在线聊天"}
                         >
                           <Search size={12} />
                           {row.online ? "更换" : "选择聊天"}
                         </button>
                       )}
+                      </>}
                     </span>
                   </div>
                 );
@@ -934,7 +966,7 @@ export function AllOnlineUpdateDialog({ chats, onClose, onStarted, toast }: {
             <button className="btn ghost" disabled={starting} onClick={close}>取消</button>
             <button className="btn primary" disabled={busy || ready.length === 0} onClick={() => void start()}>
               {scanning || starting || matchingSlug ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
-              {scanning ? "正在统计…" : starting ? "正在创建任务…" : matchingSlug ? "正在重新统计…" : ready.length ? `开始更新 ${ready.length} 个聊天` : "没有可更新的聊天"}
+              {scanning ? "正在统计…" : starting ? "正在创建任务…" : matchingSlug ? "正在重新统计…" : ready.length ? (onlineMode ? `开始归档和更新 ${ready.length} 个聊天` : `开始更新 ${ready.length} 个聊天`) : (onlineMode ? "没有待处理的聊天" : "没有可更新的聊天")}
             </button>
           </div>
         </div>

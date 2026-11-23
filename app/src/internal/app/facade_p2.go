@@ -617,6 +617,8 @@ func (f *Facade) SwitchManagedLibrary(root string) error {
 
 // ClearLibrarySelection leaves the client open without a library.
 func (f *Facade) ClearLibrarySelection(root, id string) error {
+	chatOrganizationMu.Lock()
+	defer chatOrganizationMu.Unlock()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.taskMu.Lock()
@@ -647,6 +649,8 @@ func (f *Facade) ClearLibrarySelection(root, id string) error {
 }
 
 func (f *Facade) switchLibrary(ctx context.Context, root, expectedID, previousRoot, previousID string, managed bool) error {
+	chatOrganizationMu.Lock()
+	defer chatOrganizationMu.Unlock()
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return errors.New("缺少档案库目录")

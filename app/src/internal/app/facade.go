@@ -337,8 +337,20 @@ func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
 	if err != nil {
 		return LibraryChatsDTO{}, errors.New("档案库暂时不可访问，请重试")
 	}
+	organization, err := readChatOrganization(root)
+	if err != nil {
+		organization = chatGroupFile{}
+	}
+	groups := organization.Groups
 	out := make([]ChatDTO, 0, len(list))
 	for _, m := range list {
+		presentation, err := readChatPresentationFrom(root, m.Slug, organization)
+		if err != nil {
+			presentation = chatPresentation{}
+		}
+		if presentation.GroupID != "" && !groupExists(groups, presentation.GroupID) {
+			presentation.GroupID = ""
+		}
 		messages := m.MessageCount
 		summary, ready := f.cachedWorkspaceMediaSummary(root, m.Slug)
 		mediaCount := m.MediaCount
@@ -366,7 +378,7 @@ func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
 			}
 		}
 		dto := ChatDTO{
-			Slug: m.Slug, Name: m.Chat.Name, Type: m.Chat.Type, ID: m.Chat.ID,
+			Slug: m.Slug, Name: m.Chat.Name, DisplayName: presentation.DisplayName, GroupID: presentation.GroupID, Type: m.Chat.Type, ID: m.Chat.ID,
 			Messages: messages, Media: mediaCount, MediaReady: ready, Missing: m.MissingCount,
 			Images: summary.Images, Videos: summary.Videos, Audio: summary.Audio, Files: summary.Files,
 			TotalBytes: summary.Bytes,
@@ -399,7 +411,7 @@ func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
 		}
 		out = append(out, dto)
 	}
-	return LibraryChatsDTO{LibraryKey: key, Chats: out}, nil
+	return LibraryChatsDTO{LibraryKey: key, Chats: out, Groups: groups}, nil
 }
 
 // StartOneClick runs sync + build for one chat and streams progress events.

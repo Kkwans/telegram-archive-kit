@@ -1031,6 +1031,8 @@ func formatMetaTime(t time.Time) string {
 }
 
 func (a *App) buildLibrary() error {
+	libraryProjectionMu.Lock()
+	defer libraryProjectionMu.Unlock()
 	if err := a.ensureLibraryDirs(); err != nil {
 		return err
 	}
@@ -1054,9 +1056,24 @@ func (a *App) buildLibrary() error {
 			return err
 		}
 	}
-	manifest := LibraryManifest{SchemaVersion: schemaVersion, Generator: "TelegramArchiveKit/" + version, GeneratedAt: time.Now().Format(time.RFC3339)}
+	organization, err := readChatOrganization(a.Settings.LibraryRoot)
+	if err != nil {
+		return fmt.Errorf("无法读取聊天分组：%w", err)
+	}
+	groups := organization.Groups
+	manifest := LibraryManifest{SchemaVersion: schemaVersion, Generator: "TelegramArchiveKit/" + version, GeneratedAt: time.Now().Format(time.RFC3339), Groups: groups}
 	for _, meta := range a.listWorkspaces() {
+		presentation, err := readChatPresentationFrom(a.Settings.LibraryRoot, meta.Slug, organization)
+		if err != nil {
+			// A damaged optional presentation file must not stop archive builds.
+			// Leave the original file untouched so it can still be recovered.
+			presentation = chatPresentation{}
+		}
+		if presentation.GroupID != "" && !groupExists(groups, presentation.GroupID) {
+			presentation.GroupID = ""
+		}
 		lc := LibraryChat{Slug: meta.Slug, Name: meta.Chat.Name, Type: meta.Chat.Type, ID: meta.Chat.ID, Messages: meta.MessageCount, MediaFiles: meta.MediaCount, Missing: meta.MissingCount, FirstTS: meta.FirstTS, LastTS: meta.LastTS, ImportedAt: formatMetaTime(meta.ImportedAt), UpdatedAt: formatMetaTime(meta.UpdatedAt), FolderName: meta.Slug, OfficialExports: len(meta.OfficialExports), DataScript: "chats/" + meta.Slug + "/data/archive-data.js", SourceRel: "chats/" + meta.Slug + "/source/result.json", ReportRel: "chats/" + meta.Slug + "/archive-report.json", WorkspaceRel: "chats/" + meta.Slug + "/", MessagesRel: "chats/" + meta.Slug + "/messages.html"}
+		lc.DisplayName, lc.GroupID = presentation.DisplayName, presentation.GroupID
 		if !fileExists(a.sourcePath(meta.Slug)) {
 			lc.SourceRel = ""
 			// Official-only chats gain generated data/pages after a build. Keep
@@ -1091,7 +1108,10 @@ func (a *App) buildLibrary() error {
 		}
 		manifest.Chats = append(manifest.Chats, lc)
 	}
-	b, _ := json.Marshal(manifest)
+	b, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
 	js := append([]byte("window.__TAK_LIBRARY__ = "), b...)
 	js = append(js, []byte(";\n")...)
 	if err := os.WriteFile(filepath.Join(a.Settings.LibraryRoot, "library-data.js"), js, 0644); err != nil {

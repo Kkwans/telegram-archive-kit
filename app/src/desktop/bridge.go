@@ -226,6 +226,9 @@ type apiParams struct {
 	Token               string                   `json:"token"`
 	Limit               int                      `json:"limit"`
 	Name                string                   `json:"name"`
+	Action              string                   `json:"action"`
+	GroupID             string                   `json:"groupId"`
+	Slugs               []string                 `json:"slugs"`
 	Title               string                   `json:"title"`
 	Initial             string                   `json:"initial"`
 	Paths               []string                 `json:"paths"`
@@ -314,6 +317,11 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.Bootstrap(), nil
 	case "listChats":
 		return b.facade.LibraryChats()
+	case "editChatOrganization":
+		return b.facade.EditChatOrganization(takapp.ChatOrganizationEdit{
+			LibraryKey: p.LibraryKey, Action: p.Action, GroupID: p.GroupID,
+			Name: p.Name, Slug: p.Slug, Slugs: p.Slugs,
+		})
 	case "chatMedia":
 		return b.facade.ChatMedia(ctx, takapp.MediaQuery{
 			Slug: p.Slug, Kind: p.Kind, Sort: p.Sort, Query: p.Query, Page: p.Page, PageSize: p.PageSize,
@@ -582,7 +590,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 	case "onlineExport":
 		return b.OnlineExport(p.Peer, p.Timeout, p.Limit, p.Token, p.Slug)
 	case "startOnlineUpdateBatch":
-		return b.StartOnlineUpdateBatch(p.Batch)
+		return b.StartOnlineUpdateBatch(p.Batch, p.Mode)
 	case "pauseBatchTask":
 		return b.PauseOnlineUpdateBatch(p.ID)
 	case "resumeOnlineUpdateBatch":
@@ -888,7 +896,7 @@ func archiveMutation(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "setSettings", "onlineExport",
-		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "retryOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount":
+		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "retryOnlineUpdateBatch", "startLogin", "logoutTdl", "rcloneUnmount", "editChatOrganization":
 		return true
 	}
 	return false
@@ -899,7 +907,7 @@ func needsOpenLibrary(method string) bool {
 	case "startImportJSON", "startImportOfficial", "startImportOfficialBatch", "startExportChat", "startRefreshWeb", "startRefreshAllWeb",
 		"startSyncAllMissing", "startMergeLibrary", "startOneClick", "importJSON", "importOfficial", "deleteChat",
 		"refreshWeb", "refreshAllWeb", "exportChat", "mergeLibrary", "onlineExport", "onlineExportPreview",
-		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "retryOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat":
+		"startOnlineUpdateBatch", "resumeOnlineUpdateBatch", "retryOnlineUpdateBatch", "previewBackfill", "previewSyncAll", "chatMedia", "homeStorage", "refreshHomeStorage", "openLibrary", "revealChat", "verifyChat", "editChatOrganization":
 		return true
 	}
 	return false

@@ -36,7 +36,7 @@ type onlineBatchRequestItem struct {
 // StartOnlineUpdateBatch starts one background task that updates the selected
 // chats one by one. Each chat still produces its normal download task, which
 // the batch detail can open directly.
-func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem) (map[string]string, error) {
+func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem, mode string) (map[string]string, error) {
 	info := b.facade.AccountInfo()
 	if !info.HasSessionFile {
 		return nil, errors.New("尚未登录 Telegram，请先在账号管理完成登录")
@@ -78,8 +78,14 @@ func (b *Bridge) StartOnlineUpdateBatch(items []onlineBatchRequestItem) (map[str
 	if len(work) == 0 {
 		return nil, errors.New("没有需要更新的聊天")
 	}
+	title := "批量在线更新"
+	if mode == "archive" {
+		title = "批量在线归档"
+	} else {
+		mode = ""
+	}
 	dto := takapp.TaskDTO{
-		Kind: "online-update-batch", Title: fmt.Sprintf("批量在线更新（%d 个聊天）", len(work)),
+		Kind: "online-update-batch", Mode: mode, Title: fmt.Sprintf("%s（%d 个聊天）", title, len(work)),
 		Messages: messages, Media: media, Images: images, Videos: videos, Audio: audio, Files: files,
 		TotalBytes: totalBytes, Total: media, Detail: "等待开始",
 		Batch: batch,
@@ -206,8 +212,12 @@ func (b *Bridge) RetryOnlineUpdateBatch(id string) (string, error) {
 	if len(work) == 0 {
 		return "", errors.New("没有未完成的聊天需要重试")
 	}
+	title := "重试批量在线更新"
+	if detail.Mode == "archive" {
+		title = "重试批量在线归档"
+	}
 	dto := takapp.TaskDTO{
-		Kind: "online-update-batch", Title: fmt.Sprintf("重试批量在线更新（%d 个聊天）", len(work)),
+		Kind: "online-update-batch", Mode: detail.Mode, Title: fmt.Sprintf("%s（%d 个聊天）", title, len(work)),
 		Messages: messages, Media: media, Images: images, Videos: videos, Audio: audio, Files: files,
 		TotalBytes: totalBytes, Total: media, Detail: "等待开始",
 		Batch: batch,
@@ -451,6 +461,11 @@ func (b *Bridge) runOnlineUpdateBatch(
 			}
 			if ctx.Err() != nil {
 				return cancelRun(pos, index, res.TaskID)
+			}
+			if res.Slug != "" {
+				item.Slug = res.Slug
+				items[index].Slug = res.Slug
+				update(index, takapp.BatchItemUpdate{Slug: res.Slug})
 			}
 			if res.UpToDate || res.TaskID == "" {
 				update(index, takapp.BatchItemUpdate{Status: "已是最新", State: "done", Progress: true, Percent: 100, ResetError: true, Detail: "没有需要更新的内容"})

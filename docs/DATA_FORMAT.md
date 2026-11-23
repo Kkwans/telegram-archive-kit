@@ -9,6 +9,8 @@ Telegram Archive Library/            ← 数据目录，可整体备份/迁移
 ├── index.html                       ← 档案库首页（唯一入口）
 ├── library.json                     ← 聊天清单（机器可读）
 ├── library-data.js                  ← 首页数据（index.html 加载）
+├── chat-groups.json                 ← 旧版聊天整理数据（保留兼容读取）
+├── chat-organization-history/       ← 分组、归属和显示名称的历史快照
 ├── assets/                          ← 网页样式、脚本
 │   ├── app.css / app.js             ← 首页样式与逻辑
 │   ├── tak-bridge.css/.js           ← 聊天页搜索/日期/定位桥接层
@@ -30,6 +32,7 @@ Telegram Archive Library/            ← 数据目录，可整体备份/迁移
 ```text
 chat_<聊天名称>__<ChatID>/
 ├── workspace.json                   ← 聊天元数据（Chat ID、导入记录等）
+├── .tak-presentation.json           ← 旧版可选显示设置，保留兼容读取
 ├── source/
 │   ├── result.json                  ← 合并后的消息源数据（工作副本）
 │   └── history/                     ← 每次导入的原始 JSON 快照 + 合并前快照

@@ -50,6 +50,7 @@ type TaskBatchItemDTO struct {
 // when Progress is set, so a status-only update cannot erase a running bar.
 type BatchItemUpdate struct {
 	Status     string
+	Slug       string
 	TaskID     string
 	State      string
 	Detail     string
@@ -239,6 +240,9 @@ func (t *backgroundTask) updateBatchItem(index int, u BatchItemUpdate) {
 		return
 	}
 	item := &t.dto.Batch[index]
+	if u.Slug != "" {
+		item.Slug = u.Slug
+	}
 	if u.Status != "" {
 		item.Status = u.Status
 	}

@@ -337,6 +337,15 @@
  .home-head{max-width:none!important}
 }
 .home-sort{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.home-group-filter{height:39px;max-width:150px;padding:0 10px;border:1px solid rgba(102,126,234,.18);border-radius:12px;background:#f7f9ff;color:#5968a7;font:650 12px 'Segoe UI','Microsoft YaHei',sans-serif;cursor:pointer}
+.web-chat-group-head{width:100%;display:flex;align-items:center;gap:5px;padding:9px 7px 5px;border:0;background:transparent;color:#68748a;font:650 11px 'Segoe UI','Microsoft YaHei',sans-serif;text-align:left;cursor:pointer}
+.web-chat-group-head svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;transition:transform .15s}
+.web-chat-group-head[aria-expanded=true] svg{transform:rotate(90deg)}
+.web-chat-group-head span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.web-chat-group-head small{color:#8c97aa;font-size:10px}
+.sidebar-collapsed .web-chat-group-head{justify-content:center;padding:6px 0}
+.sidebar-collapsed .web-chat-group-head span,.sidebar-collapsed .web-chat-group-head small{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+@media(max-width:820px){.shell.mobile-open .web-chat-group-head{justify-content:flex-start;padding:9px 7px 5px}.shell.mobile-open .web-chat-group-head span,.shell.mobile-open .web-chat-group-head small{position:static;width:auto;height:auto;overflow:visible;clip-path:none}}
 .home-sort-picker-wrap{position:relative;width:132px;flex:0 0 132px}
 .home-sort-picker,.home-sort-direction{height:39px;display:flex;align-items:center;justify-content:center;gap:7px;padding:0 12px;cursor:pointer;color:#5968a7;border:1px solid rgba(102,126,234,.18);border-radius:12px;background:linear-gradient(135deg,rgba(251,253,255,.77),rgba(242,246,255,.60));-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);box-shadow:0 6px 19px rgba(47,60,106,.055),inset 0 1px 0 rgba(255,255,255,.7);font:650 12px 'Segoe UI','Microsoft YaHei',sans-serif;transition:transform .2s ease,background .2s,border-color .2s,box-shadow .2s}
 .home-sort-picker{width:100%;min-width:0;justify-content:space-between}.home-sort-direction{width:40px;padding:0}
@@ -363,6 +372,7 @@
  .home-title{font-size:clamp(18px,5vw,24px)!important}
 }
 @media(max-width:370px){.home-sort-picker-wrap{width:110px;flex-basis:110px}.home-sort-picker span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
+@media(max-width:600px){.home-head:has(.home-group-filter){flex-wrap:wrap!important}.home-head:has(.home-group-filter) .home-head-copy{flex-basis:100%!important}.home-head:has(.home-group-filter) .home-sort{max-width:100%;flex:1 1 auto!important}.home-group-filter{flex:1;min-width:0;max-width:none}}
 
 
 /* RC-8: One horizontal home header on phones, two strictly defined information
