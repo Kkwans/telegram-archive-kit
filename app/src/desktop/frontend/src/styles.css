@@ -976,15 +976,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 /* ======================== Design system pass ======================== */
 .libchip { max-width: 300px; min-width: 0; flex-shrink: 1; }
 .libchip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.side-head { gap: 8px; }
-.side-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
-.side-title-toggle { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 3px 0; border: 0; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
-.side-title-toggle svg { flex: none; transition: transform .15s ease; }
-.side-title-toggle svg.expanded { transform: rotate(90deg); }
+.side-head { gap: 8px; padding: 8px 12px 6px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.side-title-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 28px; padding: 3px 4px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.side-title-toggle:hover { background: var(--surface-2); color: var(--text); }
+.side-title-toggle:focus-visible, .side-manage:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.side-title-toggle svg { flex: none; color: var(--faint); transition: transform .15s ease; }
+.side-title-toggle svg.expanded { transform: rotate(90deg); color: var(--accent); }
+.side .chat-list { padding: 2px 8px 10px; gap: 3px; }
 .side .chat-list[hidden] { display: none; }
 .chat-item .online-avatar.sidebar-chat-avatar { width: 30px; height: 30px; border-radius: 9px; font-size: 11.5px; }
 .side-count { padding: 1px 7px; border-radius: 99px; background: var(--surface-3); color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.side-manage { width: 24px; height: 24px; margin-left: 0; padding: 0; display: grid; place-items: center; border-radius: 7px; }
+.side-manage { width: 26px; height: 26px; margin-left: 0; padding: 0; display: grid; place-items: center; border-radius: 8px; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .stat {
   padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-sm);

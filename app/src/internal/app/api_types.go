@@ -24,6 +24,8 @@ type ChatDTO struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName,omitempty"`
 	GroupID     string `json:"groupId,omitempty"`
+	AvatarColor string `json:"avatarColor,omitempty"`
+	AvatarFile  string `json:"avatarFile,omitempty"`
 	Type        string `json:"type,omitempty"`
 	ID          string `json:"id,omitempty"`
 	Messages    int    `json:"messages"`

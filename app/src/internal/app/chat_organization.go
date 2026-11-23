@@ -32,15 +32,19 @@ type chatPresentation struct {
 	Version     int    `json:"version"`
 	DisplayName string `json:"display_name,omitempty"`
 	GroupID     string `json:"group_id,omitempty"`
+	AvatarColor string `json:"avatar_color,omitempty"`
+	AvatarFile  string `json:"avatar_file,omitempty"`
 }
 
 type ChatOrganizationEdit struct {
-	LibraryKey string
-	Action     string
-	GroupID    string
-	Name       string
-	Slug       string
-	Slugs      []string
+	LibraryKey  string
+	Action      string
+	GroupID     string
+	Name        string
+	Slug        string
+	Slugs       []string
+	AvatarColor string
+	AvatarData  string
 }
 
 type ChatOrganizationResult struct {
@@ -196,12 +200,13 @@ func writeOrganizationJSON(root string, value any) error {
 		return err
 	}
 	path := filepath.Join(dir, fmt.Sprintf("snapshot-%020d-%s.json", time.Now().UnixNano(), hex.EncodeToString(random[:])))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.CreateTemp(dir, ".snapshot-*.tmp")
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(data)
-	if err == nil {
+	temp := f.Name()
+	defer os.Remove(temp)
+	if _, err = f.Write(data); err == nil {
 		err = f.Sync()
 	}
 	if closeErr := f.Close(); err == nil {
@@ -210,14 +215,14 @@ func writeOrganizationJSON(root string, value any) error {
 	if err != nil {
 		return err
 	}
-	written, err := os.ReadFile(path)
+	written, err := os.ReadFile(temp)
 	if err != nil {
 		return err
 	}
 	if !bytes.Equal(written, data) {
 		return errors.New("远程档案库未完整保存聊天整理数据，原设置已保留")
 	}
-	return nil
+	return os.Rename(temp, path)
 }
 
 func organizationName(value string, allowEmpty bool, limit int) (string, error) {
@@ -318,6 +323,54 @@ func (f *Facade) EditChatOrganization(edit ChatOrganizationEdit) (ChatOrganizati
 			return result, err
 		}
 		changed, result.Applied = true, 1
+	case "avatar":
+		if edit.Slug == "" {
+			return result, errors.New("请先选择聊天")
+		}
+		dir, dirErr := checkedWorkspaceDir(root, edit.Slug)
+		if dirErr != nil {
+			return result, fmt.Errorf("聊天不可用，请刷新后重试：%w", dirErr)
+		}
+		presentation, readErr := readChatPresentationFrom(root, edit.Slug, organization)
+		if readErr != nil {
+			return result, readErr
+		}
+		previous := presentation
+		if edit.AvatarData != "" {
+			data, decodeErr := decodeChatAvatarData(edit.AvatarData)
+			if decodeErr != nil {
+				return result, decodeErr
+			}
+			avatarName, writeErr := writeChatAvatarFile(dir, data)
+			if writeErr != nil {
+				return result, writeErr
+			}
+			presentation.AvatarFile = avatarName
+			presentation.AvatarColor = ""
+			changed = true
+		} else {
+			colorValue, colorErr := normalizeAvatarColor(edit.AvatarColor)
+			if colorErr != nil {
+				return result, colorErr
+			}
+			changed = colorValue != presentation.AvatarColor || presentation.AvatarFile != ""
+			presentation.AvatarColor = colorValue
+			presentation.AvatarFile = ""
+		}
+		if changed {
+			presentation.Version = chatOrganizationVersion
+			organization.Chats[edit.Slug] = presentation
+			if err := saveGroups(); err != nil {
+				if edit.AvatarData != "" && previous.AvatarFile != presentation.AvatarFile {
+					removeChatAvatarFile(dir, presentation.AvatarFile)
+				}
+				return result, fmt.Errorf("未能保存头像设置：%w", err)
+			}
+			if previous.AvatarFile != "" && previous.AvatarFile != presentation.AvatarFile {
+				removeChatAvatarFile(dir, previous.AvatarFile)
+			}
+			result.Applied = 1
+		}
 	case "alias", "assign":
 		if edit.Action == "alias" {
 			edit.Name, err = organizationName(edit.Name, true, 120)

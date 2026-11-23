@@ -1,20 +1,59 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { call } from "./rpc";
+import { chatDisplayName } from "./chatDisplay";
 import type { ChatRow, OnlineChat, OnlineChats } from "./types";
 
-export type LocalChatAvatar = { peer: string; name: string; avatar?: string };
+export type LocalChatAvatar = { peer: string; name: string; avatar?: string; onlineAvatar?: string; color?: string };
 
-export function ChatAvatar({ name, peer, avatar, className = "" }: { name: string; peer: string; avatar?: string; className?: string }) {
+export const AVATAR_COLOR_PRESETS = [
+  { name: "海盐蓝", value: "#2F6BFF" },
+  { name: "天空蓝", value: "#3B9EFF" },
+  { name: "冰川青", value: "#28B8C7" },
+  { name: "薄荷绿", value: "#2EAD7A" },
+  { name: "森林绿", value: "#247A55" },
+  { name: "青柠", value: "#78A83E" },
+  { name: "暖阳黄", value: "#E0A52B" },
+  { name: "琥珀橙", value: "#D9822B" },
+  { name: "珊瑚橘", value: "#ED6A4D" },
+  { name: "玫瑰红", value: "#DF4D68" },
+  { name: "樱花粉", value: "#E779A5" },
+  { name: "莓果紫", value: "#A653C7" },
+  { name: "鸢尾紫", value: "#7657D6" },
+  { name: "深海蓝", value: "#3454A4" },
+  { name: "午夜靛", value: "#414B78" },
+  { name: "石墨灰", value: "#657084" },
+  { name: "暖沙棕", value: "#A77752" },
+  { name: "陶土红", value: "#B85C4A" },
+  { name: "橄榄绿", value: "#728044" },
+  { name: "孔雀蓝", value: "#167C80" },
+  { name: "电光紫", value: "#8B5CF6" },
+  { name: "桃粉", value: "#F08C78" },
+  { name: "柠檬黄", value: "#C9B52E" },
+  { name: "松石绿", value: "#0F9D8A" },
+] as const;
+
+function shiftColor(hex: string, amount: number) {
+  const value = Number.parseInt(hex.slice(1), 16);
+  const channels = [value >> 16, (value >> 8) & 255, value & 255].map((channel) => Math.max(0, Math.min(255, channel + amount)));
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function avatarBackground(peer: string, color?: string) {
+  if (color) return `linear-gradient(135deg, ${shiftColor(color, 24)}, ${shiftColor(color, -22)})`;
+  const seed = Array.from(peer).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
+  return `linear-gradient(135deg, hsl(${seed} 54% 52%), hsl(${(seed + 38) % 360} 58% 38%))`;
+}
+
+export function ChatAvatar({ name, peer, avatar, color, className = "" }: { name: string; peer: string; avatar?: string; color?: string; className?: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [avatar]);
-  const seed = Array.from(peer).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
-  const style: CSSProperties = { background: `linear-gradient(135deg, hsl(${seed} 54% 52%), hsl(${(seed + 38) % 360} 58% 38%))` };
+  const style: CSSProperties = { background: avatarBackground(peer, color) };
   return avatar && !failed
     ? <img className={`online-avatar ${className}`} src={avatar} alt="" loading="lazy" style={style} onError={() => setFailed(true)} />
     : <span className={`online-avatar ${className}`} style={style}>{Array.from(name.trim())[0] || "?"}</span>;
 }
 
-export function useLocalChatAvatars(chats: ChatRow[], libraryKey: string, enabled: boolean, live = false) {
+export function useLocalChatAvatars(chats: ChatRow[], libraryKey: string, enabled: boolean) {
   const [snapshot, setSnapshot] = useState<OnlineChat[]>([]);
   const [downloaded, setDownloaded] = useState<Record<string, string>>({});
   const downloadedRef = useRef(downloaded);
@@ -39,21 +78,15 @@ export function useLocalChatAvatars(chats: ChatRow[], libraryKey: string, enable
       setDownloaded({});
     }
     if (!enabled || !libraryKey) return () => controller.abort();
-    if (live) attempted.current.clear();
     void (async () => {
       try {
         const cached = await call<OnlineChats | null>("onlineChatsCached", undefined, controller.signal);
         if (controller.signal.aborted || currentGeneration !== generation.current) return;
         if (cached?.chats?.length) setSnapshot(cached.chats);
-        if (!live) return;
-        const fresh = await call<OnlineChats>("onlineChats", { timeout: 20 }, controller.signal);
-        if (!controller.signal.aborted && currentGeneration === generation.current && fresh.chats?.length) {
-          setSnapshot(fresh.chats);
-        }
       } catch { /* keep cached avatars */ }
     })();
     return () => controller.abort();
-  }, [libraryKey, enabled, live]);
+  }, [libraryKey, enabled]);
 
   const matches = useMemo(() => {
     const result: Record<string, OnlineChat> = {};
@@ -91,8 +124,21 @@ export function useLocalChatAvatars(chats: ChatRow[], libraryKey: string, enable
 
   const avatars = useMemo(() => {
     const result: Record<string, LocalChatAvatar> = {};
-    for (const [slug, chat] of Object.entries(matches)) result[slug] = { peer: chat.peer, name: chat.name, avatar: downloaded[chat.peer] || chat.avatar };
+    for (const chat of chats) {
+      const matched = matches[chat.slug];
+      const onlineAvatar = downloaded[matched?.peer || ""] || matched?.avatar;
+      const customAvatar = chat.avatarFile
+        ? `/api/chat-avatar?k=${encodeURIComponent(libraryKey)}&slug=${encodeURIComponent(chat.slug)}&f=${encodeURIComponent(chat.avatarFile)}`
+        : "";
+      result[chat.slug] = {
+        peer: matched?.peer || `local:${chat.id || chat.slug}`,
+        name: matched?.name || chatDisplayName(chat),
+        avatar: customAvatar || (chat.avatarColor ? undefined : onlineAvatar),
+        onlineAvatar,
+        color: chat.avatarColor,
+      };
+    }
     return result;
-  }, [matches, downloaded]);
+  }, [chats, libraryKey, matches, downloaded]);
   return { avatars, downloaded, applyOnlineSnapshot };
 }

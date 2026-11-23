@@ -135,9 +135,9 @@ export default function App() {
   const [chats, setChats] = useState<ChatRow[]>([]);
   const [chatGroups, setChatGroups] = useState<ChatGroup[]>([]);
   const [organizerOpen, setOrganizerOpen] = useState(false);
-  const [collapsedChatGroups, setCollapsedChatGroups] = useState<Set<string>>(new Set());
-  const [localChatsExpanded, setLocalChatsExpanded] = useState(false);
-  const { avatars: localAvatars, downloaded: onlineAvatarImages, applyOnlineSnapshot } = useLocalChatAvatars(chats, boot?.libraryKey ?? "", !!boot?.hasSession, organizerOpen);
+  const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(new Set());
+  const [localChatsExpanded, setLocalChatsExpanded] = useState(true);
+  const { avatars: localAvatars, downloaded: onlineAvatarImages, applyOnlineSnapshot } = useLocalChatAvatars(chats, boot?.libraryKey ?? "", !!boot?.hasSession);
   const [chatsStatus, setChatsStatus] = useState<"loading" | "ready" | "error">("loading");
   const chatsRef = useRef<ChatRow[]>([]);
   chatsRef.current = chats;
@@ -322,8 +322,8 @@ export default function App() {
         setChats([]);
         setChatGroups([]);
         setOrganizerOpen(false);
-        setCollapsedChatGroups(new Set());
-        setLocalChatsExpanded(false);
+        setExpandedChatGroups(new Set());
+        setLocalChatsExpanded(true);
         setSelected("");
         setChatsStatus("loading");
       }
@@ -878,7 +878,7 @@ export default function App() {
       data-tip-heading={chatDisplayName(c)}
       aria-label={`${chatDisplayName(c)}，${c.messages} 条消息，${c.media} 个媒体`}
     >
-      <ChatAvatar name={localAvatars[c.slug]?.name || chatDisplayName(c)} peer={localAvatars[c.slug]?.peer || `local:${c.id || c.slug}`} avatar={localAvatars[c.slug]?.avatar} className="sidebar-chat-avatar" />
+      <ChatAvatar name={localAvatars[c.slug]?.name || chatDisplayName(c)} peer={localAvatars[c.slug]?.peer || `local:${c.id || c.slug}`} avatar={localAvatars[c.slug]?.avatar} color={localAvatars[c.slug]?.color} className="sidebar-chat-avatar" />
       <span className="chat-text">
         <span className="chat-name">{chatDisplayName(c)}</span>
         <span className="chat-meta">{c.messages.toLocaleString()} 条 · {c.media.toLocaleString()} 媒体{c.missing > 0 && <span className="warn"> · 缺失 {c.missing}</span>}</span>
@@ -997,19 +997,22 @@ export default function App() {
             {sideCollapsed || chatGroups.length === 0 ? chats.map(sidebarChat) : [
               ...chatGroups.map((group) => ({ id: group.id, name: group.name, chats: chats.filter((chat) => chat.groupId === group.id) })),
               { id: "", name: "未分组", chats: chats.filter((chat) => !chat.groupId) },
-            ].filter((group) => group.id || group.chats.length > 0).map((group) => (
-              <div className="local-chat-group" key={group.id || "ungrouped"}>
-                <button className="local-chat-group-head" aria-expanded={!collapsedChatGroups.has(group.id)} onClick={() => setCollapsedChatGroups((current) => {
-                  const next = new Set(current);
-                  if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
-                  return next;
-                })}>
-                  <ChevronRight size={12} className={collapsedChatGroups.has(group.id) ? "" : "expanded"} />
-                  <span>{group.name}</span><small>{group.chats.length}</small>
-                </button>
-                {!collapsedChatGroups.has(group.id) && group.chats.map(sidebarChat)}
-              </div>
-            ))}
+            ].filter((group) => group.id || group.chats.length > 0).map((group) => {
+              const expanded = expandedChatGroups.has(group.id);
+              return (
+                <div className="local-chat-group" key={group.id || "ungrouped"}>
+                  <button className="local-chat-group-head" aria-expanded={expanded} onClick={() => setExpandedChatGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
+                    return next;
+                  })}>
+                    <ChevronRight size={12} className={expanded ? "expanded" : ""} />
+                    <span>{group.name}</span><small>{group.chats.length}</small>
+                  </button>
+                  {expanded && <div className="local-chat-group-items">{group.chats.map(sidebarChat)}</div>}
+                </div>
+              );
+            })}
           </div>
           {!sideCollapsed && <div className="side-resizer" onPointerDown={startResize} aria-hidden="true" />}
         </aside>

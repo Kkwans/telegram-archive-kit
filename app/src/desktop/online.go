@@ -372,8 +372,22 @@ func (s *OnlineService) FetchAvatars(ctx context.Context, ns, proxy string, peer
 	if len(peers) == 0 || s.refsNS != ns {
 		return out, nil
 	}
+	if cached := s.Cached(ns); cached != nil {
+		wanted := make(map[string]bool, len(peers))
+		for _, peer := range peers {
+			wanted[peer] = true
+		}
+		for _, chat := range cached.Chats {
+			if wanted[chat.Peer] && chat.Avatar != "" {
+				out[chat.Peer] = chat.Avatar
+			}
+		}
+	}
 	refs := make(map[string]avatarRef, len(peers))
 	for _, peer := range peers {
+		if out[peer] != "" {
+			continue
+		}
 		if ref, ok := s.refs[peer]; ok {
 			refs[peer] = ref
 		}

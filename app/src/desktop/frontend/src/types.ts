@@ -33,6 +33,8 @@ export interface ChatRow {
   name: string;
   displayName?: string;
   groupId?: string;
+  avatarColor?: string;
+  avatarFile?: string;
   type?: string;
   id?: string;
   messages: number;

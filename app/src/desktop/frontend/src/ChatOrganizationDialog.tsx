@@ -1,14 +1,73 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, Folder, FolderPlus, Pencil, Search, Trash2, X } from "lucide-react";
+import { Check, Folder, FolderPlus, ImagePlus, Palette, Pencil, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Select } from "./Select";
 import { call } from "./rpc";
 import { bytes } from "./format";
 import { chatDisplayName } from "./chatDisplay";
-import { ChatAvatar, type LocalChatAvatar } from "./ChatAvatar";
+import { AVATAR_COLOR_PRESETS, ChatAvatar, type LocalChatAvatar } from "./ChatAvatar";
 import type { ChatGroup, ChatRow } from "./types";
 import "./ChatOrganizationDialog.css";
+
+function readAvatarDimensions(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  if (bytes.length >= 24 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+      bytes[12] === 0x49 && bytes[13] === 0x48 && bytes[14] === 0x44 && bytes[15] === 0x52) {
+    return { width: view.getUint32(16, false), height: view.getUint32(20, false) };
+  }
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset] !== 0xff) { offset++; continue; }
+      while (bytes[offset] === 0xff) offset++;
+      const marker = bytes[offset++];
+      if (marker === 0x01 || marker === 0xd8 || marker === 0xd9) continue;
+      if (offset + 2 > bytes.length) break;
+      const length = view.getUint16(offset, false);
+      if (length < 2 || offset + length > bytes.length) break;
+      if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) ||
+          (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
+        return { width: view.getUint16(offset + 5, false), height: view.getUint16(offset + 3, false) };
+      }
+      offset += length;
+    }
+  }
+  throw new Error("头像仅支持 PNG 或 JPG 图片");
+}
+
+async function prepareAvatarFile(file: File) {
+  if (!/\.(png|jpe?g)$/i.test(file.name) && file.type !== "image/png" && file.type !== "image/jpeg") throw new Error("请选择 PNG 或 JPG 图片");
+  if (file.size > 10 * 1024 * 1024) throw new Error("图片不能超过 10 MB");
+  const buffer = await file.arrayBuffer();
+  const { width, height } = readAvatarDimensions(buffer);
+  if (width <= 0 || height <= 0 || width > 8192 || height > 8192 || width * height > 12_000_000) throw new Error("图片尺寸过大，请选择更小的图片");
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const size = 512;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("当前环境无法处理图片");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, size, size);
+    const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
+    const sourceSize = size / scale;
+    const sourceX = (image.naturalWidth - sourceSize) / 2;
+    const sourceY = (image.naturalHeight - sourceSize) / 2;
+    context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+    return canvas.toDataURL("image/jpeg", 0.9);
+  } catch {
+    throw new Error("图片无法解析，请换一张 PNG 或 JPG 图片");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, refresh, onClose, toast }: {
   chats: ChatRow[];
@@ -28,6 +87,14 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const [renameName, setRenameName] = useState("");
   const [aliasSlug, setAliasSlug] = useState("");
   const [aliasName, setAliasName] = useState("");
+  const [avatarChat, setAvatarChat] = useState<ChatRow | null>(null);
+  const [avatarMode, setAvatarMode] = useState<"default" | "color" | "image">("default");
+  const [avatarColor, setAvatarColor] = useState<string>(AVATAR_COLOR_PRESETS[0].value);
+  const [avatarData, setAvatarData] = useState("");
+  const [avatarName, setAvatarName] = useState("");
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarFileBusy, setAvatarFileBusy] = useState(false);
   const [deleteGroup, setDeleteGroup] = useState<ChatGroup | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -35,12 +102,81 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const dragging = useRef<string[]>([]);
   const search = useRef<HTMLInputElement>(null);
   const selectAll = useRef<HTMLInputElement>(null);
+  const avatarFileInput = useRef<HTMLInputElement>(null);
+  const avatarDialog = useRef<HTMLDivElement>(null);
+  const avatarSelection = useRef(0);
 
   useEffect(() => {
     const previous = document.activeElement;
     search.current?.focus();
     return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, []);
+
+  useEffect(() => {
+    if (!avatarChat) return;
+    const previous = document.activeElement;
+    avatarDialog.current?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, [avatarChat]);
+
+  const openAvatar = (chat: ChatRow) => {
+    avatarSelection.current++;
+    setAvatarFileBusy(false);
+    setAvatarChat(chat);
+    setAvatarMode(chat.avatarFile ? "image" : chat.avatarColor ? "color" : "default");
+    setAvatarColor(chat.avatarColor || AVATAR_COLOR_PRESETS[0].value);
+    setAvatarData("");
+    setAvatarName("");
+    setAvatarError("");
+  };
+
+  const saveAvatar = async () => {
+    if (!avatarChat || avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarData && !avatarChat.avatarFile) return;
+    if (avatarMode === "image" && !avatarData && avatarChat.avatarFile) {
+      setAvatarChat(null);
+      return;
+    }
+    setAvatarBusy(true);
+    setAvatarError("");
+    try {
+      await call("editChatOrganization", {
+        libraryKey,
+        action: "avatar",
+        slug: avatarChat.slug,
+        avatarColor: avatarMode === "color" ? avatarColor : "",
+        avatarData: avatarMode === "image" ? avatarData : "",
+      });
+      refresh();
+      toast("聊天头像已更新");
+      setAvatarChat(null);
+    } catch (reason) {
+      setAvatarError((reason as Error).message);
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const selectAvatarFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || avatarFileBusy) return;
+    const selection = ++avatarSelection.current;
+    setAvatarFileBusy(true);
+    setAvatarError("");
+    setAvatarData("");
+    setAvatarName("");
+    try {
+      const data = await prepareAvatarFile(file);
+      if (selection !== avatarSelection.current) return;
+      setAvatarData(data);
+      setAvatarName(file.name);
+      setAvatarMode("image");
+    } catch (reason) {
+      if (selection === avatarSelection.current) setAvatarError((reason as Error).message);
+    } finally {
+      if (selection === avatarSelection.current) setAvatarFileBusy(false);
+    }
+  };
 
   const visible = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
@@ -102,11 +238,16 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     onDrop: (event: DragEvent) => dropOn(event, groupId),
   });
 
+  const avatarPreview = avatarChat ? {
+    avatar: avatarMode === "image" ? avatarData || avatars[avatarChat.slug]?.avatar : avatarMode === "default" ? avatars[avatarChat.slug]?.onlineAvatar : undefined,
+    color: avatarMode === "color" && /^#[0-9a-f]{6}$/i.test(avatarColor) ? avatarColor : undefined,
+  } : null;
+
   return createPortal(
     <>
       <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
         <div className="modal chat-organizer" role="dialog" aria-modal="true" aria-labelledby="chat-organizer-title" onKeyDown={(event) => {
-          if (event.key === "Escape" && !busy && !deleteGroup) { event.stopPropagation(); onClose(); }
+          if (event.key === "Escape" && !busy && !deleteGroup && !avatarChat) { event.stopPropagation(); onClose(); }
           if (event.key === "Tab") {
             const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter((element) => element.offsetParent !== null);
             const first = controls[0], last = controls[controls.length - 1];
@@ -179,9 +320,10 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
                       </form>
                     ) : (
                       <>
-                        <ChatAvatar name={avatars[chat.slug]?.name || chatDisplayName(chat)} peer={avatars[chat.slug]?.peer || `local:${chat.id || chat.slug}`} avatar={avatars[chat.slug]?.avatar} className="chat-organizer-avatar" />
+                        <ChatAvatar name={avatars[chat.slug]?.name || chatDisplayName(chat)} peer={avatars[chat.slug]?.peer || `local:${chat.id || chat.slug}`} avatar={avatars[chat.slug]?.avatar} color={avatars[chat.slug]?.color} className="chat-organizer-avatar" />
                         <span className="chat-organizer-chat-name"><b>{chatDisplayName(chat)}</b><small>{chat.displayName ? `原始名称：${chat.name}` : (groups.find((group) => group.id === chat.groupId)?.name || "未分组")}</small></span>
                         <span className="chat-organizer-chat-stats">{chat.mediaReady ? `${chat.media.toLocaleString()} 个媒体 · ${bytes(chat.totalBytes ?? 0)}` : `${chat.media.toLocaleString()} 个媒体 · 大小待核对`}</span>
+                        <button className="icon-btn chat-organizer-avatar-button" aria-label={`自定义 ${chatDisplayName(chat)} 的头像`} data-tip="自定义头像" disabled={!!busy} onClick={() => openAvatar(chat)}><ImagePlus size={14} /></button>
                         <button className="icon-btn" aria-label={`设置 ${chatDisplayName(chat)} 的显示名称`} data-tip="设置显示名称" disabled={!!busy} onClick={() => { setAliasSlug(chat.slug); setAliasName(chat.displayName || ""); }}><Pencil size={13} /></button>
                       </>
                     )}
@@ -191,7 +333,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
               {error && <div className="chat-organizer-error" role="alert">{error}</div>}
             </section>
           </div>
-          <footer className="chat-organizer-foot"><span>显示名称不会修改 Telegram 聊天或在线关联。留空后恢复原名。</span><button className="btn ghost" disabled={!!busy} onClick={onClose}>完成</button></footer>
+          <footer className="chat-organizer-foot"><span>显示名称和自定义头像仅影响本地展示，不会修改 Telegram 聊天。</span><button className="btn ghost" disabled={!!busy} onClick={onClose}>完成</button></footer>
         </div>
       </div>
       <ConfirmDialog open={!!deleteGroup} title="删除这个分组？" message={`“${deleteGroup?.name || ""}”中的聊天会移到未分组，聊天和档案都会保留。`} confirmLabel="删除分组" danger onCancel={() => setDeleteGroup(null)} onConfirm={() => {
@@ -199,6 +341,65 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
         setDeleteGroup(null);
         if (group) void edit("delete", { groupId: group.id }, "分组已删除，聊天已移到未分组");
       }} />
+      {avatarChat && createPortal(
+        <div className="modal-backdrop avatar-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !avatarBusy && !avatarFileBusy) setAvatarChat(null); }}>
+          <div className="modal avatar-editor" ref={avatarDialog} role="dialog" aria-modal="true" aria-labelledby="avatar-editor-title" tabIndex={-1} onKeyDown={(event) => {
+            if (event.key === "Escape" && !avatarBusy && !avatarFileBusy) { event.stopPropagation(); setAvatarChat(null); }
+            if (event.key === "Tab") {
+              const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter((element) => element.offsetParent !== null);
+              const first = controls[0], last = controls[controls.length - 1];
+              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+            }
+          }}>
+            <header className="avatar-editor-head">
+              <div><h2 id="avatar-editor-title">自定义聊天头像</h2><p>{chatDisplayName(avatarChat)}</p></div>
+              <button type="button" className="icon-btn" aria-label="关闭头像设置" disabled={avatarBusy || avatarFileBusy} onClick={() => setAvatarChat(null)}><X size={16} /></button>
+            </header>
+            <div className="avatar-editor-body">
+              <div className="avatar-editor-preview">
+                <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} avatar={avatarPreview?.avatar} color={avatarPreview?.color} className="avatar-editor-avatar" />
+                <div><b>头像预览</b><span>{avatarMode === "default" ? "优先使用已保存的在线头像" : avatarMode === "color" ? "使用颜色渐变与姓名首字" : "使用上传的图片"}</span></div>
+              </div>
+              <div className="avatar-editor-modes" role="group" aria-label="头像类型">
+                {([{ value: "default", label: "默认头像" }, { value: "color", label: "颜色头像" }, { value: "image", label: "上传图片" }] as const).map((mode) => (
+                  <button type="button" key={mode.value} className={avatarMode === mode.value ? "on" : ""} aria-pressed={avatarMode === mode.value} disabled={avatarFileBusy} onClick={() => { setAvatarMode(mode.value); setAvatarError(""); }}>{mode.label}</button>
+                ))}
+              </div>
+              {avatarMode === "color" && (
+                <section className="avatar-editor-section" aria-label="头像颜色">
+                  <div className="avatar-editor-label"><Palette size={14} /><span>预设颜色</span></div>
+                  <div className="avatar-color-grid">
+                    {AVATAR_COLOR_PRESETS.map((preset) => (
+                      <button type="button" key={preset.value} className={`avatar-color-swatch ${avatarColor.toUpperCase() === preset.value ? "on" : ""}`} style={{ background: preset.value }} title={preset.name} aria-label={`使用${preset.name}`} aria-pressed={avatarColor.toUpperCase() === preset.value} onClick={() => setAvatarColor(preset.value)}>
+                        {avatarColor.toUpperCase() === preset.value && <Check size={13} />}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="avatar-custom-color"><span>自定义颜色</span><input type="color" value={/^#[0-9a-f]{6}$/i.test(avatarColor) ? avatarColor : "#2F6BFF"} onChange={(event) => setAvatarColor(event.target.value.toUpperCase())} aria-label="选择自定义头像颜色" /><input value={avatarColor} maxLength={7} spellCheck={false} aria-label="头像颜色值" onChange={(event) => setAvatarColor(event.target.value.toUpperCase())} /></label>
+                </section>
+              )}
+              {avatarMode === "image" && (
+                <section className="avatar-editor-section" aria-label="上传头像图片">
+                  <input ref={avatarFileInput} className="avatar-file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={(event) => void selectAvatarFile(event)} />
+                  <button type="button" className="avatar-upload" disabled={avatarFileBusy} onClick={() => avatarFileInput.current?.click()}>
+                    <span className="avatar-upload-icon"><Upload size={20} /></span>
+                    <span><b>{avatarFileBusy ? "正在处理图片…" : avatarName || (avatarChat.avatarFile ? "替换当前头像" : "选择 PNG 或 JPG 图片")}</b><small>{avatarFileBusy ? "请稍候" : avatarName ? "已处理为 512 × 512，保存后生效" : "最大 10 MB，自动居中裁切并压缩"}</small></span>
+                  </button>
+                </section>
+              )}
+              {avatarMode === "default" && <div className="avatar-default-note">未设置自定义头像时，将使用匹配到的在线聊天头像；没有在线头像时显示彩色渐变。</div>}
+              {avatarError && <div className="avatar-editor-error" role="alert">{avatarError}</div>}
+            </div>
+            <footer className="avatar-editor-foot">
+              <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => { setAvatarMode("default"); setAvatarError(""); }}><RotateCcw size={13} />恢复默认</button>
+              <span className="spacer" />
+              <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => setAvatarChat(null)}>取消</button>
+              <button type="button" className="btn primary" disabled={avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarData && !avatarChat.avatarFile} onClick={() => void saveAvatar()}>{avatarBusy ? "保存中…" : "保存头像"}</button>
+            </footer>
+          </div>
+        </div>, document.body,
+      )}
     </>, document.body,
   );
 }

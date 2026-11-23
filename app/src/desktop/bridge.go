@@ -168,6 +168,10 @@ func (b *Bridge) Middleware(next http.Handler) http.Handler {
 			b.serveMedia(w, r)
 			return
 		}
+		if r.URL.Path == "/api/chat-avatar" {
+			b.serveChatAvatar(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			b.serve(w, r)
 			return
@@ -269,6 +273,8 @@ type apiParams struct {
 	Version             string                   `json:"version"`
 	Refresh             bool                     `json:"refresh"`
 	LibraryKey          string                   `json:"libraryKey"`
+	AvatarColor         string                   `json:"avatarColor"`
+	AvatarData          string                   `json:"avatarData"`
 	NewRemoteMount      bool                     `json:"newRemoteMount"`
 }
 
@@ -321,6 +327,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 		return b.facade.EditChatOrganization(takapp.ChatOrganizationEdit{
 			LibraryKey: p.LibraryKey, Action: p.Action, GroupID: p.GroupID,
 			Name: p.Name, Slug: p.Slug, Slugs: p.Slugs,
+			AvatarColor: p.AvatarColor, AvatarData: p.AvatarData,
 		})
 	case "chatMedia":
 		return b.facade.ChatMedia(ctx, takapp.MediaQuery{
@@ -911,6 +918,34 @@ func needsOpenLibrary(method string) bool {
 		return true
 	}
 	return false
+}
+
+func (b *Bridge) serveChatAvatar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	query := r.URL.Query()
+	root, remote, ok := b.facade.MediaLibrary(query.Get("k"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if remote {
+		select {
+		case b.remoteMediaSlots <- struct{}{}:
+			defer func() { <-b.remoteMediaSlots }()
+		case <-r.Context().Done():
+			return
+		}
+	}
+	path, err := b.facade.ChatAvatarFile(root, query.Get("slug"), query.Get("f"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	serveMediaFile(w, r, path, filepath.Base(path), true)
 }
 
 func (b *Bridge) serveMedia(w http.ResponseWriter, r *http.Request) {
