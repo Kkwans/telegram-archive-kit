@@ -44,12 +44,12 @@ func TestNormalizeAvatarFontSettings(t *testing.T) {
 			t.Fatalf("font size %d should fail", size)
 		}
 	}
-	for _, weight := range []int{0, 400, 600, 700, 900} {
+	for _, weight := range []int{0, 400, 600, 650, 700, 900} {
 		if _, err := normalizeAvatarFontWeight(weight); err != nil {
 			t.Fatalf("font weight %d: %v", weight, err)
 		}
 	}
-	for _, weight := range []int{-1, 450, 1000} {
+	for _, weight := range []int{-1, 475, 1000} {
 		if _, err := normalizeAvatarFontWeight(weight); err == nil {
 			t.Fatalf("font weight %d should fail", weight)
 		}

@@ -49,7 +49,7 @@ export function avatarBackground(peer: string, color?: string) {
     return materialGradient(preset?.from || shiftColor(color, 34), preset?.to || shiftColor(color, -30));
   }
   const seed = Array.from(peer).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
-  return materialGradient(`hsl(${seed} 72% 58%)`, `hsl(${(seed + 42) % 360} 64% 42%)`);
+  return `linear-gradient(135deg, hsl(${seed} 54% 52%), hsl(${(seed + 38) % 360} 58% 38%))`;
 }
 
 export function ChatAvatar({ name, peer, avatar, color, fontFamily, fontSize, fontColor, fontWeight, className = "" }: { name: string; peer: string; avatar?: string; color?: string; fontFamily?: string; fontSize?: number; fontColor?: string; fontWeight?: number; className?: string }) {
@@ -62,9 +62,13 @@ export function ChatAvatar({ name, peer, avatar, color, fontFamily, fontSize, fo
     "--avatar-font-color": fontColor || undefined,
     "--avatar-font-weight": fontWeight || undefined,
   } as CSSProperties;
+  const customized = Boolean(color || fontFamily || fontSize || fontColor || fontWeight);
+  const avatarClassName = `online-avatar ${customized ? "customized" : ""} ${className}`.trim();
   return avatar && !failed
-    ? <img className={`online-avatar ${className}`} src={avatar} alt="" loading="lazy" style={style} onError={() => setFailed(true)} />
-    : <span className={`online-avatar ${className}`} style={style}><span className="avatar-initial">{Array.from(name.trim())[0] || "?"}</span></span>;
+    ? <img className={avatarClassName} src={avatar} alt="" loading="lazy" style={style} onError={() => setFailed(true)} />
+    : customized
+      ? <span className={avatarClassName} style={style}><span className="avatar-initial">{Array.from(name.trim())[0] || "?"}</span></span>
+      : <span className={avatarClassName} style={style}>{Array.from(name.trim())[0] || "?"}</span>;
 }
 
 export function useLocalChatAvatars(chats: ChatRow[], libraryKey: string, enabled: boolean) {

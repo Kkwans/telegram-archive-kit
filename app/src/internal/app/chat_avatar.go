@@ -79,8 +79,8 @@ func normalizeAvatarFontWeight(value int) (int, error) {
 	if value == 0 {
 		return 0, nil
 	}
-	if value < 400 || value > 900 || value%100 != 0 {
-		return 0, errors.New("头像字重需为 400 到 900 之间的百位数")
+	if value < 400 || value > 900 || value%50 != 0 {
+		return 0, errors.New("头像字重需为 400 到 900 之间的 50 倍数")
 	}
 	return value, nil
 }

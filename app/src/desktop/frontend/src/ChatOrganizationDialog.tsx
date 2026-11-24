@@ -104,7 +104,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const [avatarFontFamily, setAvatarFontFamily] = useState("");
   const [avatarFontSize, setAvatarFontSize] = useState(24);
   const [avatarFontColor, setAvatarFontColor] = useState("#FFFFFF");
-  const [avatarFontWeight, setAvatarFontWeight] = useState(700);
+  const [avatarFontWeight, setAvatarFontWeight] = useState(650);
   const [avatarData, setAvatarData] = useState("");
   const [avatarName, setAvatarName] = useState("");
   const [avatarError, setAvatarError] = useState("");
@@ -143,7 +143,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     setAvatarFontFamily(chat.avatarFont || "");
     setAvatarFontSize(chat.avatarSize || 24);
     setAvatarFontColor(chat.avatarInk || "#FFFFFF");
-    setAvatarFontWeight(chat.avatarWeight || 700);
+    setAvatarFontWeight(chat.avatarWeight || 650);
     setAvatarData("");
     setAvatarName("");
     setAvatarError("");
@@ -153,8 +153,10 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     setAvatarFontFamily("");
     setAvatarFontSize(24);
     setAvatarFontColor("#FFFFFF");
-    setAvatarFontWeight(700);
+    setAvatarFontWeight(650);
   };
+
+  const hasCustomFont = () => avatarFontFamily !== "" || avatarFontSize !== 24 || avatarFontColor.toUpperCase() !== "#FFFFFF" || avatarFontWeight !== 650;
 
   const saveAvatar = async () => {
     if (!avatarChat || avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarData && !avatarChat.avatarFile) return;
@@ -164,6 +166,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     }
     setAvatarBusy(true);
     setAvatarError("");
+    const customFont = hasCustomFont();
     try {
       await call("editChatOrganization", {
         libraryKey,
@@ -171,10 +174,10 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
         slug: avatarChat.slug,
         avatarColor: avatarMode === "color" ? avatarColor : "",
         avatarData: avatarMode === "image" ? avatarData : "",
-        avatarFont: avatarFontFamily,
-        avatarSize: avatarFontSize,
-        avatarInk: avatarFontColor,
-        avatarWeight: avatarFontWeight,
+        avatarFont: customFont ? avatarFontFamily : "",
+        avatarSize: customFont ? avatarFontSize : 0,
+        avatarInk: customFont ? avatarFontColor : "",
+        avatarWeight: customFont ? avatarFontWeight : 0,
       });
       refresh();
       toast("聊天头像已更新");
@@ -388,7 +391,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
             </header>
             <div className="avatar-editor-body">
               <div className="avatar-editor-preview">
-                <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} avatar={avatarPreview?.avatar} color={avatarPreview?.color} fontFamily={avatarFontFamily} fontSize={avatarFontSize} fontColor={avatarFontColor} fontWeight={avatarFontWeight} className="avatar-editor-avatar" />
+                <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} avatar={avatarPreview?.avatar} color={avatarPreview?.color} fontFamily={hasCustomFont() ? avatarFontFamily : undefined} fontSize={hasCustomFont() ? avatarFontSize : undefined} fontColor={hasCustomFont() ? avatarFontColor : undefined} fontWeight={hasCustomFont() ? avatarFontWeight : undefined} className="avatar-editor-avatar" />
                 <div><b>头像预览</b><span>{avatarMode === "default" ? "优先使用已保存的在线头像" : avatarMode === "color" ? "使用颜色渐变与姓名首字" : "使用上传的图片"}</span></div>
               </div>
               <div className="avatar-editor-modes" role="group" aria-label="头像类型">
@@ -418,7 +421,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
                   </div>
                   <div className="avatar-font-grid">
                     <label className="avatar-font-field"><span>字体</span><select value={avatarFontFamily} onChange={(event) => setAvatarFontFamily(event.target.value)}>{AVATAR_FONT_OPTIONS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
-                    <label className="avatar-font-field"><span>字重</span><select value={avatarFontWeight} onChange={(event) => setAvatarFontWeight(Number(event.target.value))}>{[{ value: 400, label: "常规 400" }, { value: 500, label: "中等 500" }, { value: 600, label: "半粗 600" }, { value: 700, label: "粗体 700" }, { value: 800, label: "特粗 800" }, { value: 900, label: "黑体 900" }].map((weight) => <option key={weight.value} value={weight.value}>{weight.label}</option>)}</select></label>
+                    <label className="avatar-font-field"><span>字重</span><select value={avatarFontWeight} onChange={(event) => setAvatarFontWeight(Number(event.target.value))}>{[{ value: 400, label: "常规 400" }, { value: 500, label: "中等 500" }, { value: 600, label: "半粗 600" }, { value: 650, label: "半粗 650" }, { value: 700, label: "粗体 700" }, { value: 800, label: "特粗 800" }, { value: 900, label: "黑体 900" }].map((weight) => <option key={weight.value} value={weight.value}>{weight.label}</option>)}</select></label>
                     <label className="avatar-font-field avatar-font-size"><span>字号 <output>{avatarFontSize}</output></span><input type="range" min={14} max={34} step={1} value={avatarFontSize} aria-label="头像相对字号" onChange={(event) => setAvatarFontSize(Number(event.target.value))} /></label>
                     <label className="avatar-font-field avatar-font-ink"><span>字体颜色</span><span className="avatar-font-ink-controls"><input type="color" value={/^#[0-9a-f]{6}$/i.test(avatarFontColor) ? avatarFontColor : "#FFFFFF"} onChange={(event) => setAvatarFontColor(event.target.value.toUpperCase())} aria-label="选择头像字体颜色" /><input value={avatarFontColor} maxLength={7} spellCheck={false} aria-label="头像字体颜色值" onChange={(event) => setAvatarFontColor(event.target.value.toUpperCase())} /></span></label>
                   </div>
