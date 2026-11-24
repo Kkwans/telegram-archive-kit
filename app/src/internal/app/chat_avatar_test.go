@@ -26,6 +26,36 @@ func TestNormalizeAvatarColor(t *testing.T) {
 	}
 }
 
+func TestNormalizeAvatarFontSettings(t *testing.T) {
+	family, err := normalizeAvatarFontFamily(" Microsoft YaHei ")
+	if err != nil || family != "Microsoft YaHei" {
+		t.Fatalf("font family = %q, %v", family, err)
+	}
+	if _, err := normalizeAvatarFontFamily("Not A Real Font"); err == nil {
+		t.Fatal("unsupported font family should fail")
+	}
+	for _, size := range []int{0, 14, 24, 34} {
+		if _, err := normalizeAvatarFontSize(size); err != nil {
+			t.Fatalf("font size %d: %v", size, err)
+		}
+	}
+	for _, size := range []int{-1, 13, 35} {
+		if _, err := normalizeAvatarFontSize(size); err == nil {
+			t.Fatalf("font size %d should fail", size)
+		}
+	}
+	for _, weight := range []int{0, 400, 600, 700, 900} {
+		if _, err := normalizeAvatarFontWeight(weight); err != nil {
+			t.Fatalf("font weight %d: %v", weight, err)
+		}
+	}
+	for _, weight := range []int{-1, 450, 1000} {
+		if _, err := normalizeAvatarFontWeight(weight); err == nil {
+			t.Fatalf("font weight %d should fail", weight)
+		}
+	}
+}
+
 func TestEncodeChatAvatarNormalizesPNGToJPEG(t *testing.T) {
 	source := image.NewRGBA(image.Rect(0, 0, 40, 20))
 	source.Set(10, 10, imagecolor.RGBA{R: 40, G: 90, B: 255, A: 255})

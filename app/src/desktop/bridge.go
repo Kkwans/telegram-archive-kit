@@ -275,6 +275,10 @@ type apiParams struct {
 	LibraryKey          string                   `json:"libraryKey"`
 	AvatarColor         string                   `json:"avatarColor"`
 	AvatarData          string                   `json:"avatarData"`
+	AvatarFont          string                   `json:"avatarFont"`
+	AvatarSize          int                      `json:"avatarSize"`
+	AvatarInk           string                   `json:"avatarInk"`
+	AvatarWeight        int                      `json:"avatarWeight"`
 	NewRemoteMount      bool                     `json:"newRemoteMount"`
 }
 
@@ -328,6 +332,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 			LibraryKey: p.LibraryKey, Action: p.Action, GroupID: p.GroupID,
 			Name: p.Name, Slug: p.Slug, Slugs: p.Slugs,
 			AvatarColor: p.AvatarColor, AvatarData: p.AvatarData,
+			AvatarFont: p.AvatarFont, AvatarSize: p.AvatarSize, AvatarInk: p.AvatarInk, AvatarWeight: p.AvatarWeight,
 		})
 	case "chatMedia":
 		return b.facade.ChatMedia(ctx, takapp.MediaQuery{

@@ -83,10 +83,10 @@ html[data-theme="dark"] .chat-organizer-groups { background: linear-gradient(135
 .avatar-editor-head p { margin: 4px 0 0; color: var(--muted); font-size: 11.5px; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar-editor-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px; }
 .avatar-editor-preview { display: flex; align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(135deg, var(--accent-soft), var(--surface-2)); }
-.online-avatar.avatar-editor-avatar { width: 68px; height: 68px; flex: 0 0 auto; border-radius: 18px; font-size: 24px; box-shadow: 0 8px 20px rgba(15, 22, 40, .14), inset 0 0 0 1px rgba(255, 255, 255, .2); }
+.online-avatar.avatar-editor-avatar { width: 68px; height: 68px; flex: 0 0 auto; border-radius: 19px; font-size: 26px; box-shadow: 0 10px 24px rgba(15, 22, 40, .18), inset 0 0 0 1px rgba(255, 255, 255, .24); }
 .avatar-editor-preview > div { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .avatar-editor-preview b { font-size: 13px; }
-.avatar-editor-preview span { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.avatar-editor-preview > div span { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
 .avatar-editor-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; margin-top: 14px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
 .avatar-editor-modes button { height: 30px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
 .avatar-editor-modes button:hover { color: var(--text); }
@@ -102,6 +102,25 @@ html[data-theme="dark"] .chat-organizer-groups { background: linear-gradient(135
 .avatar-custom-color > span { margin-right: auto; }
 .avatar-custom-color input[type="color"] { width: 32px; height: 30px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); cursor: pointer; }
 .avatar-custom-color input[type="text"], .avatar-custom-color input:not([type="color"]) { width: 92px; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: 11.5px/1.2 Consolas, monospace; text-transform: uppercase; }
+.avatar-custom-color-preview { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 9px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .24), 0 2px 6px rgba(15, 22, 40, .12); }
+.avatar-font-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.avatar-font-reset { margin-left: auto; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); font: inherit; font-size: 10.5px; cursor: pointer; }
+.avatar-font-reset:hover { background: var(--accent-soft); }
+.avatar-font-preview-row { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 11px; background: var(--surface-2); }
+.online-avatar.avatar-font-preview { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 13px; font-size: 16px; }
+.avatar-font-preview-row > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.avatar-font-preview-row b { font-size: 11.5px; }
+.avatar-font-preview-row > div span { color: var(--faint); font-size: 10.5px; line-height: 1.55; }
+.avatar-font-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 12px; }
+.avatar-font-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.avatar-font-field select, .avatar-font-ink-controls input:not([type="color"]) { width: 100%; height: 30px; min-width: 0; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 11px; }
+.avatar-font-field select:focus, .avatar-font-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.avatar-font-size > span { display: flex; align-items: center; justify-content: space-between; }
+.avatar-font-size output { color: var(--text); font-size: 10.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.avatar-font-size input { width: 100%; accent-color: var(--accent); }
+.avatar-font-ink-controls { display: flex; gap: 6px; }
+.avatar-font-ink-controls input[type="color"] { width: 32px; height: 30px; flex: 0 0 auto; padding: 2px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.avatar-font-hint { display: block; margin-top: 9px; color: var(--faint); font-size: 10px; line-height: 1.5; }
 .avatar-file-input { display: none; }
 .avatar-upload { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .avatar-upload:hover { border-color: var(--accent); background: var(--accent-soft); }
@@ -114,5 +133,5 @@ html[data-theme="dark"] .chat-organizer-groups { background: linear-gradient(135
 .avatar-editor-error { margin-top: 12px; color: var(--danger); font-size: 11.5px; line-height: 1.6; }
 .avatar-editor-foot { border-top: 1px solid var(--line); }
 .avatar-editor-foot .spacer { flex: 1; }
-@media (max-width: 600px) { .avatar-color-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } .avatar-editor-preview { padding: 12px; } .online-avatar.avatar-editor-avatar { width: 58px; height: 58px; border-radius: 15px; } }
+@media (max-width: 600px) { .avatar-color-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } .avatar-font-grid { grid-template-columns: 1fr; } .avatar-editor-preview { padding: 12px; } .online-avatar.avatar-editor-avatar { width: 58px; height: 58px; border-radius: 16px; } }
 @media (max-width: 900px) { .chat-organizer-body { grid-template-columns: 200px minmax(0, 1fr); } .chat-organizer-destination { width: 120px; } .chat-organizer-chat-stats { font-size: 10px; } }

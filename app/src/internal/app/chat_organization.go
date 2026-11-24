@@ -29,22 +29,30 @@ type chatGroupFile struct {
 }
 
 type chatPresentation struct {
-	Version     int    `json:"version"`
-	DisplayName string `json:"display_name,omitempty"`
-	GroupID     string `json:"group_id,omitempty"`
-	AvatarColor string `json:"avatar_color,omitempty"`
-	AvatarFile  string `json:"avatar_file,omitempty"`
+	Version      int    `json:"version"`
+	DisplayName  string `json:"display_name,omitempty"`
+	GroupID      string `json:"group_id,omitempty"`
+	AvatarColor  string `json:"avatar_color,omitempty"`
+	AvatarFile   string `json:"avatar_file,omitempty"`
+	AvatarFont   string `json:"avatar_font,omitempty"`
+	AvatarSize   int    `json:"avatar_size,omitempty"`
+	AvatarInk    string `json:"avatar_ink,omitempty"`
+	AvatarWeight int    `json:"avatar_weight,omitempty"`
 }
 
 type ChatOrganizationEdit struct {
-	LibraryKey  string
-	Action      string
-	GroupID     string
-	Name        string
-	Slug        string
-	Slugs       []string
-	AvatarColor string
-	AvatarData  string
+	LibraryKey   string
+	Action       string
+	GroupID      string
+	Name         string
+	Slug         string
+	Slugs        []string
+	AvatarColor  string
+	AvatarData   string
+	AvatarFont   string
+	AvatarSize   int
+	AvatarInk    string
+	AvatarWeight int
 }
 
 type ChatOrganizationResult struct {
@@ -336,6 +344,27 @@ func (f *Facade) EditChatOrganization(edit ChatOrganizationEdit) (ChatOrganizati
 			return result, readErr
 		}
 		previous := presentation
+		fontFamily, fontErr := normalizeAvatarFontFamily(edit.AvatarFont)
+		if fontErr != nil {
+			return result, fontErr
+		}
+		fontSize, fontErr := normalizeAvatarFontSize(edit.AvatarSize)
+		if fontErr != nil {
+			return result, fontErr
+		}
+		fontWeight, fontErr := normalizeAvatarFontWeight(edit.AvatarWeight)
+		if fontErr != nil {
+			return result, fontErr
+		}
+		fontInk, fontErr := normalizeAvatarColor(edit.AvatarInk)
+		if fontErr != nil {
+			return result, fontErr
+		}
+		changed = fontFamily != presentation.AvatarFont || fontSize != presentation.AvatarSize || fontWeight != presentation.AvatarWeight || fontInk != presentation.AvatarInk
+		presentation.AvatarFont = fontFamily
+		presentation.AvatarSize = fontSize
+		presentation.AvatarWeight = fontWeight
+		presentation.AvatarInk = fontInk
 		if edit.AvatarData != "" {
 			data, decodeErr := decodeChatAvatarData(edit.AvatarData)
 			if decodeErr != nil {
@@ -353,7 +382,7 @@ func (f *Facade) EditChatOrganization(edit ChatOrganizationEdit) (ChatOrganizati
 			if colorErr != nil {
 				return result, colorErr
 			}
-			changed = colorValue != presentation.AvatarColor || presentation.AvatarFile != ""
+			changed = changed || colorValue != presentation.AvatarColor || presentation.AvatarFile != ""
 			presentation.AvatarColor = colorValue
 			presentation.AvatarFile = ""
 		}

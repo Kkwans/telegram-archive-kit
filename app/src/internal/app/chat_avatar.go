@@ -42,6 +42,49 @@ func normalizeAvatarColor(value string) (string, error) {
 	return strings.ToUpper(value), nil
 }
 
+func normalizeAvatarFontFamily(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return "", nil
+	case "microsoft yahei":
+		return "Microsoft YaHei", nil
+	case "microsoft yahei ui":
+		return "Microsoft YaHei UI", nil
+	case "segoe ui":
+		return "Segoe UI", nil
+	case "dengxian":
+		return "DengXian", nil
+	case "simsun":
+		return "SimSun", nil
+	case "kaiti":
+		return "KaiTi", nil
+	case "arial":
+		return "Arial", nil
+	default:
+		return "", errors.New("不支持的头像字体")
+	}
+}
+
+func normalizeAvatarFontSize(value int) (int, error) {
+	if value == 0 {
+		return 0, nil
+	}
+	if value < 14 || value > 34 {
+		return 0, errors.New("头像字号需在 14 到 34 之间")
+	}
+	return value, nil
+}
+
+func normalizeAvatarFontWeight(value int) (int, error) {
+	if value == 0 {
+		return 0, nil
+	}
+	if value < 400 || value > 900 || value%100 != 0 {
+		return 0, errors.New("头像字重需为 400 到 900 之间的百位数")
+	}
+	return value, nil
+}
+
 func decodeChatAvatarData(value string) ([]byte, error) {
 	const prefix = "data:image/jpeg;base64,"
 	if !strings.HasPrefix(value, prefix) {

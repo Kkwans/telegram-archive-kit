@@ -378,7 +378,7 @@ func (f *Facade) LibraryChats() (LibraryChatsDTO, error) {
 			}
 		}
 		dto := ChatDTO{
-			Slug: m.Slug, Name: m.Chat.Name, DisplayName: presentation.DisplayName, GroupID: presentation.GroupID, AvatarColor: presentation.AvatarColor, AvatarFile: presentation.AvatarFile, Type: m.Chat.Type, ID: m.Chat.ID,
+			Slug: m.Slug, Name: m.Chat.Name, DisplayName: presentation.DisplayName, GroupID: presentation.GroupID, AvatarColor: presentation.AvatarColor, AvatarFile: presentation.AvatarFile, AvatarFont: presentation.AvatarFont, AvatarSize: presentation.AvatarSize, AvatarInk: presentation.AvatarInk, AvatarWeight: presentation.AvatarWeight, Type: m.Chat.Type, ID: m.Chat.ID,
 			Messages: messages, Media: mediaCount, MediaReady: ready, Missing: m.MissingCount,
 			Images: summary.Images, Videos: summary.Videos, Audio: summary.Audio, Files: summary.Files,
 			TotalBytes: summary.Bytes,

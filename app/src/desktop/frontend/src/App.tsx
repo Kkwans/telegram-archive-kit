@@ -878,7 +878,7 @@ export default function App() {
       data-tip-heading={chatDisplayName(c)}
       aria-label={`${chatDisplayName(c)}，${c.messages} 条消息，${c.media} 个媒体`}
     >
-      <ChatAvatar name={localAvatars[c.slug]?.name || chatDisplayName(c)} peer={localAvatars[c.slug]?.peer || `local:${c.id || c.slug}`} avatar={localAvatars[c.slug]?.avatar} color={localAvatars[c.slug]?.color} className="sidebar-chat-avatar" />
+      <ChatAvatar name={localAvatars[c.slug]?.name || chatDisplayName(c)} peer={localAvatars[c.slug]?.peer || `local:${c.id || c.slug}`} avatar={localAvatars[c.slug]?.avatar} color={localAvatars[c.slug]?.color} fontFamily={localAvatars[c.slug]?.fontFamily} fontSize={localAvatars[c.slug]?.fontSize} fontColor={localAvatars[c.slug]?.fontColor} fontWeight={localAvatars[c.slug]?.fontWeight} className="sidebar-chat-avatar" />
       <span className="chat-text">
         <span className="chat-name">{chatDisplayName(c)}</span>
         <span className="chat-meta">{c.messages.toLocaleString()} 条 · {c.media.toLocaleString()} 媒体{c.missing > 0 && <span className="warn"> · 缺失 {c.missing}</span>}</span>

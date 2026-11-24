@@ -35,6 +35,10 @@ export interface ChatRow {
   groupId?: string;
   avatarColor?: string;
   avatarFile?: string;
+  avatarFont?: string;
+  avatarSize?: number;
+  avatarInk?: string;
+  avatarWeight?: number;
   type?: string;
   id?: string;
   messages: number;

@@ -1,14 +1,25 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, Folder, FolderPlus, ImagePlus, Palette, Pencil, RotateCcw, Search, Trash2, Upload, X } from "lucide-react";
+import { Check, Folder, FolderPlus, ImagePlus, Palette, Pencil, RotateCcw, Search, Trash2, Type, Upload, X } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Select } from "./Select";
 import { call } from "./rpc";
 import { bytes } from "./format";
 import { chatDisplayName } from "./chatDisplay";
-import { AVATAR_COLOR_PRESETS, ChatAvatar, type LocalChatAvatar } from "./ChatAvatar";
+import { AVATAR_COLOR_PRESETS, ChatAvatar, avatarBackground, type LocalChatAvatar } from "./ChatAvatar";
 import type { ChatGroup, ChatRow } from "./types";
 import "./ChatOrganizationDialog.css";
+
+const AVATAR_FONT_OPTIONS = [
+  { value: "", label: "跟随系统" },
+  { value: "Microsoft YaHei", label: "微软雅黑" },
+  { value: "Microsoft YaHei UI", label: "微软雅黑 UI" },
+  { value: "Segoe UI", label: "Segoe UI" },
+  { value: "DengXian", label: "等线" },
+  { value: "SimSun", label: "宋体" },
+  { value: "KaiTi", label: "楷体" },
+  { value: "Arial", label: "Arial" },
+] as const;
 
 function readAvatarDimensions(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
@@ -90,6 +101,10 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const [avatarChat, setAvatarChat] = useState<ChatRow | null>(null);
   const [avatarMode, setAvatarMode] = useState<"default" | "color" | "image">("default");
   const [avatarColor, setAvatarColor] = useState<string>(AVATAR_COLOR_PRESETS[0].value);
+  const [avatarFontFamily, setAvatarFontFamily] = useState("");
+  const [avatarFontSize, setAvatarFontSize] = useState(24);
+  const [avatarFontColor, setAvatarFontColor] = useState("#FFFFFF");
+  const [avatarFontWeight, setAvatarFontWeight] = useState(700);
   const [avatarData, setAvatarData] = useState("");
   const [avatarName, setAvatarName] = useState("");
   const [avatarError, setAvatarError] = useState("");
@@ -125,9 +140,20 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     setAvatarChat(chat);
     setAvatarMode(chat.avatarFile ? "image" : chat.avatarColor ? "color" : "default");
     setAvatarColor(chat.avatarColor || AVATAR_COLOR_PRESETS[0].value);
+    setAvatarFontFamily(chat.avatarFont || "");
+    setAvatarFontSize(chat.avatarSize || 24);
+    setAvatarFontColor(chat.avatarInk || "#FFFFFF");
+    setAvatarFontWeight(chat.avatarWeight || 700);
     setAvatarData("");
     setAvatarName("");
     setAvatarError("");
+  };
+
+  const resetAvatarFont = () => {
+    setAvatarFontFamily("");
+    setAvatarFontSize(24);
+    setAvatarFontColor("#FFFFFF");
+    setAvatarFontWeight(700);
   };
 
   const saveAvatar = async () => {
@@ -145,6 +171,10 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
         slug: avatarChat.slug,
         avatarColor: avatarMode === "color" ? avatarColor : "",
         avatarData: avatarMode === "image" ? avatarData : "",
+        avatarFont: avatarFontFamily,
+        avatarSize: avatarFontSize,
+        avatarInk: avatarFontColor,
+        avatarWeight: avatarFontWeight,
       });
       refresh();
       toast("聊天头像已更新");
@@ -320,7 +350,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
                       </form>
                     ) : (
                       <>
-                        <ChatAvatar name={avatars[chat.slug]?.name || chatDisplayName(chat)} peer={avatars[chat.slug]?.peer || `local:${chat.id || chat.slug}`} avatar={avatars[chat.slug]?.avatar} color={avatars[chat.slug]?.color} className="chat-organizer-avatar" />
+                        <ChatAvatar name={avatars[chat.slug]?.name || chatDisplayName(chat)} peer={avatars[chat.slug]?.peer || `local:${chat.id || chat.slug}`} avatar={avatars[chat.slug]?.avatar} color={avatars[chat.slug]?.color} fontFamily={avatars[chat.slug]?.fontFamily} fontSize={avatars[chat.slug]?.fontSize} fontColor={avatars[chat.slug]?.fontColor} fontWeight={avatars[chat.slug]?.fontWeight} className="chat-organizer-avatar" />
                         <span className="chat-organizer-chat-name"><b>{chatDisplayName(chat)}</b><small>{chat.displayName ? `原始名称：${chat.name}` : (groups.find((group) => group.id === chat.groupId)?.name || "未分组")}</small></span>
                         <span className="chat-organizer-chat-stats">{chat.mediaReady ? `${chat.media.toLocaleString()} 个媒体 · ${bytes(chat.totalBytes ?? 0)}` : `${chat.media.toLocaleString()} 个媒体 · 大小待核对`}</span>
                         <button className="icon-btn chat-organizer-avatar-button" aria-label={`自定义 ${chatDisplayName(chat)} 的头像`} data-tip="自定义头像" disabled={!!busy} onClick={() => openAvatar(chat)}><ImagePlus size={14} /></button>
@@ -358,7 +388,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
             </header>
             <div className="avatar-editor-body">
               <div className="avatar-editor-preview">
-                <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} avatar={avatarPreview?.avatar} color={avatarPreview?.color} className="avatar-editor-avatar" />
+                <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} avatar={avatarPreview?.avatar} color={avatarPreview?.color} fontFamily={avatarFontFamily} fontSize={avatarFontSize} fontColor={avatarFontColor} fontWeight={avatarFontWeight} className="avatar-editor-avatar" />
                 <div><b>头像预览</b><span>{avatarMode === "default" ? "优先使用已保存的在线头像" : avatarMode === "color" ? "使用颜色渐变与姓名首字" : "使用上传的图片"}</span></div>
               </div>
               <div className="avatar-editor-modes" role="group" aria-label="头像类型">
@@ -368,15 +398,31 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
               </div>
               {avatarMode === "color" && (
                 <section className="avatar-editor-section" aria-label="头像颜色">
-                  <div className="avatar-editor-label"><Palette size={14} /><span>预设颜色</span></div>
+                  <div className="avatar-editor-label"><Palette size={14} /><span>渐变预设</span></div>
                   <div className="avatar-color-grid">
                     {AVATAR_COLOR_PRESETS.map((preset) => (
-                      <button type="button" key={preset.value} className={`avatar-color-swatch ${avatarColor.toUpperCase() === preset.value ? "on" : ""}`} style={{ background: preset.value }} title={preset.name} aria-label={`使用${preset.name}`} aria-pressed={avatarColor.toUpperCase() === preset.value} onClick={() => setAvatarColor(preset.value)}>
+                      <button type="button" key={preset.value} className={`avatar-color-swatch ${avatarColor.toUpperCase() === preset.value ? "on" : ""}`} style={{ background: avatarBackground("", preset.value) }} title={preset.name} aria-label={`使用${preset.name}`} aria-pressed={avatarColor.toUpperCase() === preset.value} onClick={() => setAvatarColor(preset.value)}>
                         {avatarColor.toUpperCase() === preset.value && <Check size={13} />}
                       </button>
                     ))}
                   </div>
-                  <label className="avatar-custom-color"><span>自定义颜色</span><input type="color" value={/^#[0-9a-f]{6}$/i.test(avatarColor) ? avatarColor : "#2F6BFF"} onChange={(event) => setAvatarColor(event.target.value.toUpperCase())} aria-label="选择自定义头像颜色" /><input value={avatarColor} maxLength={7} spellCheck={false} aria-label="头像颜色值" onChange={(event) => setAvatarColor(event.target.value.toUpperCase())} /></label>
+                  <label className="avatar-custom-color"><span>自定义颜色</span><span className="avatar-custom-color-preview" style={{ background: avatarBackground("", /^#[0-9a-f]{6}$/i.test(avatarColor) ? avatarColor : "#2F6BFF") }} aria-hidden="true" /><input type="color" value={/^#[0-9a-f]{6}$/i.test(avatarColor) ? avatarColor : "#2F6BFF"} onChange={(event) => setAvatarColor(event.target.value.toUpperCase())} aria-label="选择自定义头像颜色" /><input value={avatarColor} maxLength={7} spellCheck={false} aria-label="头像颜色值" onChange={(event) => setAvatarColor(event.target.value.toUpperCase())} /></label>
+                </section>
+              )}
+              {avatarMode !== "image" && (
+                <section className="avatar-font-section" aria-label="头像文字样式">
+                  <div className="avatar-editor-label"><Type size={14} /><span>文字样式</span><button type="button" className="avatar-font-reset" onClick={resetAvatarFont}>重置</button></div>
+                  <div className="avatar-font-preview-row">
+                    <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} color={avatarMode === "color" ? avatarColor : undefined} fontFamily={avatarFontFamily} fontSize={avatarFontSize} fontColor={avatarFontColor} fontWeight={avatarFontWeight} className="avatar-font-preview" />
+                    <div><b>文字预览</b><span>在线头像存在时，这里仍可预览无图片时的文字效果。</span></div>
+                  </div>
+                  <div className="avatar-font-grid">
+                    <label className="avatar-font-field"><span>字体</span><select value={avatarFontFamily} onChange={(event) => setAvatarFontFamily(event.target.value)}>{AVATAR_FONT_OPTIONS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
+                    <label className="avatar-font-field"><span>字重</span><select value={avatarFontWeight} onChange={(event) => setAvatarFontWeight(Number(event.target.value))}>{[{ value: 400, label: "常规 400" }, { value: 500, label: "中等 500" }, { value: 600, label: "半粗 600" }, { value: 700, label: "粗体 700" }, { value: 800, label: "特粗 800" }, { value: 900, label: "黑体 900" }].map((weight) => <option key={weight.value} value={weight.value}>{weight.label}</option>)}</select></label>
+                    <label className="avatar-font-field avatar-font-size"><span>字号 <output>{avatarFontSize}</output></span><input type="range" min={14} max={34} step={1} value={avatarFontSize} aria-label="头像相对字号" onChange={(event) => setAvatarFontSize(Number(event.target.value))} /></label>
+                    <label className="avatar-font-field avatar-font-ink"><span>字体颜色</span><span className="avatar-font-ink-controls"><input type="color" value={/^#[0-9a-f]{6}$/i.test(avatarFontColor) ? avatarFontColor : "#FFFFFF"} onChange={(event) => setAvatarFontColor(event.target.value.toUpperCase())} aria-label="选择头像字体颜色" /><input value={avatarFontColor} maxLength={7} spellCheck={false} aria-label="头像字体颜色值" onChange={(event) => setAvatarFontColor(event.target.value.toUpperCase())} /></span></label>
+                  </div>
+                  <small className="avatar-font-hint">字号会随头像尺寸等比缩放，侧栏和整理列表使用同一比例。</small>
                 </section>
               )}
               {avatarMode === "image" && (
@@ -392,7 +438,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
               {avatarError && <div className="avatar-editor-error" role="alert">{avatarError}</div>}
             </div>
             <footer className="avatar-editor-foot">
-              <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => { setAvatarMode("default"); setAvatarError(""); }}><RotateCcw size={13} />恢复默认</button>
+              <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => { setAvatarMode("default"); resetAvatarFont(); setAvatarError(""); }}><RotateCcw size={13} />恢复默认</button>
               <span className="spacer" />
               <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => setAvatarChat(null)}>取消</button>
               <button type="button" className="btn primary" disabled={avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarData && !avatarChat.avatarFile} onClick={() => void saveAvatar()}>{avatarBusy ? "保存中…" : "保存头像"}</button>
