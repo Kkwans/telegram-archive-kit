@@ -2398,7 +2398,7 @@ html[data-theme="dark"] .chat-detail-media { background: rgba(255, 255, 255, .05
 .online-avatar.xl { width: 56px; height: 56px; border-radius: 15px; font-size: 21px; }
 img.online-avatar { object-fit: cover; display: block; }
 .online-avatar .avatar-initial {
-  position: relative; z-index: 1; display: block; transform: translateY(.5px);
+  position: relative; z-index: 1; display: block; transform: translateY(-.1em);
   font-family: var(--avatar-font-family, inherit); font-size: calc(1em * var(--avatar-font-scale, 1));
   font-weight: var(--avatar-font-weight, 650); line-height: 1; color: var(--avatar-font-color, #ffffff);
   letter-spacing: .01em; text-shadow: none;
