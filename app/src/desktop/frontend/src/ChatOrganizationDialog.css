@@ -76,7 +76,7 @@ html[data-theme="dark"] .chat-organizer-groups { background: linear-gradient(135
 .local-chat-group-items .chat-name { font-size: 11.5px; }
 .local-chat-group-items .chat-meta { font-size: 10px; }
 .avatar-editor-backdrop { z-index: 220; }
-.modal.avatar-editor { width: min(560px, 100%); height: min(650px, calc(100dvh - var(--overlay-top) - 32px)); max-height: calc(100dvh - var(--overlay-top) - 32px); padding: 0; gap: 0; overflow: hidden; outline: none; }
+.modal.avatar-editor { width: min(560px, 100%); height: min(730px, calc(100dvh - var(--overlay-top) - 32px)); max-height: calc(100dvh - var(--overlay-top) - 32px); padding: 0; gap: 0; overflow: hidden; outline: none; }
 .avatar-editor-head, .avatar-editor-foot { display: flex; align-items: center; gap: 10px; padding: 15px 18px; }
 .avatar-editor-head { justify-content: space-between; border-bottom: 1px solid var(--line); }
 .avatar-editor-head h2 { margin: 0; font-size: 15px; font-weight: 680; }
@@ -106,11 +106,6 @@ html[data-theme="dark"] .chat-organizer-groups { background: linear-gradient(135
 .avatar-font-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .avatar-font-reset { margin-left: auto; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); font: inherit; font-size: 10.5px; cursor: pointer; }
 .avatar-font-reset:hover { background: var(--accent-soft); }
-.avatar-font-preview-row { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 11px; background: var(--surface-2); }
-.online-avatar.avatar-font-preview { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 13px; font-size: 16px; }
-.avatar-font-preview-row > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.avatar-font-preview-row b { font-size: 11.5px; }
-.avatar-font-preview-row > div span { color: var(--faint); font-size: 10.5px; line-height: 1.55; }
 .avatar-font-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 12px; }
 .avatar-font-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--muted); font-size: 10.5px; font-weight: 600; }
 .avatar-font-field select, .avatar-font-ink-controls input:not([type="color"]) { width: 100%; height: 30px; min-width: 0; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 11px; }
@@ -129,6 +124,18 @@ html[data-theme="dark"] .chat-organizer-groups { background: linear-gradient(135
 .avatar-upload > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .avatar-upload b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .avatar-upload small { color: var(--faint); font-size: 10.5px; }
+.avatar-crop-editor { margin-top: 14px; }
+.avatar-crop-stage { position: relative; width: min(236px, 100%); aspect-ratio: 1; margin: 0 auto; overflow: hidden; border-radius: 14px; background: var(--surface-3); box-shadow: inset 0 0 0 40px rgba(10, 15, 25, .12), 0 8px 22px rgba(15, 22, 40, .12); cursor: grab; touch-action: none; user-select: none; }
+.avatar-crop-stage:active { cursor: grabbing; }
+.avatar-crop-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.avatar-crop-stage::after { content: ""; position: absolute; inset: 0; border: 1px dashed rgba(255, 255, 255, .9); border-radius: 14px; pointer-events: none; }
+.avatar-crop-stage img { position: absolute; max-width: none; max-height: none; transform: translate(-50%, -50%); pointer-events: none; user-select: none; }
+.avatar-crop-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.avatar-crop-zoom { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.avatar-crop-zoom > span { display: flex; align-items: center; justify-content: space-between; }
+.avatar-crop-zoom output { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.avatar-crop-zoom input { width: 100%; accent-color: var(--accent); }
+.avatar-crop-hint { margin: 8px 0 0; color: var(--faint); font-size: 10px; line-height: 1.5; text-align: center; }
 .avatar-default-note { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); color: var(--muted); font-size: 11.5px; line-height: 1.7; }
 .avatar-editor-error { margin-top: 12px; color: var(--danger); font-size: 11.5px; line-height: 1.6; }
 .avatar-editor-foot { border-top: 1px solid var(--line); }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check, Folder, FolderPlus, ImagePlus, Palette, Pencil, RotateCcw, Search, Trash2, Type, Upload, X } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -48,36 +48,59 @@ function readAvatarDimensions(buffer: ArrayBuffer) {
   throw new Error("头像仅支持 PNG 或 JPG 图片");
 }
 
-async function prepareAvatarFile(file: File) {
+type AvatarImageInfo = { source: string; width: number; height: number };
+type AvatarCrop = { zoom: number; x: number; y: number };
+
+function clampAvatarCrop(image: AvatarImageInfo, crop: AvatarCrop): AvatarCrop {
+  const zoom = Math.max(1, Math.min(3, crop.zoom));
+  const scale = Math.max(512 / image.width, 512 / image.height) * zoom;
+  const maxX = Math.max(0, (image.width * scale - 512) / 2);
+  const maxY = Math.max(0, (image.height * scale - 512) / 2);
+  return { zoom, x: Math.max(-maxX, Math.min(maxX, crop.x)), y: Math.max(-maxY, Math.min(maxY, crop.y)) };
+}
+
+async function loadAvatarImage(source: string) {
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  return image;
+}
+
+async function readAvatarFile(file: File): Promise<AvatarImageInfo> {
   if (!/\.(png|jpe?g)$/i.test(file.name) && file.type !== "image/png" && file.type !== "image/jpeg") throw new Error("请选择 PNG 或 JPG 图片");
   if (file.size > 10 * 1024 * 1024) throw new Error("图片不能超过 10 MB");
   const buffer = await file.arrayBuffer();
   const { width, height } = readAvatarDimensions(buffer);
   if (width <= 0 || height <= 0 || width > 8192 || height > 8192 || width * height > 12_000_000) throw new Error("图片尺寸过大，请选择更小的图片");
-  const url = URL.createObjectURL(file);
+  const source = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("图片读取失败"));
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
   try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    const size = 512;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("当前环境无法处理图片");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, size, size);
-    const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
-    const sourceSize = size / scale;
-    const sourceX = (image.naturalWidth - sourceSize) / 2;
-    const sourceY = (image.naturalHeight - sourceSize) / 2;
-    context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
-    return canvas.toDataURL("image/jpeg", 0.9);
+    const image = await loadAvatarImage(source);
+    return { source, width: image.naturalWidth, height: image.naturalHeight };
   } catch {
     throw new Error("图片无法解析，请换一张 PNG 或 JPG 图片");
-  } finally {
-    URL.revokeObjectURL(url);
   }
+}
+
+async function cropAvatarImage(image: AvatarImageInfo, crop: AvatarCrop) {
+  const source = await loadAvatarImage(image.source);
+  const next = clampAvatarCrop(image, crop);
+  const scale = Math.max(512 / image.width, 512 / image.height) * next.zoom;
+  const width = image.width * scale;
+  const height = image.height * scale;
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前环境无法处理图片");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, 512, 512);
+  context.drawImage(source, (512 - width) / 2 + next.x, (512 - height) / 2 + next.y, width, height);
+  return canvas.toDataURL("image/jpeg", 0.9);
 }
 
 export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, refresh, onClose, toast }: {
@@ -106,6 +129,9 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const [avatarFontColor, setAvatarFontColor] = useState("#FFFFFF");
   const [avatarFontWeight, setAvatarFontWeight] = useState(650);
   const [avatarData, setAvatarData] = useState("");
+  const [avatarImage, setAvatarImage] = useState<AvatarImageInfo | null>(null);
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 });
   const [avatarName, setAvatarName] = useState("");
   const [avatarError, setAvatarError] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -120,6 +146,8 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const avatarFileInput = useRef<HTMLInputElement>(null);
   const avatarDialog = useRef<HTMLDivElement>(null);
   const avatarSelection = useRef(0);
+  const cropStage = useRef<HTMLDivElement>(null);
+  const cropDrag = useRef<{ pointerId: number; startX: number; startY: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const previous = document.activeElement;
@@ -134,6 +162,10 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, [avatarChat]);
 
+  useEffect(() => {
+    if (avatarChat && (avatarBusy || avatarFileBusy)) avatarDialog.current?.focus({ preventScroll: true });
+  }, [avatarChat, avatarBusy, avatarFileBusy]);
+
   const openAvatar = (chat: ChatRow) => {
     avatarSelection.current++;
     setAvatarFileBusy(false);
@@ -145,6 +177,9 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     setAvatarFontColor(chat.avatarInk || "#FFFFFF");
     setAvatarFontWeight(chat.avatarWeight || 650);
     setAvatarData("");
+    setAvatarImage(null);
+    setCropZoom(1);
+    setCropOffset({ x: 0, y: 0 });
     setAvatarName("");
     setAvatarError("");
   };
@@ -159,25 +194,25 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
   const hasCustomFont = () => avatarFontFamily !== "" || avatarFontSize !== 24 || avatarFontColor.toUpperCase() !== "#FFFFFF" || avatarFontWeight !== 650;
 
   const saveAvatar = async () => {
-    if (!avatarChat || avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarData && !avatarChat.avatarFile) return;
-    if (avatarMode === "image" && !avatarData && avatarChat.avatarFile) {
-      setAvatarChat(null);
-      return;
-    }
+    if (!avatarChat || avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarImage && !avatarChat.avatarFile) return;
     setAvatarBusy(true);
     setAvatarError("");
     const customFont = hasCustomFont();
     try {
+      const imageData = avatarMode === "image" && avatarImage
+        ? await cropAvatarImage(avatarImage, { zoom: cropZoom, x: cropOffset.x, y: cropOffset.y })
+        : avatarData;
       await call("editChatOrganization", {
         libraryKey,
         action: "avatar",
         slug: avatarChat.slug,
         avatarColor: avatarMode === "color" ? avatarColor : "",
-        avatarData: avatarMode === "image" ? avatarData : "",
+        avatarData: avatarMode === "image" ? imageData : "",
         avatarFont: customFont ? avatarFontFamily : "",
         avatarSize: customFont ? avatarFontSize : 0,
         avatarInk: customFont ? avatarFontColor : "",
         avatarWeight: customFont ? avatarFontWeight : 0,
+        keepAvatar: avatarMode === "image" && !avatarImage,
       });
       refresh();
       toast("聊天头像已更新");
@@ -197,11 +232,16 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
     setAvatarFileBusy(true);
     setAvatarError("");
     setAvatarData("");
+    setAvatarImage(null);
     setAvatarName("");
+    setCropZoom(1);
+    setCropOffset({ x: 0, y: 0 });
     try {
-      const data = await prepareAvatarFile(file);
+      const image = await readAvatarFile(file);
+      const preview = await cropAvatarImage(image, { zoom: 1, x: 0, y: 0 });
       if (selection !== avatarSelection.current) return;
-      setAvatarData(data);
+      setAvatarImage(image);
+      setAvatarData(preview);
       setAvatarName(file.name);
       setAvatarMode("image");
     } catch (reason) {
@@ -210,6 +250,65 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
       if (selection === avatarSelection.current) setAvatarFileBusy(false);
     }
   };
+
+  const updateCropZoom = (zoom: number) => {
+    if (!avatarImage) return;
+    const next = clampAvatarCrop(avatarImage, { zoom, x: cropOffset.x, y: cropOffset.y });
+    setCropZoom(next.zoom);
+    setCropOffset({ x: next.x, y: next.y });
+  };
+
+  const resetCrop = () => {
+    setCropZoom(1);
+    setCropOffset({ x: 0, y: 0 });
+  };
+
+  const startCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!avatarImage || avatarFileBusy) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    cropDrag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: cropOffset.x, y: cropOffset.y };
+  };
+
+  const moveCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = cropDrag.current;
+    if (!drag || !avatarImage || drag.pointerId !== event.pointerId) return;
+    const size = cropStage.current?.clientWidth || 1;
+    const next = clampAvatarCrop(avatarImage, {
+      zoom: cropZoom,
+      x: drag.x + (event.clientX - drag.startX) * 512 / size,
+      y: drag.y + (event.clientY - drag.startY) * 512 / size,
+    });
+    setCropOffset({ x: next.x, y: next.y });
+  };
+
+  const endCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (cropDrag.current?.pointerId === event.pointerId) cropDrag.current = null;
+  };
+
+  const moveCropWithKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!avatarImage || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const step = event.shiftKey ? 32 : 12;
+    const next = clampAvatarCrop(avatarImage, {
+      zoom: cropZoom,
+      x: cropOffset.x + (event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0),
+      y: cropOffset.y + (event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0),
+    });
+    setCropOffset({ x: next.x, y: next.y });
+  };
+
+  const cropStyle = useMemo<CSSProperties | null>(() => {
+    if (!avatarImage) return null;
+    const scale = Math.max(512 / avatarImage.width, 512 / avatarImage.height) * cropZoom;
+    const width = avatarImage.width * scale;
+    const height = avatarImage.height * scale;
+    return {
+      width: `${width / 512 * 100}%`,
+      height: `${height / 512 * 100}%`,
+      left: `${50 + cropOffset.x / 512 * 100}%`,
+      top: `${50 + cropOffset.y / 512 * 100}%`,
+    };
+  }, [avatarImage, cropZoom, cropOffset]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
@@ -381,8 +480,8 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
             if (event.key === "Tab") {
               const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter((element) => element.offsetParent !== null);
               const first = controls[0], last = controls[controls.length - 1];
-              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+              if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last?.focus(); }
+              else if (!event.shiftKey && (document.activeElement === last || document.activeElement === event.currentTarget)) { event.preventDefault(); first?.focus(); }
             }
           }}>
             <header className="avatar-editor-head">
@@ -415,10 +514,6 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
               {avatarMode !== "image" && (
                 <section className="avatar-font-section" aria-label="头像文字样式">
                   <div className="avatar-editor-label"><Type size={14} /><span>文字样式</span><button type="button" className="avatar-font-reset" onClick={resetAvatarFont}>重置</button></div>
-                  <div className="avatar-font-preview-row">
-                    <ChatAvatar name={chatDisplayName(avatarChat)} peer={avatars[avatarChat.slug]?.peer || `local:${avatarChat.id || avatarChat.slug}`} color={avatarMode === "color" ? avatarColor : undefined} fontFamily={avatarFontFamily} fontSize={avatarFontSize} fontColor={avatarFontColor} fontWeight={avatarFontWeight} className="avatar-font-preview" />
-                    <div><b>文字预览</b><span>在线头像存在时，这里仍可预览无图片时的文字效果。</span></div>
-                  </div>
                   <div className="avatar-font-grid">
                     <label className="avatar-font-field"><span>字体</span><select value={avatarFontFamily} onChange={(event) => setAvatarFontFamily(event.target.value)}>{AVATAR_FONT_OPTIONS.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
                     <label className="avatar-font-field"><span>字重</span><select value={avatarFontWeight} onChange={(event) => setAvatarFontWeight(Number(event.target.value))}>{[{ value: 400, label: "常规 400" }, { value: 500, label: "中等 500" }, { value: 600, label: "半粗 600" }, { value: 650, label: "半粗 650" }, { value: 700, label: "粗体 700" }, { value: 800, label: "特粗 800" }, { value: 900, label: "黑体 900" }].map((weight) => <option key={weight.value} value={weight.value}>{weight.label}</option>)}</select></label>
@@ -433,8 +528,20 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
                   <input ref={avatarFileInput} className="avatar-file-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={(event) => void selectAvatarFile(event)} />
                   <button type="button" className="avatar-upload" disabled={avatarFileBusy} onClick={() => avatarFileInput.current?.click()}>
                     <span className="avatar-upload-icon"><Upload size={20} /></span>
-                    <span><b>{avatarFileBusy ? "正在处理图片…" : avatarName || (avatarChat.avatarFile ? "替换当前头像" : "选择 PNG 或 JPG 图片")}</b><small>{avatarFileBusy ? "请稍候" : avatarName ? "已处理为 512 × 512，保存后生效" : "最大 10 MB，自动居中裁切并压缩"}</small></span>
+                    <span><b>{avatarFileBusy ? "正在处理图片…" : avatarName || (avatarChat.avatarFile ? "替换当前头像" : "选择 PNG 或 JPG 图片")}</b><small>{avatarFileBusy ? "请稍候" : avatarName ? "可拖动和缩放裁切，保存时输出 512 × 512" : "最大 10 MB，支持自行拖动和缩放裁切"}</small></span>
                   </button>
+                  {avatarImage && cropStyle && (
+                    <div className="avatar-crop-editor">
+                      <div ref={cropStage} className="avatar-crop-stage" role="img" aria-label="头像裁切区域，拖动或使用方向键调整位置" tabIndex={0} onKeyDown={moveCropWithKey} onPointerDown={startCropDrag} onPointerMove={moveCropDrag} onPointerUp={endCropDrag} onPointerCancel={endCropDrag}>
+                        <img src={avatarImage.source} alt="" draggable={false} style={cropStyle} />
+                      </div>
+                      <div className="avatar-crop-controls">
+                        <label className="avatar-crop-zoom"><span>缩放 <output>{Math.round(cropZoom * 100)}%</output></span><input type="range" min={1} max={3} step={0.01} value={cropZoom} aria-label="头像裁切缩放" onChange={(event) => updateCropZoom(Number(event.target.value))} /></label>
+                        <button type="button" className="btn sm ghost" onClick={resetCrop}><RotateCcw size={12} />重置裁切</button>
+                      </div>
+                      <p className="avatar-crop-hint">拖动图片调整位置，使用滑杆缩放；虚线框内为最终头像。</p>
+                    </div>
+                  )}
                 </section>
               )}
               {avatarMode === "default" && <div className="avatar-default-note">未设置自定义头像时，将使用匹配到的在线聊天头像；没有在线头像时显示彩色渐变。</div>}
@@ -444,7 +551,7 @@ export function ChatOrganizationDialog({ chats, groups, avatars, libraryKey, ref
               <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => { setAvatarMode("default"); resetAvatarFont(); setAvatarError(""); }}><RotateCcw size={13} />恢复默认</button>
               <span className="spacer" />
               <button type="button" className="btn ghost" disabled={avatarBusy || avatarFileBusy} onClick={() => setAvatarChat(null)}>取消</button>
-              <button type="button" className="btn primary" disabled={avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarData && !avatarChat.avatarFile} onClick={() => void saveAvatar()}>{avatarBusy ? "保存中…" : "保存头像"}</button>
+              <button type="button" className="btn primary" disabled={avatarBusy || avatarFileBusy || avatarMode === "image" && !avatarImage && !avatarChat.avatarFile} onClick={() => void saveAvatar()}>{avatarBusy ? "保存中…" : "保存头像"}</button>
             </footer>
           </div>
         </div>, document.body,

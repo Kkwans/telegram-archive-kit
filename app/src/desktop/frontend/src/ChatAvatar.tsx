@@ -65,6 +65,7 @@ export function ChatAvatar({ name, peer, avatar, color, fontFamily, fontSize, fo
     "--avatar-font-scale": fontSize ? fontSize / 24 : undefined,
     "--avatar-font-color": fontColor || undefined,
     "--avatar-font-weight": fontWeight || undefined,
+    "--avatar-font-offset": fontFamily && fontFamily !== "Microsoft YaHei" ? "0em" : "-.04em",
   } as CSSProperties;
   const customized = Boolean(fontFamily || fontSize || fontColor || fontWeight);
   const avatarClassName = `online-avatar ${customized ? "customized" : ""} ${className}`.trim();

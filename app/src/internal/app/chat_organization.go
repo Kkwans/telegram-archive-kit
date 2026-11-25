@@ -53,6 +53,7 @@ type ChatOrganizationEdit struct {
 	AvatarSize   int
 	AvatarInk    string
 	AvatarWeight int
+	KeepAvatar   bool
 }
 
 type ChatOrganizationResult struct {
@@ -382,9 +383,11 @@ func (f *Facade) EditChatOrganization(edit ChatOrganizationEdit) (ChatOrganizati
 			if colorErr != nil {
 				return result, colorErr
 			}
-			changed = changed || colorValue != presentation.AvatarColor || presentation.AvatarFile != ""
+			changed = changed || colorValue != presentation.AvatarColor || presentation.AvatarFile != "" && !edit.KeepAvatar
 			presentation.AvatarColor = colorValue
-			presentation.AvatarFile = ""
+			if !edit.KeepAvatar {
+				presentation.AvatarFile = ""
+			}
 		}
 		if changed {
 			presentation.Version = chatOrganizationVersion

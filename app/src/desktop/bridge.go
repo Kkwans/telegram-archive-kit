@@ -279,6 +279,7 @@ type apiParams struct {
 	AvatarSize          int                      `json:"avatarSize"`
 	AvatarInk           string                   `json:"avatarInk"`
 	AvatarWeight        int                      `json:"avatarWeight"`
+	KeepAvatar          bool                     `json:"keepAvatar"`
 	NewRemoteMount      bool                     `json:"newRemoteMount"`
 }
 
@@ -333,6 +334,7 @@ func (b *Bridge) dispatch(ctx context.Context, method string, raw json.RawMessag
 			Name: p.Name, Slug: p.Slug, Slugs: p.Slugs,
 			AvatarColor: p.AvatarColor, AvatarData: p.AvatarData,
 			AvatarFont: p.AvatarFont, AvatarSize: p.AvatarSize, AvatarInk: p.AvatarInk, AvatarWeight: p.AvatarWeight,
+			KeepAvatar: p.KeepAvatar,
 		})
 	case "chatMedia":
 		return b.facade.ChatMedia(ctx, takapp.MediaQuery{
