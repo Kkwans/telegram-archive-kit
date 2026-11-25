@@ -1,8 +1,8 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListChecks, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { dateTime, duration } from "./format";
-import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
+import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type { Bootstrap, OnlineChat, OnlineChats } from "./types";
@@ -17,7 +17,11 @@ const SCOPE_OPTIONS = [
   { value: "now", label: "从现在开始" },
   { value: "all", label: "全部历史" },
 ];
-const ARCHIVE_FILTERS = ONLINE_CHAT_FILTERS.map(({ key, label }) => ({ value: key, label: key === "all" ? "全部聊天" : label }));
+const ARCHIVE_FILTERS = [
+  ...ONLINE_CHAT_FILTERS.map(({ key, label }) => ({ value: key, label: key === "all" ? "全部聊天" : label })),
+  { value: "owned", label: "我拥有的聊天" },
+];
+type ArchiveChatFilter = OnlineChatFilter | "owned";
 const MEDIA = [
   { kind: "image", label: "图片", icon: Image }, { kind: "video", label: "视频", icon: Video },
   { kind: "audio", label: "音频", icon: Music }, { kind: "file", label: "文件", icon: FileText },
@@ -554,7 +558,8 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   const [draft, setDraft] = useState(() => draftFromPlan(plan));
   const [mediaEnabled, setMediaEnabled] = useState(() => !plan || !!plan.mediaKinds?.length);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<OnlineChatFilter>("all");
+  const [filter, setFilter] = useState<ArchiveChatFilter>("all");
+  const [anchorPeer, setAnchorPeer] = useState("");
   const [folderId, setFolderId] = useState<number | null>(null);
   const [onlySelected, setOnlySelected] = useState(false);
   const [chatPage, setChatPage] = useState(1);
@@ -636,7 +641,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   ], [online?.folders]);
   const visible = useMemo(() => allChats.filter((chat) =>
     (!onlySelected || selected.has(chat.peer)) &&
-    (folderPeers ? folderPeers.has(chat.peer) : matchesOnlineChatFilter(chat, filter)) &&
+    (folderPeers ? folderPeers.has(chat.peer) : filter === "owned" ? onlineChatOwnership(chat) === "owned" : matchesOnlineChatFilter(chat, filter)) &&
     matchesOnlineChatSearch(chat, queryValue)
   ), [allChats, onlySelected, selected, filter, folderPeers, queryValue]);
   const pages = Math.max(1, Math.ceil(visible.length / CHAT_PAGE_SIZE));
@@ -650,12 +655,34 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
 
   const changeFilter = (value: string) => {
     setFolderId(online?.folders?.find((folder) => value === `folder:${folder.id}`)?.id ?? null);
-    setFilter(ONLINE_CHAT_FILTERS.find(({ key }) => key === value)?.key ?? "all");
+    setFilter((ARCHIVE_FILTERS.find((option) => option.value === value)?.value ?? "all") as ArchiveChatFilter);
     setChatPage(1);
   };
 
+  useEffect(() => setAnchorPeer(""), [queryValue, filter, activeFolder?.id, onlySelected]);
+
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((prev) => ({ ...prev, [key]: value }));
-  const toggle = (chat: (typeof allChats)[number]) => setDraft((prev) => ({ ...prev, targets: prev.targets.some(({ peer }) => peer === chat.peer) ? prev.targets.filter(({ peer }) => peer !== chat.peer) : [...prev.targets, { peer: chat.peer, slug: chat.localSlug, name: chat.name }] }));
+  const setChatsSelected = (chats: Array<(typeof allChats)[number]>, checked: boolean) => setDraft((prev) => {
+    const peers = new Set(chats.map((chat) => chat.peer));
+    const existing = new Set(prev.targets.map(({ peer }) => peer));
+    const additions = checked ? chats.filter((chat) => !existing.has(chat.peer)).map((chat) => ({ peer: chat.peer, slug: chat.localSlug, name: chat.name })) : [];
+    return { ...prev, targets: checked ? [...prev.targets, ...additions] : prev.targets.filter(({ peer }) => !peers.has(peer)) };
+  });
+  const chooseChat = (chat: (typeof allChats)[number], event: ReactMouseEvent<HTMLButtonElement>) => {
+    let chats = [chat];
+    let checked = !selected.has(chat.peer);
+    if (event.shiftKey && anchorPeer) {
+      const anchor = visible.findIndex((item) => item.peer === anchorPeer);
+      const current = visible.findIndex((item) => item.peer === chat.peer);
+      if (anchor >= 0 && current >= 0) chats = visible.slice(Math.min(anchor, current), Math.max(anchor, current) + 1);
+    }
+    setChatsSelected(chats, checked);
+    setAnchorPeer(chat.peer);
+    if (onlySelected && !checked) event.currentTarget.closest(".plan-form-section")?.querySelector<HTMLButtonElement>(".plan-pick")?.focus();
+  };
+  const visibleSelected = visible.filter((chat) => selected.has(chat.peer)).length;
+  const allVisibleSelected = visible.length > 0 && visibleSelected === visible.length;
+  const toggleAllVisible = () => setChatsSelected(visible, !allVisibleSelected);
   const canSave = !libraryChanged && !!draft.name.trim() && validTime && validDays && draft.targets.length > 0 && (!mediaEnabled || draft.mediaKinds.length > 0) && (!!plan || hasSession);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -702,10 +729,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
               {loading && !visible.length ? <div className="plan-loading plan-chat-skeleton" role="status" aria-label="正在读取聊天">{[0, 1, 2, 3, 4].map((i) => <div key={i}><span className="plan-chat-symbol skeleton-block" /><span className="plan-chat-identity"><span className="skeleton-line w-160" /><span className="skeleton-line w-80" /></span></div>)}</div> : pageChats.length ? pageChats.map((chat) => {
                 const checked = selected.has(chat.peer);
                 const ChatIcon = chat.type === "channel" ? Megaphone : chat.type === "group" ? UsersRound : MessageCircle;
-                return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={(event) => {
-                  toggle(chat);
-                  if (onlySelected && checked) event.currentTarget.closest(".plan-form-section")?.querySelector<HTMLButtonElement>(".plan-pick")?.focus();
-                }}>
+                return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={(event) => chooseChat(chat, event)}>
                   <span className="plan-chat-symbol"><ChatIcon size={15} /></span>
                   <span className="plan-chat-identity"><b data-tip={chat.name}>{chat.name}</b><span className="plan-chat-username">{onlineChatTypeMeta(chat.type).label}{chat.username ? ` · @${chat.username}` : ""}</span></span>
                   {(chat.archivedLocally || chat.localSlug) && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}
@@ -716,6 +740,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
             <div className="plan-chat-list-footer">
               <span aria-live="polite">{loading ? "正在刷新聊天…" : pages > 1 ? `${firstChat + 1}–${firstChat + pageChats.length} / ${visible.length.toLocaleString()} 个聊天` : `${visible.length} 个结果`}</span>
               <div className="plan-chat-list-actions">
+                <button type="button" className="btn sm ghost plan-select-all" aria-pressed={allVisibleSelected} disabled={!visible.length} onClick={toggleAllVisible}><ListChecks size={14} />{allVisibleSelected ? "取消全选当前列表" : "全选当前列表"}</button>
                 {filtered && <button type="button" className="plan-text-button" onClick={() => { setQuery(""); changeFilter("all"); setOnlySelected(false); }}>清除筛选</button>}
                 {pages > 1 && <div className="plan-chat-pagination" aria-label="聊天列表分页">
                   <button type="button" className="icon-btn" aria-label="上一页聊天" data-tip="上一页聊天" disabled={page <= 1} onClick={() => setChatPage(page - 1)}><ChevronLeft size={15} /></button>

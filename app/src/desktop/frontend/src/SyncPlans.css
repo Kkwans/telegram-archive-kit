@@ -194,8 +194,9 @@
 #task-plans .plan-chat-identity > b { font-size: 13px; font-weight: 650; }
 #task-plans .plan-chat-username { max-width: 100%; font-size: 12px; }
 #task-plans .plan-chat-selected { min-width: 39px; font-size: 11px; }
-#task-plans .plan-chat-list-footer { display: flex; justify-content: space-between; align-items: center; min-height: 28px; gap: 10px; color: var(--muted); font-size: 12px; }
-#task-plans .plan-chat-list-actions, #task-plans .plan-chat-pagination { display: flex; align-items: center; gap: 7px; }
+#task-plans .plan-chat-list-footer { display: flex; justify-content: space-between; align-items: center; min-height: 28px; gap: 10px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+#task-plans .plan-chat-list-actions, #task-plans .plan-chat-pagination { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+#task-plans .plan-select-all { height: 28px; padding-inline: 8px; font-size: 11.5px; white-space: nowrap; }
 #task-plans .plan-chat-pagination { font-variant-numeric: tabular-nums; white-space: nowrap; }
 #task-plans .plan-chat-pagination .icon-btn { width: 28px; height: 28px; }
 #task-plans .plan-chat-pagination .icon-btn:disabled { opacity: .5; cursor: not-allowed; }
