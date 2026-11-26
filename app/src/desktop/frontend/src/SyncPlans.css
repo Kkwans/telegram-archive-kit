@@ -117,7 +117,7 @@
 .plan-run-totals > div + div { border-left: 1px solid var(--line); }
 .plan-run-totals dt { color: var(--muted); font-size: 12px; }
 .plan-run-totals dd { margin: 2px 0 0; font-size: 20px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.plan-run-totals dd span { color: var(--muted); font-size: 12px; font-weight: 500; }
+.plan-run-totals dd span { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
 .plan-run-totals dd.warn, .plan-targets td.warn { color: var(--danger); }
 .plan-run-media { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
 .plan-run-media > div { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }

@@ -45,7 +45,7 @@ func (s *SyncPlanService) RPC(ctx context.Context, method string, raw json.RawMe
 		return syncPlanSchedulePreview{NextRunAt: next.at}, nil
 	case "syncPlanSave":
 		err = s.save(ctx, p.Plan, p.RunNow)
-	case "syncPlanRunNow", "syncPlanPause", "syncPlanResume", "syncPlanStop", "syncPlanRetry", "syncPlanDelete":
+	case "syncPlanRunNow", "syncPlanPause", "syncPlanResume", "syncPlanStop", "syncPlanPauseRun", "syncPlanResumeRun", "syncPlanRetry", "syncPlanDelete":
 		err = s.control(method, p.ID)
 	case "syncPlanSetLaunchOnLogin":
 		if s.hooks.SetLaunchOnLogin == nil {
@@ -447,6 +447,36 @@ func (s *SyncPlanService) control(method, id string) error {
 			return err
 		}
 		record.EligibleAt = now
+	case "syncPlanPauseRun":
+		if pending < 0 {
+			return nil
+		}
+		run := &state.Runs[pending]
+		if run.State == "paused" {
+			return nil
+		}
+		if s.active != nil && s.active.id == run.ID {
+			run.State, run.Message = "pausing", "正在暂停本轮"
+			cancel = s.active.cancel
+		} else {
+			run.State, run.Message, run.BlockedReason, run.RetryAt = "paused", "本轮已暂停", "", time.Time{}
+			for i := range run.Targets {
+				if syncPending(run.Targets[i].State) {
+					run.Targets[i].State, run.Targets[i].Message, run.Targets[i].BlockedReason = "paused", "等待继续", ""
+				}
+			}
+		}
+	case "syncPlanResumeRun":
+		if pending < 0 || state.Runs[pending].State != "paused" {
+			return nil
+		}
+		run := &state.Runs[pending]
+		run.State, run.Message, run.BlockedReason, run.RetryAt = "queued", "", "", time.Time{}
+		for i := range run.Targets {
+			if run.Targets[i].State == "paused" {
+				run.Targets[i].State, run.Targets[i].Message, run.Targets[i].BlockedReason = "queued", "", ""
+			}
+		}
 	case "syncPlanStop":
 		if pending < 0 {
 			return nil

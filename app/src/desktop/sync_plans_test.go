@@ -158,6 +158,45 @@ func TestSyncPlanCatchupIsCoalescedAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestSyncPlanPauseRunResumesCheckpoint(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{Execute: func(context.Context, SyncPlan, SyncPlanTarget, SyncPlanCheckpoint, func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
+		return SyncPlanTargetResult{}, nil
+	}})
+	if err := s.save(t.Context(), syncTestDraft(), true); err != nil {
+		t.Fatal(err)
+	}
+	job, ctx := syncTestJob(t, s)
+	if err := s.markStarted(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := job.checkpoint
+	checkpoint.Stage, checkpoint.Offset, checkpoint.Through = "fetch", 9, 15
+	if err := s.checkpoint(job, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.control("syncPlanPauseRun", job.plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("pause run did not cancel active execution")
+	}
+	if !s.finish(job, SyncPlanTargetResult{}, ctx.Err()) {
+		t.Fatal("pause outcome was not saved")
+	}
+	snap := s.snapshot()
+	if snap.Runs[0].State != "paused" || snap.Runs[0].Targets[0].State != "paused" {
+		t.Fatalf("run was not paused: %+v", snap.Runs[0])
+	}
+	if err := s.control("syncPlanResumeRun", job.plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	resumed, _ := syncTestJob(t, s)
+	if resumed.runID != job.runID || resumed.checkpoint.WorkID != checkpoint.WorkID || resumed.checkpoint.Stage != "fetch" || resumed.checkpoint.Offset != 9 || resumed.checkpoint.Through != 15 {
+		t.Fatalf("resume lost checkpoint: %+v", resumed)
+	}
+}
+
 func TestSyncPlanConflictAndPause(t *testing.T) {
 	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
 	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{})

@@ -30,7 +30,7 @@ const MEDIA = [
 type MediaKind = typeof MEDIA[number]["kind"];
 type FirstScope = "30d" | "now" | "all";
 type Schedule = { frequency: "daily" | "weekly"; time: string; weekday?: number; weekdays?: number[] };
-type PlanState = "idle" | "paused" | "queued" | "running" | "retrying" | "blocked" | "failed" | "stopping" | "stopped" | "succeeded";
+type PlanState = "idle" | "paused" | "queued" | "running" | "pausing" | "retrying" | "blocked" | "failed" | "stopping" | "stopped" | "succeeded";
 
 interface Target {
   peer: string;
@@ -94,7 +94,7 @@ interface PlanList {
 
 const STATES: Record<PlanState, { label: string; tone: string }> = {
   idle: { label: "待运行", tone: "" }, paused: { label: "已暂停", tone: "paused" },
-  queued: { label: "排队中", tone: "running" }, running: { label: "运行中", tone: "running" },
+  queued: { label: "排队中", tone: "running" }, running: { label: "运行中", tone: "running" }, pausing: { label: "正在暂停", tone: "paused" },
   retrying: { label: "等待重试", tone: "partial" }, blocked: { label: "需要处理", tone: "partial" },
   failed: { label: "失败", tone: "failed" }, stopping: { label: "正在停止", tone: "running" }, stopped: { label: "已停止", tone: "stopped" },
   succeeded: { label: "完成", tone: "done" },
@@ -117,12 +117,12 @@ const REASONS: Record<string, string> = {
 
 const PLAN_METHOD = {
   run: "syncPlanRunNow", pause: "syncPlanPause", resume: "syncPlanResume", stop: "syncPlanStop",
-  retry: "syncPlanRetry", delete: "syncPlanDelete",
+  pauseRun: "syncPlanPauseRun", resumeRun: "syncPlanResumeRun", retry: "syncPlanRetry", delete: "syncPlanDelete",
 } as const;
 type PlanAction = keyof typeof PLAN_METHOD;
 const ACTION_MESSAGES: Record<PlanAction, string> = {
   run: "同步已加入队列", pause: "已暂停定时运行", resume: "已恢复定时运行", stop: "已请求停止本次运行",
-  retry: "重试已加入队列", delete: "已删除同步计划",
+  pauseRun: "正在暂停本轮", resumeRun: "已从断点继续本轮", retry: "重试已加入队列", delete: "已删除同步计划",
 };
 
 function draftFromPlan(plan?: Plan): Draft {
@@ -148,7 +148,7 @@ function mediaText(kinds: MediaKind[]) {
 
 function Status({ state, label }: { state: PlanState; label?: string }) {
   const entry = STATES[state] ?? { label: state, tone: "" };
-  return <span className={`task-state plan-status ${entry.tone}`}>{state === "running" || state === "stopping" ? <Loader2 size={12} className="spin" /> : <span className="plan-status-dot" />}{label ?? entry.label}</span>;
+  return <span className={`task-state plan-status ${entry.tone}`}>{state === "running" || state === "stopping" || state === "pausing" ? <Loader2 size={12} className="spin" /> : <span className="plan-status-dot" />}{label ?? entry.label}</span>;
 }
 
 export interface SyncPlanLocation {
@@ -157,22 +157,27 @@ export interface SyncPlanLocation {
   failedOnly?: boolean;
 }
 
-type RunAction = "retry" | "stop" | "run";
+type RunAction = "retry" | "stop" | "run" | "pause-run" | "resume-run";
 const RUN_ACTIONS = {
   retry: { label: "重试失败项", icon: RefreshCw },
   stop: { label: "停止本次", icon: Square },
   run: { label: "立即运行", icon: Play },
+  "pause-run": { label: "暂停本轮", icon: Pause },
+  "resume-run": { label: "继续本轮", icon: Play },
 };
 
 function planRunAction(plan: Plan, latest?: PlanRun): RunAction {
+  if (latest?.state === "paused" && plan.activeRunId) return "resume-run";
+  if (plan.activeRunId && latest?.state !== "blocked" && latest?.state !== "stopping") return "pause-run";
   if (latest && (plan.activeRunId ? latest.state === "blocked" : latest.state === "failed" || latest.state === "stopped")) return "retry";
   return plan.activeRunId ? "stop" : "run";
 }
 
 function PlanRunButton({ action, primary, disabled, onAct }: { action: RunAction; primary?: boolean; disabled: boolean; onAct: (action: PlanAction) => void }) {
   const { label, icon: Icon } = RUN_ACTIONS[action];
-  return <button type="button" className={`btn ${action === "stop" ? "stop-action" : primary ? "primary" : "sm"}`}
-    data-tip={action === "retry" ? "重试最近一轮的失败项" : undefined} disabled={disabled} onClick={() => onAct(action)}>
+  const planAction: PlanAction = action === "pause-run" ? "pauseRun" : action === "resume-run" ? "resumeRun" : action;
+  return <button type="button" className={`btn ${action === "stop" ? "stop-action" : primary && action !== "pause-run" ? "primary" : ""}`}
+    data-tip={action === "retry" ? "重试最近一轮的失败项" : action === "pause-run" ? "暂停当前轮次并保留断点" : action === "resume-run" ? "从当前断点继续，不重新扫描" : undefined} disabled={disabled} onClick={() => onAct(planAction)}>
     <Icon size={14} /> {action === "retry" && !primary ? "重试" : label}
   </button>;
 }
@@ -186,8 +191,8 @@ function PlanSecondaryActions({ plan, action, busy, onAct, onDelete, inline = fa
   inline?: boolean;
 }) {
   return <>
-    {action === "retry" && <button type="button" className={inline ? "btn ghost" : undefined} disabled={busy} onClick={() => onAct(plan.activeRunId ? "stop" : "run")}>
-      {plan.activeRunId ? <><Square size={14} /> 停止本次</> : <><Play size={14} /> 立即运行</>}
+    {plan.activeRunId && action !== "stop" && <button type="button" className={inline ? "btn ghost" : undefined} disabled={busy || plan.state === "stopping" || plan.state === "pausing"} onClick={() => onAct("stop")}>
+      <Square size={14} /> 停止本次
     </button>}
     <button type="button" className={inline ? "btn ghost" : undefined} disabled={busy} onClick={() => onAct(plan.enabled ? "pause" : "resume")}>
       {plan.enabled ? <><Pause size={14} /> 暂停计划</> : <><CalendarCheck size={14} /> 恢复计划</>}
@@ -380,7 +385,7 @@ export function SyncPlans({ boot, tasks, location, onNavigate, onAccount, onLibr
             <div className="plan-row-time plan-next-run"><span className="plan-time-label">下次运行</span><b>{plan.enabled ? when(plan.nextRunAt, "待排程") : "已暂停"}</b></div>
             <div className="plan-row-time plan-last-run"><span className="plan-time-label">最近运行</span><b>{when(latest?.startedAt || latest?.scheduledAt, latest ? "等待开始" : "尚未运行")}</b>{latest && latest.state !== plan.state && <span className="plan-last-result">{STATES[latest.state]?.label ?? latest.state}</span>}</div>
             <div className="plan-row-actions">
-              <PlanRunButton action={action} disabled={!!busy || plan.state === "stopping"} onAct={(value) => void act(plan, value)} />
+              <PlanRunButton action={action} disabled={!!busy || plan.state === "stopping" || plan.state === "pausing"} onAct={(value) => void act(plan, value)} />
               <PlanMoreActions plan={plan} action={action} busy={!!busy} onAct={(value) => void act(plan, value)}
                 onEdit={() => { onNavigate({ planId: plan.id }); setEditor(plan); }} onDelete={() => setConfirmDelete(plan)} />
             </div>
@@ -466,7 +471,7 @@ function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, on
       <div className="plan-row-actions plan-detail-actions">
         <button id={`sync-plan-edit-${plan.id}`} type="button" className="btn" disabled={busy || !!plan.activeRunId} onClick={onEdit}><Pencil size={14} /> 编辑计划</button>
         <PlanSecondaryActions plan={plan} action={action} busy={busy} onAct={onAct} onDelete={onDelete} inline />
-        <PlanRunButton primary action={action} disabled={busy || plan.state === "stopping"} onAct={onAct} />
+        <PlanRunButton primary action={action} disabled={busy || plan.state === "stopping" || plan.state === "pausing"} onAct={onAct} />
       </div>
     </div>
     <header className="panel plan-detail-heading">
@@ -524,7 +529,7 @@ function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, on
               const total = targets.reduce((sum, target) => sum + (target[field] ?? 0), 0);
               return <div key={field}><dt>{label}</dt><dd>{total.toLocaleString()} <span>{unit}</span></dd></div>;
             })}
-            <div><dt>预计下载</dt><dd>{totalBytes > 0 ? bytes(totalBytes) : "—"}</dd></div>
+            <div data-tip="仅统计已创建任务的聊天；未开始的聊天尚未扫描"><dt>已规划大小</dt><dd>{totalBytes > 0 ? bytes(totalBytes) : "—"}<span>{targetTasks.length}/{targets.length} 个聊天</span></dd></div>
             <div><dt>剩余缺失</dt><dd className={targets.reduce((sum, target) => sum + (target.missing ?? 0), 0) > 0 ? "warn" : undefined}>{targets.reduce((sum, target) => sum + (target.missing ?? 0), 0).toLocaleString()} <span>个</span></dd></div>
           </dl>
           {targetTasks.length > 0 && <>
@@ -557,7 +562,7 @@ function TargetTable({ targets, tasks, onOpenTask }: { targets: Target[]; tasks:
   if (!targets.length) return null;
   return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
     <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-media-col" /><col className="plan-target-size-col" /><col className="plan-target-count-col" /><col className="plan-target-duration-col" /><col className="plan-target-time-col" /><col className="plan-target-status-col" /></colgroup>
-    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">完成时间</th><th scope="col">状态</th></tr></thead>
+    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">计划大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">完成时间</th><th scope="col">状态</th></tr></thead>
     <tbody>{targets.map((target) => {
       const task = target.taskId ? tasks.get(target.taskId) : undefined;
       const taskBytes = task?.planBytes || task?.totalBytes || 0;

@@ -106,6 +106,19 @@ func (s *SyncPlanService) advance() (*syncPlanJob, context.Context, bool) {
 			changed = true
 			continue
 		}
+		if run.State == "pausing" {
+			run.State, run.Message, run.BlockedReason = "paused", "本轮已暂停", ""
+			for i := range run.Targets {
+				if syncPending(run.Targets[i].State) {
+					run.Targets[i].State, run.Targets[i].Message, run.Targets[i].BlockedReason = "paused", "等待继续", ""
+				}
+			}
+			changed = true
+			continue
+		}
+		if run.State == "paused" {
+			continue
+		}
 		if !syncPending(run.State) {
 			continue
 		}
@@ -274,7 +287,8 @@ func (s *SyncPlanService) finish(job syncPlanJob, result SyncPlanTargetResult, r
 	index := slices.IndexFunc(run.Targets, func(t SyncPlanRunTarget) bool { return t.Peer == job.target.Peer })
 	entry := &run.Targets[index]
 	stopped := run.State == "stopping"
-	if runErr == nil {
+	pausing := run.State == "pausing"
+	if runErr == nil && !pausing {
 		at := slices.IndexFunc(plan.Targets, func(t SyncPlanTarget) bool { return t.Peer == job.target.Peer })
 		target := &plan.Targets[at]
 		target.Cursor = max(target.Cursor, result.Cursor)
@@ -295,20 +309,25 @@ func (s *SyncPlanService) finish(job syncPlanJob, result SyncPlanTargetResult, r
 		}
 		run.RetryCount = 0
 	}
-	switch {
-	case stopped || (!s.closing && errors.Is(runErr, context.Canceled)):
-		finishSyncRun(run, "stopped", "执行已停止", now)
-	case runErr == nil:
-		advanceSyncRunTarget(run, now)
-	case s.closing:
-		run.State, run.Message = "queued", "客户端退出，等待从断点恢复"
-		entry.State = "queued"
-	case s.persistErr != nil:
-		// The executor stopped at a durable checkpoint. Keep the last valid
-		// state and retry the state write after the poll interval.
-		return false
-	default:
-		applySyncRunError(&state, run, entry, plan.SyncPlan, now, runErr)
+	if pausing {
+		run.State, run.Message, run.BlockedReason, run.RetryAt = "paused", "本轮已暂停", "", time.Time{}
+		entry.State, entry.Message, entry.BlockedReason = "paused", "等待继续", ""
+	} else {
+		switch {
+		case stopped || (!s.closing && errors.Is(runErr, context.Canceled)):
+			finishSyncRun(run, "stopped", "执行已停止", now)
+		case runErr == nil:
+			advanceSyncRunTarget(run, now)
+		case s.closing:
+			run.State, run.Message = "queued", "客户端退出，等待从断点恢复"
+			entry.State = "queued"
+		case s.persistErr != nil:
+			// The executor stopped at a durable checkpoint. Keep the last valid
+			// state and retry the state write after the poll interval.
+			return false
+		default:
+			applySyncRunError(&state, run, entry, plan.SyncPlan, now, runErr)
+		}
 	}
 	if err := s.commitLocked(state); err != nil {
 		s.deferred = &state

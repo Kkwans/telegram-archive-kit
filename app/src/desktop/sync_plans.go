@@ -264,7 +264,7 @@ func NewSyncPlanService(configDir string, hooks SyncPlanHooks) (*SyncPlanService
 
 func syncPending(state string) bool {
 	switch state {
-	case "queued", "running", "retrying", "blocked", "stopping":
+	case "queued", "running", "retrying", "blocked", "stopping", "pausing", "paused":
 		return true
 	default:
 		return false
@@ -391,6 +391,13 @@ func (s *SyncPlanService) recoverInterrupted() error {
 			}
 		case "stopping":
 			finishSyncRun(run, "stopped", "执行已停止", now)
+		case "pausing":
+			run.State, run.Message, run.BlockedReason = "paused", "本轮已暂停", ""
+			for j := range run.Targets {
+				if syncPending(run.Targets[j].State) {
+					run.Targets[j].State, run.Targets[j].Message, run.Targets[j].BlockedReason = "paused", "等待继续", ""
+				}
+			}
 		default:
 			continue
 		}
