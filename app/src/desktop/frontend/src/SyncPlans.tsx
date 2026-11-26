@@ -402,20 +402,6 @@ function runDate(run: PlanRun) {
   return when(run.startedAt || run.scheduledAt, "等待开始");
 }
 
-function runTargets(run: PlanRun, runs: PlanRun[]) {
-  const targets = run.targets ?? [];
-  const missing = new Set(targets.filter((target) => !target.lastSuccessAt).map((target) => target.peer));
-  if (!missing.size) return targets;
-  const recovered = new Map<string, string>();
-  for (const previous of runs.slice(runs.indexOf(run) + 1)) {
-    for (const target of previous.targets ?? []) {
-      if (target.lastSuccessAt && missing.delete(target.peer)) recovered.set(target.peer, target.lastSuccessAt);
-    }
-    if (!missing.size) break;
-  }
-  return targets.map((target) => recovered.has(target.peer) ? { ...target, lastSuccessAt: recovered.get(target.peer) } : target);
-}
-
 function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, onEdit, onAct, onDelete, onAccount, onLibrary, onRemote, onOpenTask }: {
   plan: Plan;
   runs: PlanRun[];
@@ -446,7 +432,7 @@ function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, on
   const currentRecovery = recoveryFor(currentReason);
   const recovery = run && run.id === latest?.id && !currentRecovery ? recoveryFor(run.blockedReason) : null;
   const message = run?.message || REASONS[run?.blockedReason || ""];
-  const targets = useMemo(() => run ? runTargets(run, runs) : [], [run, runs]);
+  const targets = useMemo(() => run?.targets ?? [], [run]);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const runTasks = useMemo(() => tasks.filter((task) => task.kind === "sync-plan" && task.planRunId === run?.id), [tasks, run?.id]);
   const targetTasks = useMemo(() => targets.map((target) => target.taskId ? taskById.get(target.taskId) : undefined).filter((task): task is TaskInfo => !!task), [targets, taskById]);
