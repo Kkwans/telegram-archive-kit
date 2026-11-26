@@ -1510,7 +1510,7 @@ export function TasksPage({
 
       {tab === "plans" ? (
         <div id="task-plans" role="tabpanel" aria-labelledby="task-tab-plans" className="task-center-content">
-          <SyncPlans boot={boot} location={planLocation} onNavigate={onPlanNavigate} onAccount={onAccount} onLibrary={onLibrary}
+          <SyncPlans boot={boot} tasks={tasks} location={planLocation} onNavigate={onPlanNavigate} onAccount={onAccount} onLibrary={onLibrary}
             onRemote={onRemote} onOpenTask={(id) => void loadTask(id, true)} restoreRecoveryFocus={restorePlanFocus}
             onRecoveryFocusHandled={onPlanFocusHandled} toast={toast} />
         </div>

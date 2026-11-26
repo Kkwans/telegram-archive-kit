@@ -1,11 +1,11 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListChecks, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { dateTime, duration } from "./format";
+import { bytes, dateTime, duration, rate, rateParts } from "./format";
 import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
 import { call } from "./rpc";
 import { Select } from "./Select";
-import type { Bootstrap, OnlineChat, OnlineChats } from "./types";
+import type { Bootstrap, OnlineChat, OnlineChats, TaskInfo } from "./types";
 import "./SyncPlans.css";
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
@@ -227,8 +227,9 @@ function PlanMoreActions({ plan, action, busy, onAct, onEdit, onDelete }: {
   </details>;
 }
 
-export function SyncPlans({ boot, location, onNavigate, onAccount, onLibrary, onRemote, onOpenTask, restoreRecoveryFocus, onRecoveryFocusHandled, toast }: {
+export function SyncPlans({ boot, tasks, location, onNavigate, onAccount, onLibrary, onRemote, onOpenTask, restoreRecoveryFocus, onRecoveryFocusHandled, toast }: {
   boot: Bootstrap | null;
+  tasks: TaskInfo[];
   location: SyncPlanLocation | null;
   onNavigate: (location: SyncPlanLocation | null) => void;
   onAccount: () => void;
@@ -347,7 +348,7 @@ export function SyncPlans({ boot, location, onNavigate, onAccount, onLibrary, on
   if (editor) return <PlanEditor plan={editor === "new" ? undefined : editor} boot={boot} currentLibraryId={data?.currentLibraryId} saving={busy === "save"} onAccount={onAccount} onCancel={closeEditor} onSave={save} />;
   if (location) return <section className="plan-subpage">
     {errorNotice}
-    {selectedPlan ? <PlanDetails plan={selectedPlan} runs={runsByPlan.get(selectedPlan.id) ?? []} location={location} busy={!!busy}
+    {selectedPlan ? <PlanDetails plan={selectedPlan} runs={runsByPlan.get(selectedPlan.id) ?? []} tasks={tasks} location={location} busy={!!busy}
       onNavigate={onNavigate} onBack={closePlan} onEdit={() => setEditor(selectedPlan)} onAct={(action) => void act(selectedPlan, action)}
       onDelete={() => setConfirmDelete(selectedPlan)} onAccount={onAccount} onLibrary={onLibrary} onRemote={onRemote} onOpenTask={onOpenTask} /> : <>
       <header className="plan-detail-title-line"><button type="button" className="icon-btn plan-page-back" onClick={closePlan} aria-label="返回同步计划" data-tip="返回同步计划"><ArrowLeft size={17} /></button><h1 id="sync-plan-heading" tabIndex={-1}>同步计划</h1></header>
@@ -415,9 +416,10 @@ function runTargets(run: PlanRun, runs: PlanRun[]) {
   return targets.map((target) => recovered.has(target.peer) ? { ...target, lastSuccessAt: recovered.get(target.peer) } : target);
 }
 
-function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, onAct, onDelete, onAccount, onLibrary, onRemote, onOpenTask }: {
+function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, onEdit, onAct, onDelete, onAccount, onLibrary, onRemote, onOpenTask }: {
   plan: Plan;
   runs: PlanRun[];
+  tasks: TaskInfo[];
   location: SyncPlanLocation;
   busy: boolean;
   onNavigate: (location: SyncPlanLocation) => void;
@@ -445,6 +447,25 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
   const recovery = run && run.id === latest?.id && !currentRecovery ? recoveryFor(run.blockedReason) : null;
   const message = run?.message || REASONS[run?.blockedReason || ""];
   const targets = useMemo(() => run ? runTargets(run, runs) : [], [run, runs]);
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const runTasks = useMemo(() => tasks.filter((task) => task.kind === "sync-plan" && task.planRunId === run?.id), [tasks, run?.id]);
+  const targetTasks = useMemo(() => targets.map((target) => target.taskId ? taskById.get(target.taskId) : undefined).filter((task): task is TaskInfo => !!task), [targets, taskById]);
+  const speedNow = runTasks.reduce((sum, task) => sum + (task.state === "running" ? task.speedNow ?? 0 : 0), 0);
+  const downloadedBytes = runTasks.reduce((sum, task) => sum + (task.bytes ?? 0), 0);
+  const activeElapsedMs = runTasks.reduce((sum, task) => sum + (task.elapsedMs ?? 0), 0);
+  const avgSpeed = activeElapsedMs > 0 ? downloadedBytes * 1000 / activeElapsedMs : 0;
+  const totalBytes = targetTasks.reduce((sum, task) => sum + (task.planBytes || task.totalBytes || 0), 0);
+  const mediaTotals = MEDIA.map(({ kind }) => targetTasks.reduce((sum, task) => sum + (kind === "image" ? task.images ?? 0 : kind === "video" ? task.videos ?? 0 : kind === "audio" ? task.audio ?? 0 : task.files ?? 0), 0));
+  const [speedSamples, setSpeedSamples] = useState<number[]>([]);
+  useEffect(() => setSpeedSamples([]), [run?.id]);
+  useEffect(() => {
+    if (run?.state !== "running") return;
+    setSpeedSamples((current) => [...current.slice(-39), speedNow]);
+  }, [run?.id, run?.state, speedNow]);
+  const sparkValues = speedSamples.length > 1 ? speedSamples : [0, speedNow];
+  const sparkMax = Math.max(1, ...sparkValues);
+  const sparkPoints = sparkValues.map((value, index) => `${(index / Math.max(1, sparkValues.length - 1) * 100).toFixed(2)},${(26 - Math.min(1, value / sparkMax) * 24).toFixed(2)}`).join(" ");
+  const speedParts = rateParts(speedNow);
   const failedCount = targets.filter((target) => target.state === "failed").length;
   const elapsed = run?.startedAt && run.finishedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : 0;
   const selectRun = (runId: string) => onNavigate({ ...location, runId });
@@ -511,38 +532,68 @@ function PlanDetails({ plan, runs, location, busy, onNavigate, onBack, onEdit, o
           <AlertCircle size={16} /><span>{message}{run.retryAt && ` 下次重试 ${when(run.retryAt, "待排程")}。`}</span>
           {recovery && <button id="sync-plan-recovery" type="button" className="btn sm ghost" onClick={() => { selectRun(run.id); recovery.open(); }}>{recovery.label} <ArrowUpRight size={13} /></button>}
         </div>}
-        {!!targets.length && <dl className="plan-run-totals" aria-label="本轮汇总">
-          {([{ field: "addedMessages", label: "新增消息", unit: "条" }, { field: "addedMedia", label: "新增媒体", unit: "个" }, { field: "missing", label: "剩余缺失", unit: "个" }] as const).map(({ field, label, unit }) => {
-            const total = targets.reduce((sum, target) => sum + (target[field] ?? 0), 0);
-            return <div key={field}><dt>{label}</dt><dd className={field === "missing" && total > 0 ? "warn" : undefined}>{total.toLocaleString()} <span>{unit}</span></dd></div>;
-          })}
-        </dl>}
+        {!!targets.length && <>
+          <dl className="plan-run-totals four" aria-label="本轮汇总">
+            {([{ field: "addedMessages", label: "新增消息", unit: "条" }, { field: "addedMedia", label: "新增媒体", unit: "个" }] as const).map(({ field, label, unit }) => {
+              const total = targets.reduce((sum, target) => sum + (target[field] ?? 0), 0);
+              return <div key={field}><dt>{label}</dt><dd>{total.toLocaleString()} <span>{unit}</span></dd></div>;
+            })}
+            <div><dt>预计下载</dt><dd>{totalBytes > 0 ? bytes(totalBytes) : "—"}</dd></div>
+            <div><dt>剩余缺失</dt><dd className={targets.reduce((sum, target) => sum + (target.missing ?? 0), 0) > 0 ? "warn" : undefined}>{targets.reduce((sum, target) => sum + (target.missing ?? 0), 0).toLocaleString()} <span>个</span></dd></div>
+          </dl>
+          {targetTasks.length > 0 && <>
+            <div className="plan-run-media" aria-label="本轮媒体构成">
+              {MEDIA.map(({ kind, label, icon: Icon }, index) => <div key={kind}><span className={`plan-media-icon ${kind}`}><Icon size={14} /></span><span>{label}</span><b>{mediaTotals[index].toLocaleString()}</b><small>个</small></div>)}
+            </div>
+            {targetTasks.length < targets.length && <span className="plan-run-media-note">媒体与大小按每个聊天的最新任务统计；另有 {targets.length - targetTasks.length} 个聊天的任务记录暂不可用。</span>}
+          </>}
+          {runTasks.length > 0 && <div className="plan-run-speed-grid" aria-label="本轮下载速度">
+            <div className={`plan-speed-card ${run.state === "running" ? "running" : ""}`}>
+              <span className="download-meter-label"><i />实时速度</span>
+              <div className="download-meter-value"><b>{speedParts.value}</b><em>{speedParts.unit}</em></div>
+              <svg className="download-meter-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><polygon points={`0,28 ${sparkPoints} 100,28`} /><polyline points={sparkPoints} vectorEffect="non-scaling-stroke" /></svg>
+            </div>
+            <div className="plan-speed-card average"><span>平均速度</span><b>{rate(avgSpeed)}</b><small>累计 {bytes(downloadedBytes)} · 活跃 {duration(activeElapsedMs)}</small></div>
+          </div>}
+        </>}
         {targets.length ? <>
           <div className="plan-results-heading"><h4>聊天结果</h4><span>{targets.length.toLocaleString()} 个聊天</span></div>
-          <TargetTable targets={targets} onOpenTask={(id) => { selectRun(run.id); onOpenTask(id); }} />
+          <TargetTable targets={targets} tasks={taskById} onOpenTask={(id) => { selectRun(run.id); onOpenTask(id); }} />
         </> : <p className="plan-run-empty muted">本轮还没有逐聊天结果。</p>}
       </section> : <div className="panel plan-run-empty task-empty"><p>没有失败的运行记录</p><button type="button" className="btn sm" onClick={() => filterRuns(false)}>查看全部结果</button></div>}
     </div> : <>
       <div className="panel task-empty"><p>计划尚未运行</p><span>运行后可在这里查看逐聊天结果与任务详情。</span></div>
-      <TargetTable targets={plan.targets ?? []} onOpenTask={onOpenTask} />
+      <TargetTable targets={plan.targets ?? []} tasks={taskById} onOpenTask={onOpenTask} />
     </>}
   </>;
 }
 
-function TargetTable({ targets, onOpenTask }: { targets: Target[]; onOpenTask: (id: string) => void }) {
+function TargetTable({ targets, tasks, onOpenTask }: { targets: Target[]; tasks: Map<string, TaskInfo>; onOpenTask: (id: string) => void }) {
   if (!targets.length) return null;
   return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
-    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-status-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-time-col" /><col className="plan-target-task-col" /></colgroup>
-    <thead><tr><th scope="col">聊天</th><th scope="col">状态</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col" className="num">缺失</th><th scope="col">上次成功</th><th scope="col">任务记录</th></tr></thead>
-    <tbody>{targets.map((target) => <tr key={target.peer}>
-      <td><div className="plan-target-name"><b>{target.name || target.peer}</b></div>{target.message && <small>{target.message}</small>}</td>
-      <td>{target.state ? <Status state={target.state} /> : "—"}</td>
-      <td className="num">{target.addedMessages?.toLocaleString() ?? "—"}</td>
-      <td className="num">{target.addedMedia?.toLocaleString() ?? "—"}</td>
-      <td className={`num ${target.missing ? "warn" : ""}`}>{target.missing?.toLocaleString() ?? "—"}</td>
-      <td>{when(target.lastSuccessAt, "—")}</td>
-      <td>{target.taskId ? <button type="button" className="plan-text-button" onClick={() => onOpenTask(target.taskId!)}>查看任务</button> : "—"}</td>
-    </tr>)}</tbody>
+    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-media-col" /><col className="plan-target-size-col" /><col className="plan-target-count-col" /><col className="plan-target-duration-col" /><col className="plan-target-time-col" /><col className="plan-target-status-col" /></colgroup>
+    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">最近完成</th><th scope="col">状态</th></tr></thead>
+    <tbody>{targets.map((target) => {
+      const task = target.taskId ? tasks.get(target.taskId) : undefined;
+      const taskBytes = task?.planBytes || task?.totalBytes || 0;
+      const canOpen = !!task && !!target.taskId;
+      const open = () => { if (canOpen && target.taskId) onOpenTask(target.taskId); };
+      const counts = [task?.images ?? 0, task?.videos ?? 0, task?.audio ?? 0, task?.files ?? 0];
+      return <tr key={target.peer} className={canOpen ? "plan-target-open" : ""} tabIndex={canOpen ? 0 : undefined} aria-label={canOpen ? `查看 ${target.name || target.peer} 的任务详情` : undefined} onClick={open} onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || !canOpen || event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault(); open();
+      }} data-tip={canOpen ? "查看该聊天的任务详情" : undefined}>
+        <td><div className="plan-target-name"><b>{target.name || target.peer}</b></div>{target.message && <small>{target.message}</small>}</td>
+        <td className="num">{target.addedMessages?.toLocaleString() ?? "—"}</td>
+        <td className="num">{target.addedMedia?.toLocaleString() ?? "—"}</td>
+        <td>{task ? <div className="plan-target-media">{MEDIA.map(({ kind, label, icon: Icon }, index) => <span key={kind} title={`${label} ${counts[index]}`}><Icon size={12} className={`plan-media-icon ${kind}`} />{counts[index].toLocaleString()}</span>)}</div> : <span className="muted">—</span>}</td>
+        <td className="num">{taskBytes > 0 ? bytes(taskBytes) : "—"}</td>
+        <td className={`num ${target.missing ? "warn" : ""}`}>{target.missing?.toLocaleString() ?? "—"}</td>
+        <td className="num">{task?.elapsedMs ? duration(task.elapsedMs) : "—"}</td>
+        <td>{when(target.lastSuccessAt, "—")}</td>
+        <td>{target.state ? <Status state={target.state} /> : "—"}</td>
+      </tr>;
+    })}</tbody>
   </table></div>;
 }
 

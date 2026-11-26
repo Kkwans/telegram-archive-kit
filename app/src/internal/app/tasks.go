@@ -104,6 +104,7 @@ type TaskDTO struct {
 	State               string             `json:"state"` // running|done|failed
 	Percent             int                `json:"percent"`
 	AvgSpeed            float64            `json:"avgSpeed,omitempty"`
+	SpeedNow            float64            `json:"speedNow,omitempty"`
 	PeakSpeed           float64            `json:"peakSpeed,omitempty"`
 	Bytes               int64              `json:"bytes,omitempty"`
 	TotalBytes          int64              `json:"totalBytes,omitempty"`
@@ -399,6 +400,7 @@ func (t *backgroundTask) updateDownload(s DownloadSnapshot) {
 		}
 	}
 	t.dto.AvgSpeed = s.SpeedAvg
+	t.dto.SpeedNow = s.SpeedNow
 	if s.SpeedPeak > t.dto.PeakSpeed {
 		t.dto.PeakSpeed = s.SpeedPeak
 	}
@@ -548,6 +550,7 @@ func (t *backgroundTask) closeRunning() {
 	}
 	t.dto.FinishedAt = now.UnixMilli()
 	t.dto.ETAMs = 0
+	t.dto.SpeedNow = 0
 	t.active = nil
 	t.dto.ElapsedMs = t.activeBaseMs
 }
@@ -1413,6 +1416,8 @@ func (f *Facade) loadTasks() {
 		if dto.State == "running" {
 			dto.State = "failed"
 			dto.Error = "应用上次退出时任务未完成"
+			dto.SpeedNow = 0
+			dto.ETAMs = 0
 			if dto.FinishedAt == 0 {
 				dto.FinishedAt = dto.StartedAt
 			}

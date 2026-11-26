@@ -38,6 +38,20 @@ func TestBackgroundTaskLifecycle(t *testing.T) {
 	}
 }
 
+func TestRecoveredRunningTaskClearsLiveSpeed(t *testing.T) {
+	config := t.TempDir()
+	f := &Facade{a: &App{ConfigDir: config}}
+	task := f.createTask("sync-plan", "计划任务", "聊天")
+	task.updateDownload(DownloadSnapshot{SpeedNow: 4096, Bytes: 1024, ElapsedMs: 1000})
+	f.saveTasks()
+	recovered := &Facade{a: &App{ConfigDir: config}}
+	recovered.loadTasks()
+	tasks := recovered.Tasks()
+	if len(tasks) != 1 || tasks[0].State != "failed" || tasks[0].SpeedNow != 0 {
+		t.Fatalf("unexpected recovered task: %#v", tasks)
+	}
+}
+
 func TestDownloadTaskHistoryPersists(t *testing.T) {
 	f := &Facade{a: &App{ConfigDir: t.TempDir()}}
 	task := f.createTask("sync", "同步聊天：测试", "测试")
@@ -61,7 +75,7 @@ func TestDownloadTaskHistoryPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(running.Active) != 1 || running.Active[0].Name != "song.mp3" || running.ETAMs != 3000 {
+	if len(running.Active) != 1 || running.Active[0].Name != "song.mp3" || running.ETAMs != 3000 || running.SpeedNow != 2048 {
 		t.Fatalf("unexpected active media: %#v", running)
 	}
 	task.finish(nil)
@@ -71,7 +85,7 @@ func TestDownloadTaskHistoryPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.State != "done" || detail.AvgSpeed != 1500 || detail.PeakSpeed != 2048 {
+	if detail.State != "done" || detail.AvgSpeed != 1500 || detail.PeakSpeed != 2048 || detail.SpeedNow != 0 {
 		t.Fatalf("unexpected detail: %#v", detail)
 	}
 	if len(detail.Series) < 2 {

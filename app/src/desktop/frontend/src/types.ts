@@ -332,7 +332,9 @@ export interface TaskInfo {
   state: "running" | "done" | "failed" | "partial" | "paused" | "stopped";
   percent: number;
   avgSpeed?: number;
+  speedNow?: number;
   peakSpeed?: number;
+  planBytes?: number;
   bytes?: number;
   totalBytes?: number;
   totalBytesEstimated?: boolean;
