@@ -572,7 +572,7 @@ function TargetTable({ targets, tasks, onOpenTask }: { targets: Target[]; tasks:
   if (!targets.length) return null;
   return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
     <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-media-col" /><col className="plan-target-size-col" /><col className="plan-target-count-col" /><col className="plan-target-duration-col" /><col className="plan-target-time-col" /><col className="plan-target-status-col" /></colgroup>
-    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">最近完成</th><th scope="col">状态</th></tr></thead>
+    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">完成时间</th><th scope="col">状态</th></tr></thead>
     <tbody>{targets.map((target) => {
       const task = target.taskId ? tasks.get(target.taskId) : undefined;
       const taskBytes = task?.planBytes || task?.totalBytes || 0;
