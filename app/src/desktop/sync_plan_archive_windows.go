@@ -24,10 +24,8 @@ import (
 var errPlanAccount = errors.New("当前 Telegram 账号与计划绑定的账号不同")
 
 func (b *Bridge) bindSyncPlan(ctx context.Context, inputs []SyncPlanTargetInput) (SyncPlanBinding, error) {
-	if !b.archiveMu.TryLock() {
-		return SyncPlanBinding{}, takapp.ErrOperationRunning
-	}
-	defer b.archiveMu.Unlock()
+	b.syncPlanBindMu.Lock()
+	defer b.syncPlanBindMu.Unlock()
 	root := b.facade.PublicationRoot()
 	account := b.facade.AccountInfo()
 	settings := b.facade.GetSettings()
@@ -54,7 +52,10 @@ func (b *Bridge) bindSyncPlan(ctx context.Context, inputs []SyncPlanTargetInput)
 	if root != b.facade.PublicationRoot() {
 		return SyncPlanBinding{}, takapp.ErrLibraryIdentity
 	}
-	binding.LibraryID, err = b.facade.RegisterCurrentLibrary()
+	binding.LibraryID = b.facade.ActivePlanLibraryID()
+	if binding.LibraryID == "" {
+		binding.LibraryID, err = b.facade.RegisterCurrentLibrary()
+	}
 	return binding, err
 }
 

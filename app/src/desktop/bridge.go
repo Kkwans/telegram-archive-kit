@@ -34,6 +34,7 @@ type Bridge struct {
 	syncPlansError    error
 	remoteConnections *remoteConnections
 	archiveMu         sync.Mutex
+	syncPlanBindMu    sync.Mutex
 
 	mu      sync.Mutex
 	mountMu sync.Mutex
