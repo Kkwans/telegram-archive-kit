@@ -528,10 +528,9 @@ function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, on
             <div><dt>剩余缺失</dt><dd className={targets.reduce((sum, target) => sum + (target.missing ?? 0), 0) > 0 ? "warn" : undefined}>{targets.reduce((sum, target) => sum + (target.missing ?? 0), 0).toLocaleString()} <span>个</span></dd></div>
           </dl>
           {targetTasks.length > 0 && <>
-            <div className="plan-run-media" aria-label="本轮媒体构成">
+            <div className="plan-run-media" aria-label="本轮媒体构成" data-tip={targetTasks.length < targets.length ? "部分聊天任务记录已清理，媒体与大小仅统计可用的最新任务" : undefined}>
               {MEDIA.map(({ kind, label, icon: Icon }, index) => <div key={kind}><span className={`plan-media-icon ${kind}`}><Icon size={14} /></span><span>{label}</span><b>{mediaTotals[index].toLocaleString()}</b><small>个</small></div>)}
             </div>
-            {targetTasks.length < targets.length && <span className="plan-run-media-note">媒体与大小按每个聊天的最新任务统计；另有 {targets.length - targetTasks.length} 个聊天的任务记录暂不可用。</span>}
           </>}
           {runTasks.length > 0 && <div className="plan-run-speed-grid" aria-label="本轮下载速度">
             <div className={`plan-speed-card ${run.state === "running" ? "running" : ""}`}>

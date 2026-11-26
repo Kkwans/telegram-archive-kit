@@ -124,7 +124,6 @@
 .plan-run-media > div > span:not(.plan-media-icon) { color: var(--muted); font-size: 11.5px; }
 .plan-run-media b { margin-left: auto; font-size: 14px; font-weight: 680; font-variant-numeric: tabular-nums; }
 .plan-run-media small { color: var(--faint); font-size: 10px; }
-.plan-run-media-note { color: var(--faint); font-size: 10.5px; line-height: 1.5; }
 .plan-media-icon { flex: none; color: var(--muted); }
 .plan-media-icon.image { color: #2f6bff; }
 .plan-media-icon.video { color: #8b5cf6; }
