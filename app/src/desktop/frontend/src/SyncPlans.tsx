@@ -561,8 +561,8 @@ function PlanDetails({ plan, runs, tasks, location, busy, onNavigate, onBack, on
 function TargetTable({ targets, tasks, onOpenTask }: { targets: Target[]; tasks: Map<string, TaskInfo>; onOpenTask: (id: string) => void }) {
   if (!targets.length) return null;
   return <div className="plan-targets" tabIndex={0} aria-label="逐聊天归档结果"><table className="table">
-    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-count-col" /><col className="plan-target-media-col" /><col className="plan-target-size-col" /><col className="plan-target-count-col" /><col className="plan-target-duration-col" /><col className="plan-target-time-col" /><col className="plan-target-status-col" /></colgroup>
-    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增消息</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">计划大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">完成时间</th><th scope="col">状态</th></tr></thead>
+    <colgroup><col className="plan-target-chat-col" /><col className="plan-target-count-col" /><col className="plan-target-media-col" /><col className="plan-target-size-col" /><col className="plan-target-count-col" /><col className="plan-target-duration-col" /><col className="plan-target-time-col" /><col className="plan-target-status-col" /></colgroup>
+    <thead><tr><th scope="col">聊天</th><th scope="col" className="num">新增媒体</th><th scope="col">媒体构成</th><th scope="col" className="num">计划大小</th><th scope="col" className="num">缺失</th><th scope="col" className="num">耗时</th><th scope="col">完成时间</th><th scope="col">状态</th></tr></thead>
     <tbody>{targets.map((target) => {
       const task = target.taskId ? tasks.get(target.taskId) : undefined;
       const taskBytes = task?.planBytes || task?.totalBytes || 0;
@@ -573,8 +573,7 @@ function TargetTable({ targets, tasks, onOpenTask }: { targets: Target[]; tasks:
         if (event.target !== event.currentTarget || !canOpen || event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault(); open();
       }} data-tip={canOpen ? "查看该聊天的任务详情" : undefined}>
-        <td><div className="plan-target-name"><b>{target.name || target.peer}</b></div>{target.message && <small>{target.message}</small>}</td>
-        <td className="num">{target.addedMessages?.toLocaleString() ?? "—"}</td>
+        <td><div className="plan-target-name"><b data-tip={target.state === "failed" || target.state === "blocked" || target.state === "retrying" ? target.message : undefined}>{target.name || target.peer}</b></div></td>
         <td className="num">{target.addedMedia?.toLocaleString() ?? "—"}</td>
         <td>{task ? <div className="plan-target-media">{MEDIA.map(({ kind, label, icon: Icon }, index) => <span key={kind} title={`${label} ${counts[index]}`}><Icon size={12} className={`plan-media-icon ${kind}`} />{counts[index].toLocaleString()}</span>)}</div> : <span className="muted">—</span>}</td>
         <td className="num">{taskBytes > 0 ? bytes(taskBytes) : "—"}</td>

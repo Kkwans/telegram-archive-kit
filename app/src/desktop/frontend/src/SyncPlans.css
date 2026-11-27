@@ -145,15 +145,15 @@
 #task-plans .plan-inline-notice { padding: 8px 10px; gap: 8px; font-size: 12px; }
 #task-plans .plan-run-notice { background: color-mix(in srgb, var(--warn) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warn) 20%, var(--line)); }
 #task-plans .plan-targets { border-radius: 8px; overflow-x: auto; }
-#task-plans .plan-targets table { width: 100%; min-width: 900px; table-layout: fixed; }
-.plan-target-chat-col { width: 18%; }
-.plan-target-status-col { width: 10%; }
-.plan-target-time-col { width: 12%; }
+#task-plans .plan-targets table { width: 100%; min-width: 760px; table-layout: fixed; }
+.plan-target-chat-col { width: 16%; }
+.plan-target-status-col { width: 12%; }
+.plan-target-time-col { width: 15%; }
 .plan-target-count-col { width: 8%; }
-.plan-target-media-col { width: 18%; }
-.plan-target-size-col { width: 9%; }
-.plan-target-duration-col { width: 9%; }
-#task-plans .plan-targets :is(th, td) { padding: 9px 8px; font-size: 12px; }
+.plan-target-media-col { width: 20%; }
+.plan-target-size-col { width: 11%; }
+.plan-target-duration-col { width: 10%; }
+#task-plans .plan-targets :is(th, td) { padding: 8px 6px; font-size: 11.5px; }
 #task-plans .plan-targets th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
 #task-plans .plan-targets :is(th, td):not(:first-child) { text-align: center; }
 #task-plans .plan-targets td { font-variant-numeric: tabular-nums; vertical-align: middle; }
@@ -364,7 +364,7 @@ dialog.task-info-modal[open] { display: flex; flex-direction: column; gap: 12px;
   #task-plans .plan-run-nav { grid-template-columns: minmax(0,1fr); }
   #task-plans .plan-chat-toolbar { grid-template-columns: minmax(80px,1fr) auto 32px; }
   #task-plans .plan-chat-toolbar > .task-search { grid-column: 1 / -1; }
-  #task-plans .plan-targets table { min-width: 900px; }
+  #task-plans .plan-targets table { min-width: 760px; }
   #task-plans .plan-inline-notice { flex-wrap: wrap; }
   #task-plans .plan-inline-notice > .btn { margin-left: auto; }
   #task-plans .plan-editor-footer > .plan-row-actions { flex-wrap: wrap; }
