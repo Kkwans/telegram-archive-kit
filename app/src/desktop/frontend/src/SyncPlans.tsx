@@ -313,7 +313,7 @@ export function SyncPlans({ boot, tasks, location, onNavigate, onAccount, onLibr
   };
 
   const save = async (draft: Draft, runNow: boolean) => {
-    const plan = { ...draft, name: draft.name.trim(), targets: draft.targets.map(({ peer, slug }) => ({ peer, slug })) };
+    const plan = { ...draft, name: draft.name.trim(), targets: draft.targets.map(({ peer, slug, name }) => ({ peer, slug, name })) };
     if (!await mutate("save", "syncPlanSave", { plan, runNow })) return;
     closeEditor();
     toast(runNow ? "已保存计划，同步已加入队列" : "已保存同步计划");

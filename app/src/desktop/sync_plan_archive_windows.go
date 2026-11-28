@@ -28,10 +28,13 @@ func (b *Bridge) bindSyncPlan(ctx context.Context, inputs []SyncPlanTargetInput)
 	defer b.syncPlanBindMu.Unlock()
 	root := b.facade.PublicationRoot()
 	account := b.facade.AccountInfo()
-	settings := b.facade.GetSettings()
-	profile, err := b.profile.Fetch(ctx, account.Namespace, settings.Proxy, 12*time.Second)
-	if err != nil {
-		return SyncPlanBinding{}, classifySyncPlanArchiveError(err)
+	profile := b.profile.Cached(account.Namespace)
+	if profile == nil || profile.UserID == 0 {
+		fetched, err := b.profile.Fetch(ctx, account.Namespace, b.facade.GetSettings().Proxy, 6*time.Second)
+		if err != nil {
+			return SyncPlanBinding{}, classifySyncPlanArchiveError(err)
+		}
+		profile = &fetched
 	}
 	binding := SyncPlanBinding{
 		AccountID:    strconv.FormatInt(profile.UserID, 10),
@@ -39,24 +42,22 @@ func (b *Bridge) bindSyncPlan(ctx context.Context, inputs []SyncPlanTargetInput)
 		LibraryLabel: root,
 	}
 	for _, input := range inputs {
-		chat, err := b.resolveOnlineChatContext(ctx, input.Peer, 20*time.Second)
-		if err != nil {
-			return SyncPlanBinding{}, classifySyncPlanArchiveError(err)
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			name = input.Peer
 		}
-		slug, maxID, err := b.facade.PlanArchiveBaseline(strconv.FormatInt(chat.ID, 10), desktopChatType(chat))
-		if err != nil {
-			return SyncPlanBinding{}, err
-		}
-		binding.Targets = append(binding.Targets, SyncPlanTarget{Peer: input.Peer, Slug: slug, Name: chat.Name, Cursor: maxID})
+		binding.Targets = append(binding.Targets, SyncPlanTarget{Peer: input.Peer, Slug: input.Slug, Name: name})
 	}
 	if root != b.facade.PublicationRoot() {
 		return SyncPlanBinding{}, takapp.ErrLibraryIdentity
 	}
 	binding.LibraryID = b.facade.ActivePlanLibraryID()
 	if binding.LibraryID == "" {
-		binding.LibraryID, err = b.facade.RegisterCurrentLibrary()
+		id, err := b.facade.RegisterCurrentLibrary()
+		binding.LibraryID = id
+		return binding, err
 	}
-	return binding, err
+	return binding, nil
 }
 
 func (b *Bridge) checkSyncPlan(ctx context.Context, plan SyncPlan) error {
@@ -204,6 +205,16 @@ func (b *Bridge) stagePlanArchive(ctx context.Context, plan SyncPlan, target Syn
 		ChatID: strconv.FormatInt(chat.ID, 10), ChatType: desktopChatType(chat),
 		MediaKinds: plan.MediaKinds, IncludeHistory: plan.IncludeHistory,
 		NewMedia: cp.PendingMedia, Added: cp.AddedMessages, Rebuild: cp.Stage == "committed",
+	}
+	if target.Slug != "" && cp.Cursor == 0 {
+		_, maxID, err := b.facade.PlanArchiveBaseline(input.ChatID, input.ChatType)
+		if err != nil {
+			return input, err
+		}
+		cp.Cursor = maxID
+		if err := save(*cp); err != nil {
+			return input, err
+		}
 	}
 	if cp.Stage == "committed" {
 		return input, nil

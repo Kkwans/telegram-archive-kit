@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type syncPlanSchedulePreview struct {
@@ -160,6 +161,10 @@ func normalizeSyncPlanDraft(d *syncPlanDraft) error {
 		t := &d.Targets[i]
 		t.Peer = strings.TrimSpace(t.Peer)
 		t.Slug = strings.TrimSpace(t.Slug)
+		t.Name = strings.TrimSpace(t.Name)
+		if len([]rune(t.Name)) > 120 || strings.IndexFunc(t.Name, unicode.IsControl) >= 0 {
+			return errors.New("聊天名称需为 120 个字符以内的单行文本")
+		}
 		kind, value, _ := strings.Cut(t.Peer, ":")
 		id, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || id <= 0 || value != strconv.FormatInt(id, 10) ||

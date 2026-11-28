@@ -86,12 +86,14 @@ func TestSyncPlanWeeklyMultipleDays(t *testing.T) {
 
 func syncTestHooks(execute SyncPlanHooks) SyncPlanHooks {
 	execute.CurrentLibraryID = func() string { return "fixture-library" }
-	execute.Bind = func(_ context.Context, inputs []SyncPlanTargetInput) (SyncPlanBinding, error) {
-		out := SyncPlanBinding{LibraryID: "fixture-library", LibraryLabel: "Fixture", AccountID: "1234", Namespace: "fixture"}
-		for _, input := range inputs {
-			out.Targets = append(out.Targets, SyncPlanTarget{Peer: input.Peer, Slug: input.Slug, Name: input.Peer, Cursor: 7})
+	if execute.Bind == nil {
+		execute.Bind = func(_ context.Context, inputs []SyncPlanTargetInput) (SyncPlanBinding, error) {
+			out := SyncPlanBinding{LibraryID: "fixture-library", LibraryLabel: "Fixture", AccountID: "1234", Namespace: "fixture"}
+			for _, input := range inputs {
+				out.Targets = append(out.Targets, SyncPlanTarget{Peer: input.Peer, Slug: input.Slug, Name: input.Peer, Cursor: 7})
+			}
+			return out, nil
 		}
-		return out, nil
 	}
 	if execute.Check == nil {
 		execute.Check = func(context.Context, SyncPlan) error { return nil }
@@ -155,6 +157,25 @@ func TestSyncPlanCatchupIsCoalescedAcrossRestart(t *testing.T) {
 	if calls != 1 || len(snapshot.Runs) != 1 || snapshot.Runs[0].ScheduledAt.Day() != 14 ||
 		snapshot.Runs[0].State != "succeeded" || snapshot.Plans[0].NextRunAt.Day() != 15 {
 		t.Fatalf("unexpected coalescing: calls=%d snapshot=%+v", calls, snapshot)
+	}
+}
+
+func TestSyncPlanSaveUsesLightweightTargetBinding(t *testing.T) {
+	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	var gotName string
+	hooks := SyncPlanHooks{Bind: func(_ context.Context, inputs []SyncPlanTargetInput) (SyncPlanBinding, error) {
+		gotName = inputs[0].Name
+		return SyncPlanBinding{LibraryID: "fixture-library", AccountID: "1234", Namespace: "fixture", Targets: []SyncPlanTarget{{Peer: inputs[0].Peer, Slug: inputs[0].Slug, Name: inputs[0].Name}}}, nil
+	}}
+	s := syncTestService(t, t.TempDir(), &now, hooks)
+	draft := syncTestDraft()
+	draft.Targets[0].Name = "保存时的聊天名称"
+	if err := s.save(t.Context(), draft, false); err != nil {
+		t.Fatal(err)
+	}
+	target := s.snapshot().Plans[0].Targets[0]
+	if gotName != draft.Targets[0].Name || target.Name != draft.Targets[0].Name || target.Cursor != 0 {
+		t.Fatalf("lightweight binding = input %q, target %+v", gotName, target)
 	}
 }
 

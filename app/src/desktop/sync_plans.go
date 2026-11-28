@@ -61,6 +61,7 @@ func SyncPlanFailed(reason, message string) error {
 type SyncPlanTargetInput struct {
 	Peer string `json:"peer"`
 	Slug string `json:"slug,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 type SyncPlanTarget struct {
