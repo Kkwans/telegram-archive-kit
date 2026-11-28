@@ -53,11 +53,12 @@ func planPeerFamily(kind string) string {
 // RunPlannedArchive uses the same operation slot and task events as one-click
 // sync. Prepare runs inside the reservation, so a library switch or a manual
 // download cannot race a staged export into another workspace.
-func (f *Facade) RunPlannedArchive(ctx context.Context, libraryID, planID, runID, title, name string,
+func (f *Facade) RunPlannedArchive(ctx context.Context, libraryID, planID, runID, title, name, resumeTaskID string,
 	started func(string) error,
 	prepare func(context.Context, func(string)) (PlannedArchiveInput, error),
 	committed func(PlannedArchiveResult) error,
 ) (result PlannedArchiveResult, err error) {
+	resumedTask := f.pausedPlanTask(resumeTaskID)
 	f.mu.Lock()
 	if f.op != nil {
 		f.mu.Unlock()
@@ -107,7 +108,20 @@ func (f *Facade) RunPlannedArchive(ctx context.Context, libraryID, planID, runID
 	if err = a.guardWritable(); err != nil {
 		return result, err
 	}
-	task := f.createTaskRecord(TaskDTO{Kind: "sync-plan", PlanID: planID, PlanRunID: runID, Title: title, Chat: name})
+	var task *backgroundTask
+	if resumedTask != nil {
+		if !resumedTask.resume() {
+			f.mu.Lock()
+			if f.op == op {
+				f.op, f.running = nil, false
+			}
+			f.mu.Unlock()
+			return result, ErrOperationRunning
+		}
+		task = resumedTask
+	} else {
+		task = f.createTaskRecord(TaskDTO{Kind: "sync-plan", PlanID: planID, PlanRunID: runID, Title: title, Chat: name})
+	}
 	f.mu.Lock()
 	op.task = task
 	f.mu.Unlock()

@@ -30,7 +30,7 @@ func TestPlannedMessagesOnlyAndScopedMissingMedia(t *testing.T) {
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.RunPlannedArchive(context.Background(), id, "plan", "run", "Scheduled", "Test group", func(string) error { return nil },
+	result, err := f.RunPlannedArchive(context.Background(), id, "plan", "run", "Scheduled", "Test group", "", func(string) error { return nil },
 		func(context.Context, func(string)) (PlannedArchiveInput, error) {
 			return PlannedArchiveInput{Source: path, ChatID: "99", ChatType: "private_group", Added: 3}, nil
 		}, func(PlannedArchiveResult) error { return nil })
@@ -51,6 +51,34 @@ func TestPlannedMessagesOnlyAndScopedMissingMedia(t *testing.T) {
 	filtered, err := loadDownloadPlan(missing)
 	if err != nil || filtered.Images != 0 || filtered.Videos != 1 {
 		t.Fatalf("selected types changed: %+v, %v", filtered, err)
+	}
+}
+
+func TestPlannedArchiveResumesExistingPausedTask(t *testing.T) {
+	root, config := t.TempDir(), t.TempDir()
+	f := &Facade{a: &App{ConfigDir: config, ConfigPath: filepath.Join(config, "config.json"), Settings: Settings{LibraryRoot: root}}}
+	if err := f.AcquireLibraryLock(); err != nil {
+		t.Fatal(err)
+	}
+	defer f.ReleaseLibraryLock()
+	id, err := f.RegisterCurrentLibrary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused := f.createTaskRecord(TaskDTO{Kind: "sync-plan", PlanID: "plan", PlanRunID: "run", Title: "Scheduled", Chat: "Test group"})
+	paused.pause()
+	var startedID string
+	_, err = f.RunPlannedArchive(context.Background(), id, "plan", "run", "Scheduled", "Test group", paused.snapshot().ID, func(taskID string) error {
+		startedID = taskID
+		return nil
+	}, func(context.Context, func(string)) (PlannedArchiveInput, error) {
+		return PlannedArchiveInput{ChatID: "99", ChatType: "private_group"}, nil
+	}, func(PlannedArchiveResult) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startedID != paused.snapshot().ID || paused.snapshot().State != "done" {
+		t.Fatalf("paused task was not reused: started %s, state %s", startedID, paused.snapshot().State)
 	}
 }
 

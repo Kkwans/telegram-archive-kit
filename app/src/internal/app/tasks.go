@@ -659,6 +659,21 @@ func retainTaskRecords(tasks []*backgroundTask) []*backgroundTask {
 	return out
 }
 
+func (f *Facade) pausedPlanTask(id string) *backgroundTask {
+	if id == "" {
+		return nil
+	}
+	f.taskMu.Lock()
+	defer f.taskMu.Unlock()
+	for _, task := range f.tasks {
+		dto := task.snapshot()
+		if dto.ID == id && dto.State == "paused" {
+			return task
+		}
+	}
+	return nil
+}
+
 func (f *Facade) pausedTaskForSlug(slug string) *backgroundTask {
 	if slug == "" {
 		return nil
@@ -1425,7 +1440,7 @@ func (f *Facade) loadTasks() {
 		// Older builds created a fresh paused task each time a download was
 		// resumed. Keep only the newest paused row per chat so the list reflects
 		// one logical download.
-		if dto.State == "paused" && dto.Slug != "" {
+		if dto.State == "paused" && dto.Slug != "" && dto.Kind != "sync-plan" {
 			if seenPaused[dto.Slug] {
 				changed = true
 				continue

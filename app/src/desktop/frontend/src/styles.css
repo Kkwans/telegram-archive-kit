@@ -2417,8 +2417,11 @@ img.online-avatar { object-fit: cover; display: block; }
 .online-type.channel { color: #7c5cff; background: rgba(124, 92, 255, .1); }
 .online-type.bot { color: #b26a12; background: rgba(178, 106, 18, .1); }
 .online-type.archived { color: var(--faint); background: transparent; border-color: var(--line); }
-.online-row-sub { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--faint); font-size: 10.5px; }
-.online-username { flex: 0 0 auto; color: var(--accent); opacity: .9; }
+.online-row-sub { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--faint); font-size: 10.5px; }
+.online-row-identity { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.online-row-kind { flex: none; color: var(--muted); }
+.online-row-plans { margin-left: auto; max-width: 52%; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); font-size: 10px; }
+.online-username { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); opacity: .9; }
 .online-preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .online-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-left: 4px; }
 .online-time { color: var(--faint); font-size: 9.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }

@@ -38,6 +38,38 @@ func TestBackgroundTaskLifecycle(t *testing.T) {
 	}
 }
 
+func TestLoadTasksKeepsPausedPlanTasksForSameChat(t *testing.T) {
+	config := t.TempDir()
+	f := &Facade{a: &App{ConfigDir: config}}
+	for _, id := range []string{"first", "second"} {
+		task := f.createTaskRecord(TaskDTO{Kind: "sync-plan", PlanID: id, PlanRunID: id, Title: id, Chat: "Chat"})
+		task.setSlug("same-chat")
+		task.pause()
+	}
+	f.saveTasks()
+	recovered := &Facade{a: &App{ConfigDir: config}}
+	recovered.loadTasks()
+	if len(recovered.tasks) != 2 {
+		t.Fatalf("paused plan tasks were deduplicated: %d", len(recovered.tasks))
+	}
+}
+
+func TestPausePlanTaskOnlyPausesMatchingOperation(t *testing.T) {
+	f := &Facade{}
+	task := f.createTaskRecord(TaskDTO{Kind: "sync-plan", PlanID: "plan", PlanRunID: "run", Title: "Scheduled", Chat: "Chat"})
+	op := &desktopOp{task: task, cancel: func() {}}
+	f.op = op
+	if f.PausePlanTask("plan", "run", "another-task") {
+		t.Fatal("mismatched task was paused")
+	}
+	if op.paused {
+		t.Fatal("mismatched task changed operation state")
+	}
+	if !f.PausePlanTask("plan", "run", task.snapshot().ID) || !op.paused {
+		t.Fatal("matching plan task was not paused")
+	}
+}
+
 func TestRecoveredRunningTaskClearsLiveSpeed(t *testing.T) {
 	config := t.TempDir()
 	f := &Facade{a: &App{ConfigDir: config}}

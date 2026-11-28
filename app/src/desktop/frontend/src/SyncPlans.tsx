@@ -2,7 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { AlertCircle, ArrowLeft, ArrowUpRight, CalendarCheck, CalendarClock, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, Database, Ellipsis, FileText, Image, ListChecks, ListFilter, Loader2, Megaphone, MessageCircle, Music, Pause, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, UsersRound, Video } from "lucide-react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { bytes, dateTime, duration, rate, rateParts } from "./format";
-import { matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
+import { chatPlanOwners, matchesOnlineChatFilter, matchesOnlineChatSearch, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, type OnlineChatFilter } from "./onlineChatFilters";
 import { call } from "./rpc";
 import { Select } from "./Select";
 import type { Bootstrap, OnlineChat, OnlineChats, TaskInfo } from "./types";
@@ -350,7 +350,7 @@ export function SyncPlans({ boot, tasks, location, onNavigate, onAccount, onLibr
   const errorNotice = (error || data?.error) && <div className="plan-inline-notice" role="alert"><AlertCircle size={15} /><span>{error || data?.error}</span><button type="button" className="btn sm ghost" onClick={() => void read()}><RefreshCw size={12} /> 重新读取</button></div>;
   const deletion = <ConfirmDialog compact open={!!confirmDelete} title={`删除计划「${confirmDelete?.name ?? ""}」？`} message="将停止定时运行。已归档的消息、媒体和任务记录会保留。" confirmLabel="删除计划" danger onCancel={() => setConfirmDelete(null)} onConfirm={() => { const plan = confirmDelete; setConfirmDelete(null); if (plan) void act(plan, "delete"); }} />;
 
-  if (editor) return <PlanEditor plan={editor === "new" ? undefined : editor} boot={boot} currentLibraryId={data?.currentLibraryId} saving={busy === "save"} onAccount={onAccount} onCancel={closeEditor} onSave={save} />;
+  if (editor) return <PlanEditor plan={editor === "new" ? undefined : editor} plans={plans} boot={boot} currentLibraryId={data?.currentLibraryId} saving={busy === "save"} onAccount={onAccount} onCancel={closeEditor} onSave={save} />;
   if (location) return <section className="plan-subpage">
     {errorNotice}
     {selectedPlan ? <PlanDetails plan={selectedPlan} runs={runsByPlan.get(selectedPlan.id) ?? []} tasks={tasks} location={location} busy={!!busy}
@@ -586,8 +586,9 @@ function TargetTable({ targets, tasks, onOpenTask }: { targets: Target[]; tasks:
   </table></div>;
 }
 
-function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel, onSave }: {
+function PlanEditor({ plan, plans, boot, currentLibraryId, saving, onAccount, onCancel, onSave }: {
   plan?: Plan;
+  plans: Plan[];
   boot: Bootstrap | null;
   currentLibraryId?: string;
   saving: boolean;
@@ -619,6 +620,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
   const canFetchChats = hasSession && boundLibraryOpen && !libraryChanged;
   const libraryLabel = plan?.libraryLabel || initialLibrary.root || "尚未打开档案库";
   const selected = useMemo(() => new Set(draft.targets.map(({ peer }) => peer)), [draft.targets]);
+  const planOwners = useMemo(() => chatPlanOwners(plans), [plans]);
   const { frequency, time, weekday, weekdays } = draft.schedule;
   const validTime = /^\d{2}:\d{2}$/.test(time);
   const selectedDays = useMemo(() => weekdays ?? [weekday ?? 1], [weekdays, weekday]);
@@ -771,7 +773,7 @@ function PlanEditor({ plan, boot, currentLibraryId, saving, onAccount, onCancel,
                 const ChatIcon = chat.type === "channel" ? Megaphone : chat.type === "group" ? UsersRound : MessageCircle;
                 return <button className="plan-chat-option" type="button" key={chat.peer} aria-pressed={checked} onClick={(event) => chooseChat(chat, event)}>
                   <span className="plan-chat-symbol"><ChatIcon size={15} /></span>
-                  <span className="plan-chat-identity"><b data-tip={chat.name}>{chat.name}</b><span className="plan-chat-username">{onlineChatTypeMeta(chat.type).label}{chat.username ? ` · @${chat.username}` : ""}</span></span>
+                  <span className="plan-chat-identity"><b data-tip={chat.name}>{chat.name}</b><span className="plan-chat-subline"><span className="plan-chat-username">{onlineChatTypeMeta(chat.type).label}{chat.username ? ` · @${chat.username}` : ""}</span>{(planOwners[chat.peer]?.length ?? 0) > 0 && <span className="plan-chat-owners" data-tip={`归属计划：${planOwners[chat.peer].join("、")}`}>计划 · {planOwners[chat.peer].join("、")}</span>}</span></span>
                   {(chat.archivedLocally || chat.localSlug) && <span className="plan-chat-local"><CheckCircle2 size={12} /> 已归档</span>}
                   <span className="plan-chat-selected" aria-hidden="true">{checked && <><Check size={12} />已选</>}</span>
                 </button>;

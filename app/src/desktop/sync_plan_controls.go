@@ -414,6 +414,7 @@ func (s *SyncPlanService) control(method, id string) error {
 	pending := state.pendingIndex(id)
 	now := s.now()
 	var cancel context.CancelFunc
+	var pause func() bool
 	switch method {
 	case "syncPlanRunNow", "syncPlanRetry":
 		if pending >= 0 {
@@ -463,6 +464,16 @@ func (s *SyncPlanService) control(method, id string) error {
 		if s.active != nil && s.active.id == run.ID {
 			run.State, run.Message = "pausing", "正在暂停本轮"
 			cancel = s.active.cancel
+			if s.hooks.Pause != nil {
+				taskID := ""
+				for _, target := range run.Targets {
+					if target.State == "running" || target.State == "pausing" {
+						taskID = target.TaskID
+						break
+					}
+				}
+				pause = func() bool { return s.hooks.Pause(run.PlanID, run.ID, taskID) }
+			}
 		} else {
 			run.State, run.Message, run.BlockedReason, run.RetryAt = "paused", "本轮已暂停", "", time.Time{}
 			for i := range run.Targets {
@@ -509,6 +520,9 @@ func (s *SyncPlanService) control(method, id string) error {
 	}
 	if err := s.commitLocked(state); err != nil {
 		return err
+	}
+	if pause != nil {
+		pause()
 	}
 	if cancel != nil {
 		cancel()

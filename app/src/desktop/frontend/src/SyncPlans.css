@@ -219,7 +219,9 @@
 #task-plans .plan-chat-option[aria-pressed="true"] .plan-chat-symbol { background: var(--surface); color: var(--accent); }
 #task-plans .plan-chat-identity { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
 #task-plans .plan-chat-identity > b { font-size: 13px; font-weight: 650; }
-#task-plans .plan-chat-username { max-width: 100%; font-size: 12px; }
+#task-plans .plan-chat-subline { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; }
+#task-plans .plan-chat-username { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--faint); }
+.plan-chat-owners { margin-left: auto; max-width: 58%; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); font-size: 10.5px; }
 #task-plans .plan-chat-selected { min-width: 39px; font-size: 11px; }
 #task-plans .plan-chat-list-footer { display: flex; justify-content: space-between; align-items: center; min-height: 28px; gap: 10px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
 #task-plans .plan-chat-list-actions, #task-plans .plan-chat-pagination { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }

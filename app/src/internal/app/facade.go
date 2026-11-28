@@ -621,6 +621,25 @@ func (f *Facade) Pause() bool {
 	return true
 }
 
+func (f *Facade) PausePlanTask(planID, runID, taskID string) bool {
+	f.mu.Lock()
+	op := f.op
+	if op == nil || op.task == nil || taskID == "" {
+		f.mu.Unlock()
+		return false
+	}
+	dto := op.task.snapshot()
+	if dto.ID != taskID || dto.PlanID != planID || dto.PlanRunID != runID {
+		f.mu.Unlock()
+		return false
+	}
+	op.paused = true
+	op.task.update(-1, "正在安全暂停，当前文件结束后会保留进度…")
+	f.mu.Unlock()
+	op.cancel()
+	return true
+}
+
 // StopTask terminates a running or paused task without marking it failed.
 func (f *Facade) StopTask(id string) (bool, error) {
 	f.mu.Lock()

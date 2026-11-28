@@ -181,9 +181,13 @@ func TestSyncPlanSaveUsesLightweightTargetBinding(t *testing.T) {
 
 func TestSyncPlanPauseRunResumesCheckpoint(t *testing.T) {
 	now := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
-	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{Execute: func(context.Context, SyncPlan, SyncPlanTarget, SyncPlanCheckpoint, func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
-		return SyncPlanTargetResult{}, nil
-	}})
+	pauseCalled := false
+	s := syncTestService(t, t.TempDir(), &now, SyncPlanHooks{
+		Pause: func(string, string, string) bool { pauseCalled = true; return true },
+		Execute: func(context.Context, SyncPlan, SyncPlanTarget, SyncPlanCheckpoint, func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error) {
+			return SyncPlanTargetResult{}, nil
+		},
+	})
 	if err := s.save(t.Context(), syncTestDraft(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +205,9 @@ func TestSyncPlanPauseRunResumesCheckpoint(t *testing.T) {
 	}
 	if ctx.Err() == nil {
 		t.Fatal("pause run did not cancel active execution")
+	}
+	if !pauseCalled {
+		t.Fatal("pause run did not pause the active child task")
 	}
 	if !s.finish(job, SyncPlanTargetResult{}, ctx.Err()) {
 		t.Fatal("pause outcome was not saved")

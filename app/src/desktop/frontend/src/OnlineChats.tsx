@@ -20,7 +20,7 @@ import { Select } from "./Select";
 import { AllOnlineUpdateDialog, OnlineUpdateDialog, onlineTargetFromChat, type OnlineUpdateTarget } from "./OnlineUpdateDialog";
 import type { PageCtx } from "./pages";
 import type { OnlineChat, OnlineChats } from "./types";
-import { filterOnlineChats, matchesOnlineChatFilter, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, ownershipCountLabel, type OnlineChatFilter } from "./onlineChatFilters";
+import { chatPlanOwners, filterOnlineChats, matchesOnlineChatFilter, ONLINE_CHAT_FILTERS, onlineChatOwnership, onlineChatTypeMeta, ownershipCountLabel, type OnlineChatFilter } from "./onlineChatFilters";
 
 function countOnlineChats(chats: OnlineChat[]): Record<OnlineChatFilter, number> {
   return {
@@ -59,6 +59,7 @@ const OnlineChatRow = memo(function OnlineChatRow({
   selected,
   checked,
   today,
+  plans,
   onSelect,
   onToggle,
 }: {
@@ -66,6 +67,7 @@ const OnlineChatRow = memo(function OnlineChatRow({
   selected: boolean;
   checked: boolean;
   today: string;
+  plans: string[];
   onSelect: (peer: string) => void;
   onToggle: (peer: string) => void;
 }) {
@@ -83,12 +85,11 @@ const OnlineChatRow = memo(function OnlineChatRow({
         <span className="online-row-top">
           <b>{c.name}</b>
           {c.pinned && <Pin size={11} className="online-pin" />}
-          <span className={`online-type ${meta.tone}`}>{meta.label}</span>
           {c.archived && <span className="online-type archived">归档夹</span>}
         </span>
         <span className="online-row-sub">
-          {c.username && <span className="online-username">@{c.username}</span>}
-          <span className="online-preview-text">{c.lastMessage || "暂无消息"}</span>
+          <span className="online-row-identity"><span className="online-row-kind">{meta.label}</span>{c.username && <span className="online-username">@{c.username}</span>}</span>
+          {plans.length > 0 && <span className="online-row-plans" data-tip={`归属计划：${plans.join("、")}`}>计划 · {plans.join("、")}</span>}
         </span>
       </span>
       <span className="online-row-side">
@@ -110,6 +111,7 @@ const OnlineChatList = memo(function OnlineChatList({
   emptyHint,
   checkedPeers,
   today,
+  planOwners,
   onSelect,
   onToggle,
 }: {
@@ -121,6 +123,7 @@ const OnlineChatList = memo(function OnlineChatList({
   emptyHint?: string;
   checkedPeers: Set<string>;
   today: string;
+  planOwners: Record<string, string[]>;
   onSelect: (peer: string) => void;
   onToggle: (peer: string) => void;
 }) {
@@ -147,6 +150,7 @@ const OnlineChatList = memo(function OnlineChatList({
             selected={chat.peer === selectedPeer}
             checked={checkedPeers.has(chat.peer)}
             today={today}
+            plans={planOwners[chat.peer] ?? []}
             onSelect={onSelect}
             onToggle={onToggle}
           />
@@ -170,12 +174,21 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
   const [previewTarget, setPreviewTarget] = useState<OnlineUpdateTarget | null>(null);
   const [checkedPeers, setCheckedPeers] = useState<Set<string>>(new Set());
   const [batchOpen, setBatchOpen] = useState(false);
+  const [planOwners, setPlanOwners] = useState<Record<string, string[]>>({});
   const selectAllRef = useRef<HTMLInputElement>(null);
   const request = useRef(0);
+
+  const loadPlanOwners = async () => {
+    try {
+      const result = await call<{ plans?: Array<{ name: string; targets: Array<{ peer: string }> }> }>("syncPlanList");
+      setPlanOwners(chatPlanOwners(result.plans ?? []));
+    } catch { /* plan ownership is optional in the online list */ }
+  };
 
   const load = async (announce = false, useCache = false) => {
     const seq = ++request.current;
     let liveApplied = false;
+    void loadPlanOwners();
     setLoading(true);
     setError("");
     if (useCache) {
@@ -470,6 +483,7 @@ export function OnlineChatsPage({ ctx }: { ctx: PageCtx }) {
               emptyTitle={onlyOwned && unknownInScope ? "所有权信息尚未确认" : onlyOwned ? "没有匹配的自有聊天" : undefined}
               emptyHint={onlyOwned && unknownInScope ? (loading ? "正在刷新在线列表…" : "刷新列表后重试，未确认的聊天暂不显示。") : onlyOwned ? "调整筛选条件，或关闭“我拥有的”。" : undefined}
               today={today}
+              planOwners={planOwners}
               onSelect={setSelectedPeer}
               onToggle={toggleChecked}
             />

@@ -99,6 +99,7 @@ func main() {
 		Bind:             bridge.bindSyncPlan,
 		Check:            bridge.checkSyncPlan,
 		Execute:          bridge.executeSyncPlan,
+		Pause:            facade.PausePlanTask,
 		DiscardWork:      bridge.discardPlanStage,
 		GetLaunchOnLogin: getArchiveLaunchOnLogin,
 		SetLaunchOnLogin: setArchiveLaunchOnLogin,

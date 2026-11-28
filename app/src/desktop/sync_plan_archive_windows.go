@@ -157,7 +157,7 @@ func (b *Bridge) executeSyncPlan(ctx context.Context, plan SyncPlan, target Sync
 		}
 	}
 	dir := b.planStageDir(plan, target, cp)
-	taskResult, err := b.facade.RunPlannedArchive(ctx, plan.LibraryID, plan.ID, plan.ActiveRunID, plan.Name+" · "+target.Name, target.Name,
+	taskResult, err := b.facade.RunPlannedArchive(ctx, plan.LibraryID, plan.ID, plan.ActiveRunID, plan.Name+" · "+target.Name, target.Name, cp.TaskID,
 		func(taskID string) error {
 			cp.TaskID = taskID
 			return save(cp)

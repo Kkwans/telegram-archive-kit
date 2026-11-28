@@ -56,6 +56,29 @@ export function matchesOnlineChatSearch(chat: SearchableChat, query: string): bo
     (chat.lastMessage || "").toLowerCase().includes(query);
 }
 
+export function chatPlanOwners(plans: Array<{ name: string; targets: Array<{ peer: string }> }>): Record<string, string[]> {
+  const owners: Record<string, string[]> = {};
+  for (const plan of plans) {
+    const name = plan.name.trim();
+    if (!name) continue;
+    const seen = new Set<string>();
+    for (const target of plan.targets) {
+      if (!target.peer || seen.has(target.peer)) continue;
+      seen.add(target.peer);
+      (owners[target.peer] ??= []).push(name);
+    }
+  }
+  for (const [peer, names] of Object.entries(owners)) {
+    const seen = new Set<string>();
+    owners[peer] = names.filter((name) => {
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+  }
+  return owners;
+}
+
 export function filterOnlineChats(chats: OnlineChat[], options: {
   filter: OnlineChatFilter;
   folderPeers: ReadonlySet<string> | null;

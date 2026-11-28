@@ -123,6 +123,7 @@ type SyncPlanHooks struct {
 	Bind             func(context.Context, []SyncPlanTargetInput) (SyncPlanBinding, error)
 	Check            func(context.Context, SyncPlan) error
 	Execute          func(context.Context, SyncPlan, SyncPlanTarget, SyncPlanCheckpoint, func(SyncPlanCheckpoint) error) (SyncPlanTargetResult, error)
+	Pause            func(planID, runID, taskID string) bool
 	GetLaunchOnLogin func() (bool, error)
 	SetLaunchOnLogin func(bool) error
 	DiscardWork      func(SyncPlan, SyncPlanTarget, SyncPlanCheckpoint)
